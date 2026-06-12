@@ -1,0 +1,12 @@
+/target/
+**/target/
+
+.DS_Store
+*.rs.bk
+
+/.claude/
+/.git/
+/.env
+
+**/bolao.db
+**/bolao.db-*
