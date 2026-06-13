@@ -161,7 +161,10 @@ Desenho da rede:
 - `ferrugem-web` -> Redis interno para rate limit persistente
 - o origin usa apenas `expose`, sem `ports`
 - a rede `origin` e interna e dedicada
-- o Caddy tem IP fixo `172.31.0.10`
+- o Caddy tambem entra na rede `public` (nao-interna), para ter saida a
+  internet e emitir/renovar certificados (Let's Encrypt) e ser o unico
+  publicado em `80/443` (tambem `443/udp` para HTTP/3)
+- o Caddy tem IP fixo `172.31.0.10` na rede `origin`
 - o app confia apenas em `TRUSTED_PROXY_CIDRS=172.31.0.10/32`
 
 Subida recomendada:
