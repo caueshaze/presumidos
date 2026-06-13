@@ -6,6 +6,7 @@ import type {
   LeaderboardEntry,
   MatchRecord,
   MemberPredictions,
+  PointAdjustment,
   PoolSummary,
   PredictionRecord,
   UserPublic,
@@ -65,6 +66,14 @@ export function useJoinPool() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (inviteCode: string) => api.post<PoolSummary>("/pools/join", { inviteCode }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pools"] }),
+  });
+}
+
+export function useDeletePool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string) => api.post<void>(`/pools/${poolId}/delete`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pools"] }),
   });
 }
@@ -182,6 +191,47 @@ export function useLeaderboard(poolId: string | null) {
     queryFn: () =>
       api.get<LeaderboardEntry[]>(`/leaderboard?poolId=${encodeURIComponent(poolId ?? "")}`),
     enabled: !!poolId,
+  });
+}
+
+// ---- Ajustes manuais de pontos --------------------------------------------
+
+export function usePoolAdjustments(poolId: string | null) {
+  return useQuery({
+    queryKey: ["pool-adjustments", poolId],
+    queryFn: () =>
+      api.get<PointAdjustment[]>(`/pools/${encodeURIComponent(poolId ?? "")}/adjustments`),
+    enabled: !!poolId,
+  });
+}
+
+export function useAddAdjustment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; userId: string; delta: number; reason: string }) =>
+      api.post<void>(`/pools/${vars.poolId}/adjustments`, {
+        userId: vars.userId,
+        delta: vars.delta,
+        reason: vars.reason,
+      }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["pool-adjustments", vars.poolId] });
+      qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] });
+    },
+  });
+}
+
+export function useRemoveAdjustment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; adjustmentId: string }) =>
+      api.post<void>(`/pools/${vars.poolId}/adjustments/remove`, {
+        adjustmentId: vars.adjustmentId,
+      }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["pool-adjustments", vars.poolId] });
+      qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] });
+    },
   });
 }
 

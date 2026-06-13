@@ -34,6 +34,11 @@ fn seed_http_test_env() {
 }
 
 /// Sobe a API HTTP uma unica vez por binario de teste e devolve a URL base.
+///
+/// O servidor roda numa thread + runtime dedicada (não via `tokio::spawn` no
+/// runtime do teste), senão ele morreria quando o primeiro `#[tokio::test]` que
+/// o inicializou terminasse e derrubasse o próprio runtime — causando
+/// "connection refused" nos testes seguintes.
 async fn test_server() -> &'static str {
     static SERVER: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
     SERVER
@@ -41,21 +46,31 @@ async fn test_server() -> &'static str {
             seed_http_test_env();
             crate::db::init().await;
 
-            let app = axum::Router::new()
-                .nest("/api", crate::api::router())
-                .layer(axum::middleware::from_fn(crate::api::context_middleware));
+            let std_listener =
+                std::net::TcpListener::bind("127.0.0.1:0").expect("bind do listener de teste");
+            std_listener
+                .set_nonblocking(true)
+                .expect("listener nao-bloqueante");
+            let addr = std_listener.local_addr().expect("endereco local");
 
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .expect("bind do listener de teste");
-            let addr = listener.local_addr().expect("endereco local");
-            tokio::spawn(async move {
-                axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .await
-                .expect("servidor de teste falhou");
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("runtime do servidor de teste");
+                rt.block_on(async move {
+                    let app = axum::Router::new()
+                        .nest("/api", crate::api::router())
+                        .layer(axum::middleware::from_fn(crate::api::context_middleware));
+                    let listener = tokio::net::TcpListener::from_std(std_listener)
+                        .expect("converter listener para tokio");
+                    axum::serve(
+                        listener,
+                        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                    )
+                    .await
+                    .expect("servidor de teste falhou");
+                });
             });
 
             format!("http://{addr}")
@@ -126,6 +141,43 @@ async fn add_membership(pool_id: &str, user_id: &str) {
         .expect("inserir membro de teste");
 }
 
+/// Membership com `joined_at` explícito (para testar elegibilidade por data de entrada).
+async fn add_membership_at(pool_id: &str, user_id: &str, joined_at: &str) {
+    sqlx::query("INSERT OR IGNORE INTO pool_members (pool_id, user_id, joined_at) VALUES (?1, ?2, ?3)")
+        .bind(pool_id)
+        .bind(user_id)
+        .bind(joined_at)
+        .execute(crate::db::pool())
+        .await
+        .expect("inserir membro com joined_at");
+}
+
+/// Partida com resultado oficial já lançado (entra no cálculo do ranking).
+async fn insert_finished_match(
+    home: &str,
+    away: &str,
+    kickoff: &str,
+    home_score: i64,
+    away_score: i64,
+) -> String {
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO matches (id, home_team, away_team, kickoff, group_name, phase,
+                              home_score, away_score, finished)
+         VALUES (?1, ?2, ?3, ?4, 'A', 'Fase de grupos', ?5, ?6, 1)",
+    )
+    .bind(&id)
+    .bind(home)
+    .bind(away)
+    .bind(kickoff)
+    .bind(home_score)
+    .bind(away_score)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir partida finalizada");
+    id
+}
+
 async fn insert_match(home: &str, away: &str, kickoff: &str) -> String {
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
@@ -140,6 +192,58 @@ async fn insert_match(home: &str, away: &str, kickoff: &str) -> String {
     .await
     .expect("inserir partida de teste");
     id
+}
+
+/// Cria uma sessão diretamente no banco (sem passar pelo endpoint de login, que
+/// é limitado por IP). Devolve (token de sessão, csrf token).
+async fn seed_session(user_id: &str) -> (String, String) {
+    let token = uuid::Uuid::new_v4().to_string();
+    let csrf = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO sessions (token, user_id, expires_at, csrf_token, last_seen_at)
+         VALUES (?1, ?2, datetime('now', '+12 hours'), ?3, datetime('now'))",
+    )
+    .bind(&token)
+    .bind(user_id)
+    .bind(&csrf)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir sessao de teste");
+    (token, csrf)
+}
+
+/// Cliente HTTP autenticado com o cookie de sessão pré-preenchido.
+fn client_with_session(base: &str, token: &str) -> reqwest::Client {
+    use std::sync::Arc;
+    let jar = Arc::new(reqwest::cookie::Jar::default());
+    let url = base.parse::<reqwest::Url>().expect("url base");
+    jar.add_cookie_str(&format!("presumidos_session={token}"), &url);
+    reqwest::Client::builder()
+        .cookie_provider(jar)
+        .build()
+        .expect("cliente http com sessao")
+}
+
+/// Pontos de um usuário no ranking de um bolão (0 se ausente).
+async fn leaderboard_points(
+    client: &reqwest::Client,
+    base: &str,
+    pool_id: &str,
+    user_id: &str,
+) -> i64 {
+    let entries: Vec<crate::models::LeaderboardEntry> = client
+        .get(format!("{base}/api/leaderboard?poolId={pool_id}"))
+        .send()
+        .await
+        .expect("requisicao leaderboard")
+        .json()
+        .await
+        .expect("corpo leaderboard");
+    entries
+        .iter()
+        .find(|e| e.user_id == user_id)
+        .map(|e| e.points)
+        .unwrap_or(0)
 }
 
 async fn insert_prediction(user_id: &str, match_id: &str, home: i64, away: i64) {
@@ -370,6 +474,208 @@ async fn admin_reauth_flow_and_rate_limit() {
     );
 }
 
+/// Apagar bolão: o criador consegue; um membro comum não. Os registros filhos
+/// (membros, ajustes) somem junto, e os palpites globais do usuário permanecem.
+#[tokio::test]
+async fn pool_creator_can_delete_pool() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let creator_email = format!("del-creator-{suffix}@teste.com");
+    let member_email = format!("del-member-{suffix}@teste.com");
+    let creator_id = seed_user(&format!("delcreator-{suffix}"), &creator_email, "senha-correta-123", false).await;
+    let member_id = seed_user(&format!("delmember-{suffix}"), &member_email, "senha-correta-123", false).await;
+
+    let pool_id = insert_pool(&format!("Bolao {suffix}"), &creator_id).await;
+    add_membership(&pool_id, &creator_id).await;
+    add_membership(&pool_id, &member_id).await;
+
+    let del_url = format!("{base}/api/pools/{pool_id}/delete");
+
+    // Membro comum NÃO pode apagar.
+    let (member_token, member_csrf) = seed_session(&member_id).await;
+    let member_c = client_with_session(base, &member_token);
+    let denied = member_c
+        .post(&del_url)
+        .header("X-CSRF-Token", &member_csrf)
+        .send()
+        .await
+        .expect("delete por membro comum");
+    assert!(!denied.status().is_success(), "membro comum nao deveria apagar");
+
+    // Pool e membros continuam existindo após a tentativa barrada.
+    let still_there: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pools WHERE id = ?1")
+        .bind(&pool_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("contar pool");
+    assert_eq!(still_there.0, 1);
+
+    // Criador apaga.
+    let (creator_token, creator_csrf) = seed_session(&creator_id).await;
+    let creator_c = client_with_session(base, &creator_token);
+    let deleted = creator_c
+        .post(&del_url)
+        .header("X-CSRF-Token", &creator_csrf)
+        .send()
+        .await
+        .expect("delete pelo criador");
+    assert!(deleted.status().is_success(), "criador deveria poder apagar");
+
+    // Pool e pool_members somem; nenhum órfão.
+    let pools_left: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pools WHERE id = ?1")
+        .bind(&pool_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("contar pool apos delete");
+    assert_eq!(pools_left.0, 0, "bolao deveria ter sido apagado");
+
+    let members_left: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id = ?1")
+        .bind(&pool_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("contar membros apos delete");
+    assert_eq!(members_left.0, 0, "membros do bolao deveriam ter sido removidos");
+}
+
+/// Elegibilidade por data de entrada: palpites de jogos que começaram ANTES de
+/// o usuário entrar no bolão não pontuam (sem retroatividade). Palpites de jogos
+/// que começaram depois da entrada contam normalmente.
+#[tokio::test]
+async fn leaderboard_ignores_predictions_from_before_join() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let email = format!("joiner-{suffix}@teste.com");
+    let user_id = seed_user(&format!("joiner-{suffix}"), &email, "senha-correta-123", false).await;
+
+    let pool_id = insert_pool(&format!("Bolao {suffix}"), &user_id).await;
+    // Entrou no bolão em 2022.
+    add_membership_at(&pool_id, &user_id, "2022-01-01 00:00:00").await;
+
+    // Jogo anterior à entrada (2020): palpite exato valeria 7, mas NÃO deve contar.
+    let old_match = insert_finished_match("Brasil", "Argentina", "2020-01-01T00:00:00Z", 2, 1).await;
+    insert_prediction(&user_id, &old_match, 2, 1).await;
+
+    // Jogo posterior à entrada (2023): palpite exato vale 7 e DEVE contar.
+    let new_match = insert_finished_match("Franca", "Espanha", "2023-01-01T00:00:00Z", 1, 0).await;
+    insert_prediction(&user_id, &new_match, 1, 0).await;
+
+    let (token, _csrf) = seed_session(&user_id).await;
+    let client = client_with_session(base, &token);
+
+    // Só o jogo posterior à entrada pontua: 7 (e não 14).
+    assert_eq!(
+        leaderboard_points(&client, base, &pool_id, &user_id).await,
+        7,
+        "apenas o palpite do jogo posterior a entrada deve pontuar"
+    );
+}
+
+/// Ajuste manual de pontos: criador e admin podem lançar/remover, o total reflete
+/// no ranking, membro comum é barrado para lançar mas vê os ajustes (transparência).
+#[tokio::test]
+async fn pool_creator_and_admin_can_adjust_points() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let creator_email = format!("creator-{suffix}@teste.com");
+    let target_email = format!("target-adj-{suffix}@teste.com");
+    let admin_email = format!("admin-adj-{suffix}@teste.com");
+    let outsider_email = format!("outsider-adj-{suffix}@teste.com");
+    let creator_id = seed_user(&format!("creator-{suffix}"), &creator_email, "senha-correta-123", false).await;
+    let target_id = seed_user(&format!("targetadj-{suffix}"), &target_email, "senha-correta-123", false).await;
+    let admin_id = seed_user(&format!("adminadj-{suffix}"), &admin_email, "senha-correta-123", true).await;
+    let outsider_id = seed_user(&format!("outadj-{suffix}"), &outsider_email, "senha-correta-123", false).await;
+
+    let pool_id = insert_pool(&format!("Bolao {suffix}"), &creator_id).await;
+    add_membership(&pool_id, &creator_id).await;
+    add_membership(&pool_id, &target_id).await;
+
+    let adj_url = format!("{base}/api/pools/{pool_id}/adjustments");
+
+    // Criador lança +5 para o alvo (sessão semeada, sem usar o endpoint de login).
+    let (creator_token, creator_csrf) = seed_session(&creator_id).await;
+    let creator_c = client_with_session(base, &creator_token);
+
+    assert_eq!(leaderboard_points(&creator_c, base, &pool_id, &target_id).await, 0);
+
+    let added = creator_c
+        .post(&adj_url)
+        .header("X-CSRF-Token", &creator_csrf)
+        .json(&json!({ "userId": target_id, "delta": 5, "reason": "erro de placar" }))
+        .send()
+        .await
+        .expect("lancar ajuste");
+    assert!(added.status().is_success(), "criador deveria poder ajustar");
+    assert_eq!(leaderboard_points(&creator_c, base, &pool_id, &target_id).await, 5);
+
+    // Lista de ajustes (criador, membro) tem 1 item.
+    let list: Vec<crate::models::PointAdjustment> = creator_c
+        .get(&adj_url)
+        .send()
+        .await
+        .expect("listar ajustes")
+        .json()
+        .await
+        .expect("corpo ajustes");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].delta, 5);
+    let adjustment_id = list[0].id.clone();
+
+    // Membro comum não pode lançar, mas enxerga os ajustes (transparência).
+    let (target_token, target_csrf) = seed_session(&target_id).await;
+    let target_c = client_with_session(base, &target_token);
+    let denied = target_c
+        .post(&adj_url)
+        .header("X-CSRF-Token", &target_csrf)
+        .json(&json!({ "userId": target_id, "delta": 99, "reason": "trapaca" }))
+        .send()
+        .await
+        .expect("ajuste por membro comum");
+    assert!(!denied.status().is_success(), "membro comum nao deveria ajustar");
+    let seen: Vec<crate::models::PointAdjustment> = target_c
+        .get(&adj_url)
+        .send()
+        .await
+        .expect("membro lista ajustes")
+        .json()
+        .await
+        .expect("corpo ajustes membro");
+    assert_eq!(seen.len(), 1, "membro deveria ver o ajuste (transparencia)");
+
+    // Admin global ajusta um bolão que não criou: +2.
+    let (admin_token, admin_csrf) = seed_session(&admin_id).await;
+    let admin_c = client_with_session(base, &admin_token);
+    let admin_added = admin_c
+        .post(&adj_url)
+        .header("X-CSRF-Token", &admin_csrf)
+        .json(&json!({ "userId": target_id, "delta": 2, "reason": "bonus admin" }))
+        .send()
+        .await
+        .expect("ajuste do admin");
+    assert!(admin_added.status().is_success(), "admin deveria poder ajustar");
+    assert_eq!(leaderboard_points(&creator_c, base, &pool_id, &target_id).await, 7);
+
+    // Criador remove o ajuste de +5: total volta a 2.
+    let removed = creator_c
+        .post(format!("{base}/api/pools/{pool_id}/adjustments/remove"))
+        .header("X-CSRF-Token", &creator_csrf)
+        .json(&json!({ "adjustmentId": adjustment_id }))
+        .send()
+        .await
+        .expect("remover ajuste");
+    assert!(removed.status().is_success(), "criador deveria poder remover");
+    assert_eq!(leaderboard_points(&creator_c, base, &pool_id, &target_id).await, 2);
+
+    // Não-membro é barrado ao listar ajustes.
+    let (outsider_token, _) = seed_session(&outsider_id).await;
+    let outsider_c = client_with_session(base, &outsider_token);
+    let outsider_list = outsider_c
+        .get(&adj_url)
+        .send()
+        .await
+        .expect("nao-membro lista ajustes");
+    assert!(!outsider_list.status().is_success(), "nao-membro nao deveria listar");
+}
+
 /// Troca de nome de usuário: aplica o novo nome, mas rejeita um nome já em uso
 /// por outra conta (case-insensitive).
 #[tokio::test]
@@ -385,10 +691,8 @@ async fn change_username_updates_and_rejects_duplicates() {
     let taken_name = format!("taken{short}");
     seed_user(&taken_name, &other_email, "senha-correta-123", false).await;
 
-    let client = client();
-    let login_response = login(&client, base, &email, "senha-correta-123").await;
-    let auth: AuthResult = login_response.json().await.expect("login");
-    let csrf = auth.csrf_token;
+    let (token, csrf) = seed_session(&user_id).await;
+    let client = client_with_session(base, &token);
     let url = format!("{base}/api/auth/username");
 
     // Nome novo e livre: sucesso, e a sessão passa a refletir o novo nome.
@@ -443,11 +747,13 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
     let email_c = format!("outsider-{suffix}@teste.com");
     let user_a = seed_user(&format!("memberA-{suffix}"), &email_a, "senha-correta-123", false).await;
     let user_b = seed_user(&format!("memberB-{suffix}"), &email_b, "senha-correta-123", false).await;
-    seed_user(&format!("outsider-{suffix}"), &email_c, "senha-correta-123", false).await;
+    let user_c = seed_user(&format!("outsider-{suffix}"), &email_c, "senha-correta-123", false).await;
 
     let pool_id = insert_pool(&format!("Bolao {suffix}"), &user_a).await;
-    add_membership(&pool_id, &user_a).await;
-    add_membership(&pool_id, &user_b).await;
+    // Entraram no bolão antes do jogo "passado", para isolar o teste da regra de
+    // elegibilidade por data de entrada (coberta em outro teste).
+    add_membership_at(&pool_id, &user_a, "2019-01-01 00:00:00").await;
+    add_membership_at(&pool_id, &user_b, "2019-01-01 00:00:00").await;
 
     let past_match = insert_match("Brasil", "Argentina", "2020-01-01T00:00:00Z").await;
     let future_match = insert_match("Franca", "Espanha", "2999-01-01T00:00:00Z").await;
@@ -456,9 +762,9 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
     insert_prediction(&user_b, &past_match, 2, 1).await;
     insert_prediction(&user_b, &future_match, 0, 0).await;
 
-    // Membro A consulta os palpites do bolão.
-    let viewer = client();
-    login(&viewer, base, &email_a, "senha-correta-123").await;
+    // Membro A consulta os palpites do bolão (sessão semeada, sem login).
+    let (token_a, _) = seed_session(&user_a).await;
+    let viewer = client_with_session(base, &token_a);
     let response = viewer
         .get(format!("{base}/api/pools/{pool_id}/member-predictions"))
         .send()
@@ -482,8 +788,8 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
     assert_eq!(b.predictions[0].match_id, past_match);
 
     // Quem não é membro do bolão é barrado.
-    let outsider = client();
-    login(&outsider, base, &email_c, "senha-correta-123").await;
+    let (token_c, _) = seed_session(&user_c).await;
+    let outsider = client_with_session(base, &token_c);
     let denied = outsider
         .get(format!("{base}/api/pools/{pool_id}/member-predictions"))
         .send()
@@ -505,10 +811,8 @@ async fn admin_can_add_and_remove_pool_members() {
 
     let pool_id = insert_pool(&format!("Bolao Admin {suffix}"), &admin_id).await;
 
-    let admin = client();
-    let login_response = login(&admin, base, &admin_email, "senha-correta-123").await;
-    let auth: AuthResult = login_response.json().await.expect("login admin");
-    let csrf = auth.csrf_token;
+    let (admin_token, csrf) = seed_session(&admin_id).await;
+    let admin = client_with_session(base, &admin_token);
     let add_url = format!("{base}/api/admin/pools/{pool_id}/members");
     let members_url = add_url.clone();
 
@@ -584,19 +888,11 @@ async fn admin_can_add_and_remove_pool_members() {
     );
 
     // Usuário comum não pode gerenciar membros.
-    let normal = client();
-    login(&normal, base, &target_email, "senha-correta-123").await;
-    let session: SessionState = normal
-        .get(format!("{base}/api/auth/current-user"))
-        .send()
-        .await
-        .expect("current-user do usuario comum")
-        .json()
-        .await
-        .expect("sessao do usuario comum");
+    let (normal_token, normal_csrf) = seed_session(&target_id).await;
+    let normal = client_with_session(base, &normal_token);
     let denied = normal
         .post(&add_url)
-        .header("X-CSRF-Token", &session.csrf_token)
+        .header("X-CSRF-Token", &normal_csrf)
         .json(&json!({ "userId": admin_id }))
         .send()
         .await

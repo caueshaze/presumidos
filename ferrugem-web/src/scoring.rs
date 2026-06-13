@@ -179,6 +179,10 @@ pub async fn get_leaderboard(
          JOIN matches m ON m.id = pr.match_id
                        AND m.home_score IS NOT NULL
                        AND m.away_score IS NOT NULL
+                       -- Só conta se o usuário já era membro quando a partida
+                       -- começou: bloqueia pontuar palpites de jogos que
+                       -- terminaram antes de ele entrar no bolão.
+                       AND datetime(m.kickoff) >= datetime(pm.joined_at)
          WHERE pm.pool_id = ?1",
     )
     .bind(&pool_id)
@@ -212,11 +216,27 @@ pub async fn get_leaderboard(
         *points.entry(row.user_id.clone()).or_insert(0) += pts;
     }
 
+    // Ajustes manuais de pontos lançados pelo organizador (ou admin) somam ao total.
+    let adjustments: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT user_id, SUM(delta) FROM point_adjustments WHERE pool_id = ?1 GROUP BY user_id",
+    )
+    .bind(&pool_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("get_leaderboard_adjustments", e))?;
+
+    for (user_id, total) in adjustments {
+        if let Some(p) = points.get_mut(&user_id) {
+            *p += total;
+        }
+    }
+
     let mut entries: Vec<LeaderboardEntry> = members
         .into_iter()
         .map(|(id, username)| LeaderboardEntry {
-            username,
             points: points.get(&id).copied().unwrap_or(0),
+            user_id: id,
+            username,
         })
         .collect();
 

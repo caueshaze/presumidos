@@ -1,13 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
-import { usePools, useLeaderboard } from "@/hooks/queries";
+import { X } from "lucide-react";
+import {
+  usePools,
+  useLeaderboard,
+  usePoolAdjustments,
+  useAddAdjustment,
+  useRemoveAdjustment,
+} from "@/hooks/queries";
+import { useAuth } from "@/hooks/useAuth";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label, Select, ErrorBanner } from "@/components/ui/field";
 
 const medals = ["🥇", "🥈", "🥉"];
 
 export function LeaderboardPage() {
+  const { user, isAdmin } = useAuth();
   const pools = usePools();
   const [selectedPool, setSelectedPool] = useState("");
 
@@ -18,10 +29,63 @@ export function LeaderboardPage() {
   }, [pools.data, selectedPool]);
 
   const leaderboard = useLeaderboard(selectedPool || null);
+  const adjustments = usePoolAdjustments(selectedPool || null);
+  const addAdjustment = useAddAdjustment();
+  const removeAdjustment = useRemoveAdjustment();
 
   const entries = leaderboard.data ?? [];
   const podium = entries.slice(0, 3);
   const rest = entries.slice(3);
+
+  const currentPool = pools.data?.find((p) => p.id === selectedPool);
+  const isOrganizer = !!currentPool && (currentPool.createdBy === user?.id || isAdmin);
+
+  // ---- Formulário de ajuste (organizador) ----
+  const [adjUser, setAdjUser] = useState("");
+  const [adjDelta, setAdjDelta] = useState("");
+  const [adjReason, setAdjReason] = useState("");
+  const [adjError, setAdjError] = useState("");
+
+  useEffect(() => {
+    setAdjUser("");
+    setAdjDelta("");
+    setAdjReason("");
+    setAdjError("");
+  }, [selectedPool]);
+
+  const onAdjust = async (e: FormEvent) => {
+    e.preventDefault();
+    setAdjError("");
+    const delta = parseInt(adjDelta, 10);
+    if (!adjUser || Number.isNaN(delta) || delta === 0) {
+      setAdjError("Escolha um membro e um valor de pontos diferente de zero.");
+      return;
+    }
+    try {
+      await addAdjustment.mutateAsync({
+        poolId: selectedPool,
+        userId: adjUser,
+        delta,
+        reason: adjReason.trim(),
+      });
+      setAdjUser("");
+      setAdjDelta("");
+      setAdjReason("");
+    } catch (err) {
+      setAdjError(err instanceof Error ? err.message : "Falha ao lançar ajuste.");
+    }
+  };
+
+  const onRemoveAdjustment = async (adjustmentId: string) => {
+    setAdjError("");
+    try {
+      await removeAdjustment.mutateAsync({ poolId: selectedPool, adjustmentId });
+    } catch (err) {
+      setAdjError(err instanceof Error ? err.message : "Falha ao remover ajuste.");
+    }
+  };
+
+  const adjustmentList = adjustments.data ?? [];
 
   return (
     <PageShell>
@@ -85,7 +149,7 @@ export function LeaderboardPage() {
                 <div className="grid grid-cols-3 gap-3">
                   {podium.map((entry, i) => (
                     <motion.div
-                      key={entry.username}
+                      key={entry.userId}
                       initial={{ opacity: 0, scale: 0.92 }}
                       animate={{ opacity: 1, scale: 1 }}
                       transition={{ delay: i * 0.1, duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
@@ -112,7 +176,7 @@ export function LeaderboardPage() {
                       </thead>
                       <tbody>
                         {rest.map((entry, i) => (
-                          <tr key={entry.username} className="border-t border-mint/20">
+                          <tr key={entry.userId} className="border-t border-mint/20">
                             <td className="px-5 py-3">{i + 4}</td>
                             <td className="px-5 py-3">{entry.username}</td>
                             <td className="px-5 py-3">{entry.points}</td>
@@ -125,6 +189,95 @@ export function LeaderboardPage() {
               </>
             )}
           </div>
+
+          {/* Painel do organizador: lançar ajustes manuais */}
+          {isOrganizer && entries.length > 0 && (
+            <Card className="mt-6 border-l-4 border-yellow-dark">
+              <h2 className="text-xl">Ajustar pontos (organizador)</h2>
+              <p className="mt-1 text-sm text-ink-muted">
+                Lance pontos manualmente para corrigir erros. Valores negativos descontam. O ajuste
+                e o motivo ficam visíveis para todos os participantes.
+              </p>
+              <form onSubmit={onAdjust} className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto_2fr_auto] sm:items-end">
+                <div>
+                  <Label htmlFor="adj-user">Membro</Label>
+                  <Select id="adj-user" value={adjUser} onChange={(e) => setAdjUser(e.target.value)}>
+                    <option value="">Selecione</option>
+                    {entries.map((entry) => (
+                      <option key={entry.userId} value={entry.userId}>
+                        {entry.username}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="adj-delta">Pontos</Label>
+                  <Input
+                    id="adj-delta"
+                    type="number"
+                    inputMode="numeric"
+                    placeholder="+3"
+                    value={adjDelta}
+                    onChange={(e) => setAdjDelta(e.target.value)}
+                    className="w-24"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="adj-reason">Motivo (opcional)</Label>
+                  <Input
+                    id="adj-reason"
+                    placeholder="Ex.: erro de cadastro de placar"
+                    value={adjReason}
+                    maxLength={200}
+                    onChange={(e) => setAdjReason(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" disabled={addAdjustment.isPending} className="self-start sm:self-auto">
+                  {addAdjustment.isPending ? "Lançando..." : "Lançar"}
+                </Button>
+              </form>
+              {adjError && (
+                <div className="mt-3">
+                  <ErrorBanner>{adjError}</ErrorBanner>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Transparência: ajustes visíveis a todos */}
+          {adjustmentList.length > 0 && (
+            <Card className="mt-6">
+              <h2 className="text-xl">Ajustes de pontos</h2>
+              <ul className="mt-3 divide-y divide-mint/20">
+                {adjustmentList.map((adj) => (
+                  <li key={adj.id} className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <div className="font-heading font-semibold text-ink">
+                        {adj.username}{" "}
+                        <span className={adj.delta >= 0 ? "text-mint-dark" : "text-danger"}>
+                          {adj.delta >= 0 ? `+${adj.delta}` : adj.delta} pts
+                        </span>
+                      </div>
+                      {adj.reason && (
+                        <div className="truncate text-sm text-ink-muted">{adj.reason}</div>
+                      )}
+                    </div>
+                    {isOrganizer && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onRemoveAdjustment(adj.id)}
+                        disabled={removeAdjustment.isPending}
+                        className="shrink-0"
+                      >
+                        <X className="h-4 w-4" /> Remover
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
         </>
       )}
     </PageShell>

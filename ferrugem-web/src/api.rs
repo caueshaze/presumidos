@@ -201,6 +201,21 @@ struct PoolMemberBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AdjustmentBody {
+    user_id: String,
+    delta: i64,
+    #[serde(default)]
+    reason: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveAdjustmentBody {
+    adjustment_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PoolIdQuery {
     pool_id: String,
 }
@@ -294,6 +309,52 @@ async fn pool_member_predictions(Path(pool_id): Path<String>) -> ApiResult<impl 
     Ok(Json(
         crate::pools::get_pool_member_predictions(String::new(), pool_id).await?,
     ))
+}
+
+async fn list_pool_adjustments(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::list_pool_adjustments(String::new(), pool_id).await?,
+    ))
+}
+
+async fn add_point_adjustment(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<AdjustmentBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::add_point_adjustment(
+        String::new(),
+        pool_id,
+        body.user_id,
+        body.delta,
+        body.reason,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn remove_point_adjustment(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<RemoveAdjustmentBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::remove_point_adjustment(
+        String::new(),
+        pool_id,
+        body.adjustment_id,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_pool(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::pools::delete_pool(String::new(), pool_id, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------
@@ -459,6 +520,12 @@ pub fn router() -> Router {
         .route("/pools", get(list_pools).post(create_pool))
         .route("/pools/join", post(join_pool))
         .route("/pools/{pool_id}/member-predictions", get(pool_member_predictions))
+        .route(
+            "/pools/{pool_id}/adjustments",
+            get(list_pool_adjustments).post(add_point_adjustment),
+        )
+        .route("/pools/{pool_id}/adjustments/remove", post(remove_point_adjustment))
+        .route("/pools/{pool_id}/delete", post(delete_pool))
         .route("/matches", get(list_matches))
         .route("/matches/knockout-released", get(knockout_released))
         .route("/predictions", get(my_predictions).post(submit_prediction))

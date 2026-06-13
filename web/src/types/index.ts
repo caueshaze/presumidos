@@ -23,6 +23,7 @@ export interface PoolSummary {
   name: string;
   inviteCode: string;
   memberCount: number;
+  createdBy: string;
 }
 
 export interface MatchRecord {
@@ -59,8 +60,18 @@ export interface KnockoutEntry {
 }
 
 export interface LeaderboardEntry {
+  userId: string;
   username: string;
   points: number;
+}
+
+export interface PointAdjustment {
+  id: string;
+  userId: string;
+  username: string;
+  delta: number;
+  reason: string;
+  createdAt: string;
 }
 
 export interface MemberPredictions {

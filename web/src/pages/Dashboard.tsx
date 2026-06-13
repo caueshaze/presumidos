@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, X } from "lucide-react";
-import { usePools, useCreatePool, useJoinPool } from "@/hooks/queries";
+import { Plus, X, Trash2 } from "lucide-react";
+import { usePools, useCreatePool, useJoinPool, useDeletePool } from "@/hooks/queries";
+import { useAuth } from "@/hooks/useAuth";
 import { PageShell } from "@/components/PageShell";
 import { Card, MotionCard } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,9 +12,21 @@ import { ErrorBanner } from "@/components/ui/field";
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const { user, isAdmin } = useAuth();
   const pools = usePools();
   const createPool = useCreatePool();
   const joinPool = useJoinPool();
+  const deletePool = useDeletePool();
+
+  const onDelete = async (poolId: string, name: string) => {
+    if (!window.confirm(`Apagar o bolão "${name}"? Esta ação não pode ser desfeita.`)) return;
+    setError("");
+    try {
+      await deletePool.mutateAsync(poolId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao apagar bolão.");
+    }
+  };
 
   const [showForms, setShowForms] = useState(false);
   const [newPoolName, setNewPoolName] = useState("");
@@ -148,13 +161,24 @@ export function DashboardPage() {
                   Código: {p.inviteCode}
                 </span>
                 <p className="mt-2 text-sm text-ink-muted">{p.memberCount} membro(s)</p>
-                <div className="mt-4 flex gap-2">
+                <div className="mt-4 flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => navigate("/predictions")}>
                     Palpites
                   </Button>
                   <Button size="sm" variant="secondary" onClick={() => navigate("/leaderboard")}>
                     Ranking
                   </Button>
+                  {(p.createdBy === user?.id || isAdmin) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onDelete(p.id, p.name)}
+                      disabled={deletePool.isPending}
+                      className="text-danger"
+                    >
+                      <Trash2 className="h-4 w-4" /> Apagar
+                    </Button>
+                  )}
                 </div>
               </MotionCard>
             ))}

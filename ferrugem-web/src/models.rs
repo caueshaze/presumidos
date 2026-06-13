@@ -31,6 +31,8 @@ pub struct PoolSummary {
     pub name: String,
     pub invite_code: String,
     pub member_count: i64,
+    /// Id do usuário que criou o bolão (organizador).
+    pub created_by: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -93,8 +95,21 @@ pub fn is_knockout(phase: Option<&str>) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LeaderboardEntry {
+    pub user_id: String,
     pub username: String,
     pub points: i64,
+}
+
+/// Ajuste manual de pontos aplicado a um membro de um bolão.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PointAdjustment {
+    pub id: String,
+    pub user_id: String,
+    pub username: String,
+    pub delta: i64,
+    pub reason: String,
+    pub created_at: String,
 }
 
 /// Um membro do bolão com os palpites já visíveis (apenas de partidas que já
