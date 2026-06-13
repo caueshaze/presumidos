@@ -569,7 +569,10 @@ pub fn apply_security_headers() {
     if dioxus::prelude::dioxus_fullstack::FullstackContext::current().is_some() {
         set_response_header(
             "content-security-policy",
-            "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'".to_string(),
+            // O Dioxus fullstack 0.7 injeta scripts inline no SSR (INITIALIZE_STREAMING_JS e
+            // window.initial_dioxus_hydration_data com dados serializados por requisicao) sem
+            // suporte a nonce nessa versao, por isso 'unsafe-inline' e necessario em script-src.
+            "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'".to_string(),
         );
         set_response_header(
             "referrer-policy",

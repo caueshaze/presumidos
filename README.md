@@ -140,7 +140,7 @@ Em producao, prefira executar o binario ja construído dentro do container:
 
 ```bash
 docker compose exec ferrugem-web \
-  /app/ferrugem-web bootstrap-admin \
+  /app/server bootstrap-admin \
   --username admin \
   --email admin@seudominio.com
 ```
@@ -195,7 +195,7 @@ O bootstrap inicial do admin deve ser executado dentro do container do app:
 
 ```bash
 docker compose exec ferrugem-web \
-  /app/ferrugem-web bootstrap-admin \
+  /app/server bootstrap-admin \
   --username admin \
   --email admin@seudominio.com
 ```
