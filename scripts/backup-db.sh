@@ -53,13 +53,17 @@ fi
 echo "==> Backup criado:"
 ls -lh "$ABS_OUTPUT_DIR/$OUT"
 
-# Validação de integridade + contagens básicas.
+# Validação de integridade + contagens básicas. Os rótulos saem via `echo` do
+# shell (e não como literais SQL) para evitar confusão entre aspas simples
+# (string) e duplas (identificador) no SQLite.
 echo "==> Validando integridade..."
 docker run --rm \
   -v "$ABS_OUTPUT_DIR:/backup" \
   "$ALPINE_IMG" sh -c \
   "apk add --no-cache sqlite >/dev/null 2>&1 && \
-   sqlite3 /backup/$OUT 'PRAGMA integrity_check; SELECT \"pools=\" || count(*) FROM pools; SELECT \"users=\" || count(*) FROM users;'"
+   sqlite3 /backup/$OUT 'PRAGMA integrity_check;' && \
+   echo pools=\$(sqlite3 /backup/$OUT 'SELECT count(*) FROM pools;') && \
+   echo users=\$(sqlite3 /backup/$OUT 'SELECT count(*) FROM users;')"
 
 echo "==> OK. Guarde este arquivo fora do servidor antes do deploy, por exemplo:"
 echo "    scp <user>@<host>:$ABS_OUTPUT_DIR/$OUT ./"
