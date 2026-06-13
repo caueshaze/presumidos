@@ -128,7 +128,7 @@ export function DashboardPage() {
           <ErrorBanner>Erro ao carregar bolões: {(pools.error as Error).message}</ErrorBanner>
         ) : pools.data && pools.data.length === 0 ? (
           <Card>
-            <h2 className="text-xl">Seu painel começa aqui</h2>
+            <h2 className="text-xl">Sua presunção começa aqui!</h2>
             <p className="mt-2 text-ink-muted">
               Você ainda não participa de nenhum bolão no Presumidos.
             </p>

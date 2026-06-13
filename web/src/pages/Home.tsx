@@ -58,6 +58,7 @@ function LoggedInHome({ user }: { user: UserPublic }) {
   const predictedIds = new Set((predictions.data ?? []).map((p) => p.matchId));
 
   const ranking = leaderboard.data ?? [];
+  const hasAnyPoints = ranking.some((entry) => entry.points > 0);
   const myIndex = ranking.findIndex((e) => e.username === user.username);
   const myEntry = myIndex >= 0 ? ranking[myIndex] : null;
   const firstPool = pools.data?.[0];
@@ -167,6 +168,10 @@ function LoggedInHome({ user }: { user: UserPublic }) {
             <p className="text-ink-muted">Entre em um bolão para disputar o ranking.</p>
           ) : leaderboard.isLoading ? (
             <p className="text-ink-muted">Carregando...</p>
+          ) : !hasAnyPoints ? (
+            <p className="text-ink-muted">
+              Ainda ninguém pontuou no <span className="font-semibold">{firstPool.name}</span>.
+            </p>
           ) : myEntry ? (
             <p className="text-lg">
               No <span className="font-semibold">{firstPool.name}</span>, você está em{" "}

@@ -42,7 +42,7 @@ export function LeaderboardPage() {
         </div>
       ) : pools.data && pools.data.length === 0 ? (
         <Card className="mt-6">
-          <h3 className="text-lg">Seu pódio ainda está no aquecimento</h3>
+          <h3 className="text-lg">Ainda não há ranking por aqui.</h3>
           <p className="mt-1 text-ink-muted">
             Crie um bolão ou entre com um código e deixe a disputa começar.
           </p>
