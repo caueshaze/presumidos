@@ -10,7 +10,15 @@ RUN mkdir -p ferrugem-web/src && \
     rm -rf ferrugem-web/src
 
 COPY . .
-RUN cargo build --release -p ferrugem-web --features server
+
+# Garante que o codigo real entrou no build context.
+RUN test -f ferrugem-web/src/main.rs && \
+    grep -q "serve_application" ferrugem-web/src/main.rs
+
+# Remove o binario dummy antes do build real.
+RUN cargo clean -p ferrugem-web && \
+    cargo build --release -p ferrugem-web --features server && \
+    test "$(stat -c%s target/release/ferrugem-web)" -gt 1000000
 
 FROM debian:bookworm-slim AS runtime
 
