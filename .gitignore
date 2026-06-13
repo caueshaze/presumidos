@@ -1,14 +1,57 @@
+# ==========================================
+# Rust / Cargo
+# ==========================================
 /target/
 **/target/
-
-.DS_Store
 *.rs.bk
+cargo-lock.file # Ative se não quiser commitar o lock do Cargo (geralmente mantido em binários)
 
-/.claude/
-/.git/
-/.env
+# ==========================================
+# Node.js / React / Tailwind
+# ==========================================
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+.turbo/
+dist/
+build/
+.next/
+out/
+.nuxt/
 
-**/bolao.db
-**/bolao.db-*
+# Logs do Node
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
+# ==========================================
+# Banco de Dados (SQLite) & Backups
+# ==========================================
+# Qualquer arquivo SQLite (bolao.db de dev, test.db legado, etc.) — nunca versionar.
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
 /backups/
+
+# ==========================================
+# Arquivos de Ambiente e Segredos (NUNCA COMMITAR)
+# ==========================================
+.env
+.env.local
+.env.*.local
+*.env
+
+# ==========================================
+# IDEs, Ferramentas e Sistema Operacional
+# ==========================================
+.DS_Store
+Thumbs.db
+.claude/
+/.git/
+
+# Se usar VS Code ou JetBrains e quiser ignorar as configs locais:
+# .vscode/
+# .idea/

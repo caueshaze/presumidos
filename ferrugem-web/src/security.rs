@@ -1,7 +1,7 @@
-use dioxus::prelude::ServerFnError;
+use crate::error::ServerFnError;
 
 #[cfg(feature = "server")]
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 #[cfg(feature = "server")]
 use sha2::Digest;
 #[cfg(feature = "server")]
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use crate::config::settings;
 
 #[cfg(feature = "server")]
-type HeaderMap = dioxus::prelude::dioxus_fullstack::HeaderMap;
+use axum::http::HeaderMap;
 
 #[cfg(feature = "server")]
 #[derive(Clone, Copy)]
@@ -202,10 +202,7 @@ fn proxy_boundary_allowed(
 
 #[cfg(feature = "server")]
 pub fn current_peer_ip() -> Option<IpAddr> {
-    dioxus::prelude::dioxus_fullstack::FullstackContext::current().and_then(|ctx| {
-        ctx.extension::<dioxus::server::axum::extract::ConnectInfo<SocketAddr>>()
-            .map(|connect_info| connect_info.0.ip())
-    })
+    crate::context::peer_ip()
 }
 
 #[cfg(feature = "server")]
@@ -302,6 +299,23 @@ pub fn normalize_email(email: String) -> Result<String, ServerFnError> {
 #[cfg(feature = "server")]
 pub fn validate_uuid(field: &str, value: &str) -> Result<(), ServerFnError> {
     uuid::Uuid::parse_str(value).map_err(|_| public_error(format!("{field} invalido.")))?;
+    Ok(())
+}
+
+/// Valida um identificador de partida. Os IDs de partidas vêm do seed (ex.: `jogo-001`),
+/// não são UUIDs — então aceitamos um token curto de [A-Za-z0-9_-]. A existência real é
+/// verificada na consulta seguinte ("Partida nao encontrada.").
+#[cfg(feature = "server")]
+pub fn validate_match_id(value: &str) -> Result<(), ServerFnError> {
+    let value = value.trim();
+    let valid = !value.is_empty()
+        && value.len() <= 64
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !valid {
+        return Err(public_error("Partida invalida."));
+    }
     Ok(())
 }
 
@@ -513,21 +527,12 @@ pub fn parse_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 #[cfg(feature = "server")]
 pub fn set_response_header(name: &'static str, value: String) {
-    if let Some(ctx) = dioxus::prelude::dioxus_fullstack::FullstackContext::current() {
-        if let (Ok(header_name), Ok(header_value)) = (
-            name.parse::<dioxus::prelude::dioxus_fullstack::http::header::HeaderName>(),
-            value.parse::<dioxus::prelude::dioxus_fullstack::HeaderValue>(),
-        ) {
-            ctx.add_response_header(header_name, header_value);
-        }
-    }
+    crate::context::push_response_header(name, value);
 }
 
 #[cfg(feature = "server")]
 pub fn current_headers() -> HeaderMap {
-    dioxus::prelude::dioxus_fullstack::FullstackContext::current()
-        .map(|ctx| ctx.parts_mut().headers.clone())
-        .unwrap_or_default()
+    crate::context::request_headers()
 }
 
 #[cfg(feature = "server")]
@@ -566,26 +571,25 @@ pub fn clear_session_cookie() {
 
 #[cfg(feature = "server")]
 pub fn apply_security_headers() {
-    if dioxus::prelude::dioxus_fullstack::FullstackContext::current().is_some() {
+    set_response_header(
+        "content-security-policy",
+        // SPA React servida estaticamente: scripts e estilos próprios, fontes do Google,
+        // e fetch da API no mesmo host. Sem 'unsafe-inline'/'wasm-unsafe-eval' (não há mais
+        // SSR/WASM do Dioxus). 'style-src' mantém 'unsafe-inline' para estilos utilitários
+        // injetados em runtime (Tailwind/shadcn) e variáveis de tema.
+        "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'".to_string(),
+    );
+    set_response_header(
+        "referrer-policy",
+        "strict-origin-when-cross-origin".to_string(),
+    );
+    set_response_header("x-content-type-options", "nosniff".to_string());
+    set_response_header("x-frame-options", "DENY".to_string());
+    if settings().app_env == "production" && settings().cookie_secure {
         set_response_header(
-            "content-security-policy",
-            // O Dioxus fullstack 0.7 injeta scripts inline no SSR (INITIALIZE_STREAMING_JS e
-            // window.initial_dioxus_hydration_data com dados serializados por requisicao) sem
-            // suporte a nonce nessa versao, por isso 'unsafe-inline' e necessario em script-src.
-            "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'".to_string(),
+            "strict-transport-security",
+            "max-age=31536000; includeSubDomains".to_string(),
         );
-        set_response_header(
-            "referrer-policy",
-            "strict-origin-when-cross-origin".to_string(),
-        );
-        set_response_header("x-content-type-options", "nosniff".to_string());
-        set_response_header("x-frame-options", "DENY".to_string());
-        if settings().app_env == "production" && settings().cookie_secure {
-            set_response_header(
-                "strict-transport-security",
-                "max-age=31536000; includeSubDomains".to_string(),
-            );
-        }
     }
 }
 
@@ -661,7 +665,7 @@ mod tests {
         resolve_client_ip_from_peer_and_headers, RateLimitFailurePolicy, RateLimitRule,
         RateLimiter,
     };
-    use dioxus::prelude::dioxus_fullstack::HeaderMap;
+    use axum::http::HeaderMap;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use std::net::{IpAddr, Ipv4Addr};
@@ -699,7 +703,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         for (name, value) in pairs {
             headers.insert(
-                name.parse::<dioxus::prelude::dioxus_fullstack::http::header::HeaderName>()
+                name.parse::<axum::http::header::HeaderName>()
                     .expect("header name"),
                 value.parse().expect("header value"),
             );

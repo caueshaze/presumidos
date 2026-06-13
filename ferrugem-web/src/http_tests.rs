@@ -1,7 +1,5 @@
 #![cfg(all(test, feature = "server"))]
 
-use dioxus::prelude::*;
-use dioxus::server::{http::Method, FullstackState, ServerFunction};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -9,7 +7,7 @@ use crate::models::{AuthResult, SessionState};
 
 #[derive(Debug, Deserialize)]
 struct ErrorPayload {
-    message: String,
+    error: String,
 }
 
 fn seed_http_test_env() {
@@ -35,8 +33,7 @@ fn seed_http_test_env() {
     std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
 }
 
-/// Sobe o servidor de server functions uma unica vez por binario de teste e
-/// devolve a URL base (`http://127.0.0.1:PORT`).
+/// Sobe a API HTTP uma unica vez por binario de teste e devolve a URL base.
 async fn test_server() -> &'static str {
     static SERVER: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
     SERVER
@@ -44,16 +41,16 @@ async fn test_server() -> &'static str {
             seed_http_test_env();
             crate::db::init().await;
 
-            let app = dioxus::server::axum::Router::new()
-                .register_server_functions()
-                .with_state(FullstackState::headless());
+            let app = axum::Router::new()
+                .nest("/api", crate::api::router())
+                .layer(axum::middleware::from_fn(crate::api::context_middleware));
 
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("bind do listener de teste");
             let addr = listener.local_addr().expect("endereco local");
             tokio::spawn(async move {
-                dioxus::server::axum::serve(
+                axum::serve(
                     listener,
                     app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
                 )
@@ -64,20 +61,6 @@ async fn test_server() -> &'static str {
             format!("http://{addr}")
         })
         .await
-}
-
-/// Descobre a rota registrada para uma server function pelo nome, ja que o
-/// macro `#[server]` aplica um sufixo hash ao path (`/api/<fn><hash>`).
-fn route_for(fn_name: &str) -> (Method, String) {
-    let prefix = format!("/api/{fn_name}");
-    ServerFunction::collect()
-        .into_iter()
-        .find(|f| {
-            f.path().starts_with(&prefix)
-                && f.path()[prefix.len()..].chars().all(|c| c.is_ascii_digit())
-        })
-        .map(|f| (f.method(), f.path().to_string()))
-        .unwrap_or_else(|| panic!("rota nao encontrada para {fn_name}"))
 }
 
 fn client() -> reqwest::Client {
@@ -110,6 +93,15 @@ fn weak_password_hash(password: &str) -> String {
         .to_string()
 }
 
+async fn login(client: &reqwest::Client, base: &str, email: &str, password: &str) -> reqwest::Response {
+    client
+        .post(format!("{base}/api/auth/login"))
+        .json(&json!({ "username": email, "password": password }))
+        .send()
+        .await
+        .expect("requisicao de login")
+}
+
 #[tokio::test]
 async fn login_sets_session_cookie_and_current_user_works() {
     let base = test_server().await;
@@ -119,23 +111,15 @@ async fn login_sets_session_cookie_and_current_user_works() {
 
     let client = client();
 
-    let (method, path) = route_for("login");
-    let login_response = client
-        .request(method, format!("{base}{path}"))
-        .json(&json!({ "username": email, "password": "senha-correta-123" }))
-        .send()
-        .await
-        .expect("requisicao de login");
+    let login_response = login(&client, base, &email, "senha-correta-123").await;
     assert!(login_response.status().is_success(), "login deveria ter sucesso");
 
     let auth_result: AuthResult = login_response.json().await.expect("corpo de login");
     assert_eq!(auth_result.user.email, email);
     assert!(!auth_result.csrf_token.is_empty());
 
-    let (method, path) = route_for("current_user");
     let current_response = client
-        .request(method, format!("{base}{path}"))
-        .json(&json!({ "token": "" }))
+        .get(format!("{base}/api/auth/current-user"))
         .send()
         .await
         .expect("requisicao current_user");
@@ -164,15 +148,9 @@ async fn login_rehashes_password_with_outdated_parameters() {
     .expect("inserir usuario com hash fraco");
 
     let client = client();
-    let (method, path) = route_for("login");
 
     // Senha errada nao deve alterar o hash armazenado.
-    let wrong_password = client
-        .request(method.clone(), format!("{base}{path}"))
-        .json(&json!({ "username": email, "password": "senha-incorreta" }))
-        .send()
-        .await
-        .expect("requisicao de login com senha errada");
+    let wrong_password = login(&client, base, &email, "senha-incorreta").await;
     assert!(!wrong_password.status().is_success());
 
     let hash_after_wrong_password: (String,) =
@@ -184,12 +162,7 @@ async fn login_rehashes_password_with_outdated_parameters() {
     assert_eq!(hash_after_wrong_password.0, weak_hash);
 
     // Senha correta com hash desatualizado deve disparar rehash transparente.
-    let login_response = client
-        .request(method, format!("{base}{path}"))
-        .json(&json!({ "username": email, "password": "senha-correta-123" }))
-        .send()
-        .await
-        .expect("requisicao de login com senha correta");
+    let login_response = login(&client, base, &email, "senha-correta-123").await;
     assert!(login_response.status().is_success());
 
     let hash_after_login: (String,) =
@@ -218,31 +191,21 @@ async fn logout_requires_valid_csrf_token() {
 
     let client = client();
 
-    let (method, path) = route_for("login");
-    let login_response = client
-        .request(method, format!("{base}{path}"))
-        .json(&json!({ "username": email, "password": "senha-correta-123" }))
-        .send()
-        .await
-        .expect("requisicao de login");
+    let login_response = login(&client, base, &email, "senha-correta-123").await;
     let auth_result: AuthResult = login_response.json().await.expect("corpo de login");
 
-    let (method, path) = route_for("logout");
-
     let bad_logout = client
-        .request(method.clone(), format!("{base}{path}"))
-        .json(&json!({ "token": "", "csrf_token": "token-errado" }))
+        .post(format!("{base}/api/auth/logout"))
+        .header("X-CSRF-Token", "token-errado")
         .send()
         .await
         .expect("requisicao de logout com csrf invalido");
     assert!(!bad_logout.status().is_success());
     let error: ErrorPayload = bad_logout.json().await.expect("corpo de erro");
-    assert!(error.message.to_lowercase().contains("seguranca"));
+    assert!(error.error.to_lowercase().contains("seguranca"));
 
-    let (method2, path2) = route_for("current_user");
     let still_logged_in = client
-        .request(method2.clone(), format!("{base}{path2}"))
-        .json(&json!({ "token": "" }))
+        .get(format!("{base}/api/auth/current-user"))
         .send()
         .await
         .expect("requisicao current_user");
@@ -250,16 +213,15 @@ async fn logout_requires_valid_csrf_token() {
     assert!(session.user.is_some(), "csrf invalido nao deveria deslogar");
 
     let good_logout = client
-        .request(method, format!("{base}{path}"))
-        .json(&json!({ "token": "", "csrf_token": auth_result.csrf_token }))
+        .post(format!("{base}/api/auth/logout"))
+        .header("X-CSRF-Token", auth_result.csrf_token)
         .send()
         .await
         .expect("requisicao de logout com csrf valido");
     assert!(good_logout.status().is_success());
 
     let logged_out = client
-        .request(method2, format!("{base}{path2}"))
-        .json(&json!({ "token": "" }))
+        .get(format!("{base}/api/auth/current-user"))
         .send()
         .await
         .expect("requisicao current_user apos logout");
@@ -276,27 +238,22 @@ async fn admin_reauth_flow_and_rate_limit() {
 
     let client = client();
 
-    let (method, path) = route_for("login");
-    let login_response = client
-        .request(method, format!("{base}{path}"))
-        .json(&json!({ "username": email, "password": "senha-correta-123" }))
-        .send()
-        .await
-        .expect("requisicao de login");
+    let login_response = login(&client, base, &email, "senha-correta-123").await;
     let auth_result: AuthResult = login_response.json().await.expect("corpo de login");
-
-    let (method, path) = route_for("confirm_admin_password");
+    let csrf = auth_result.csrf_token;
+    let reauth_url = format!("{base}/api/auth/reauth");
 
     // Senha errada nao altera o estado da sessao.
     let wrong_password = client
-        .request(method.clone(), format!("{base}{path}"))
-        .json(&json!({ "password": "senha-errada", "csrf_token": auth_result.csrf_token }))
+        .post(&reauth_url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "password": "senha-errada" }))
         .send()
         .await
-        .expect("confirm_admin_password com senha errada");
+        .expect("reauth com senha errada");
     assert!(!wrong_password.status().is_success());
     let error: ErrorPayload = wrong_password.json().await.expect("corpo de erro");
-    assert!(error.message.to_lowercase().contains("senha de administrador"));
+    assert!(error.error.to_lowercase().contains("senha de administrador"));
 
     let admin_reauthed_after_failure: (Option<String>,) = sqlx::query_as(
         "SELECT admin_reauthed_at FROM sessions WHERE user_id = ?1",
@@ -309,11 +266,12 @@ async fn admin_reauth_flow_and_rate_limit() {
 
     // Senha correta confirma a reautenticacao recente.
     let right_password = client
-        .request(method.clone(), format!("{base}{path}"))
-        .json(&json!({ "password": "senha-correta-123", "csrf_token": auth_result.csrf_token }))
+        .post(&reauth_url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "password": "senha-correta-123" }))
         .send()
         .await
-        .expect("confirm_admin_password com senha correta");
+        .expect("reauth com senha correta");
     assert!(right_password.status().is_success());
 
     let admin_reauthed_after_success: (Option<String>,) = sqlx::query_as(
@@ -340,14 +298,15 @@ async fn admin_reauth_flow_and_rate_limit() {
     let mut last_message = String::new();
     for _ in 0..6 {
         let response = client
-            .request(method.clone(), format!("{base}{path}"))
-            .json(&json!({ "password": "senha-errada", "csrf_token": auth_result.csrf_token }))
+            .post(&reauth_url)
+            .header("X-CSRF-Token", &csrf)
+            .json(&json!({ "password": "senha-errada" }))
             .send()
             .await
-            .expect("confirm_admin_password repetido");
+            .expect("reauth repetido");
         assert!(!response.status().is_success());
         let error: ErrorPayload = response.json().await.expect("corpo de erro");
-        last_message = error.message;
+        last_message = error.error;
     }
     assert!(
         last_message.to_lowercase().contains("muitas tentativas"),

@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-bg font-body text-ink;
+    margin: 0;
+    min-height: 100vh;
+    background-image: linear-gradient(180deg, #eaf6f0 0%, #fff8e7 100%);
+    background-attachment: fixed;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-heading;
+    font-weight: 600;
+  }
+
+  /* Bolhas pastel flutuantes ao fundo (decorativo). */
+  body::before,
+  body::after {
+    content: "";
+    position: fixed;
+    pointer-events: none;
+    z-index: -1;
+    border-radius: 999px;
+    filter: blur(10px);
+  }
+  body::before {
+    top: -40px;
+    right: -60px;
+    width: 220px;
+    height: 220px;
+    background: rgba(168, 230, 207, 0.32);
+    @apply animate-floatBlob;
+  }
+  body::after {
+    left: -70px;
+    bottom: 40px;
+    width: 260px;
+    height: 260px;
+    background: rgba(160, 210, 235, 0.22);
+    animation: floatBlob 18s ease-in-out infinite reverse;
+  }
+}
+
+@layer components {
+  /* Tira números do input number sem afetar acessibilidade. */
+  .score-input::-webkit-outer-spin-button,
+  .score-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .score-input {
+    -moz-appearance: textfield;
+  }
+}

@@ -1,16 +1,9 @@
-use dioxus::prelude::*;
+use crate::error::ServerFnError;
 
 use crate::models::{AuthResult, SessionState, UserPublic};
 
-#[cfg(target_arch = "wasm32")]
-fn local_storage() -> Option<web_sys::Storage> {
-    web_sys::window()
-        .and_then(|window| window.local_storage().ok())
-        .flatten()
-}
-
 #[cfg(feature = "server")]
-type HeaderMap = dioxus::prelude::dioxus_fullstack::HeaderMap;
+use axum::http::HeaderMap;
 
 #[cfg(feature = "server")]
 #[derive(Debug, Clone)]
@@ -53,51 +46,6 @@ fn parsed_sqlite_utc(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
         .ok()
         .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
-}
-
-/// Estado de autenticação compartilhado via contexto.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AuthState {
-    pub user: Option<UserPublic>,
-    pub token: String,
-    pub csrf_token: String,
-    pub loading: bool,
-}
-
-impl Default for AuthState {
-    fn default() -> Self {
-        Self {
-            user: None,
-            token: String::new(),
-            csrf_token: String::new(),
-            loading: true,
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn clear_token() {
-    const TOKEN_KEY: &str = "bolao_token";
-    if let Some(storage) = local_storage() {
-        let _ = storage.remove_item(TOKEN_KEY);
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub async fn clear_token() {}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn load_token() -> String {
-    const TOKEN_KEY: &str = "bolao_token";
-    local_storage()
-        .and_then(|storage| storage.get_item(TOKEN_KEY).ok())
-        .flatten()
-        .unwrap_or_default()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub async fn load_token() -> String {
-    String::new()
 }
 
 #[cfg(feature = "server")]
@@ -617,7 +565,7 @@ pub async fn require_recent_admin(token: &str) -> Result<AuthSession, ServerFnEr
 
 /// Passo 1 do cadastro: valida os dados, guarda um cadastro pendente e envia
 /// um codigo de verificacao por email. A conta so e criada apos `confirm_registration`.
-#[server]
+#[cfg(feature = "server")]
 pub async fn request_registration(
     username: String,
     email: String,
@@ -695,7 +643,7 @@ pub async fn request_registration(
 }
 
 /// Passo 2 do cadastro: confere o codigo, cria a conta de fato e inicia a sessao.
-#[server]
+#[cfg(feature = "server")]
 pub async fn confirm_registration(
     email: String,
     code: String,
@@ -805,7 +753,7 @@ pub async fn confirm_registration(
 
 /// Passo 1 do reset: gera e envia um codigo por email. Sempre retorna `Ok`
 /// (mesmo para email inexistente) para nao revelar quais emails existem.
-#[server]
+#[cfg(feature = "server")]
 pub async fn request_password_reset(email: String) -> Result<(), ServerFnError> {
     use crate::db::pool;
     use std::time::Duration;
@@ -881,7 +829,7 @@ pub async fn request_password_reset(email: String) -> Result<(), ServerFnError> 
 }
 
 /// Passo 2 do reset: confere o codigo, troca a senha e invalida sessoes antigas.
-#[server]
+#[cfg(feature = "server")]
 pub async fn confirm_password_reset(
     email: String,
     code: String,
@@ -1048,7 +996,7 @@ pub async fn run_bootstrap_admin(
     })
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn login(
     username: String,
     password: String,
@@ -1192,7 +1140,7 @@ pub async fn login(
     })
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn confirm_admin_password(
     password: String,
     csrf_token: String,
@@ -1283,7 +1231,7 @@ pub async fn confirm_admin_password(
     Ok(())
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn logout(
     token: String,
     csrf_token: String,
@@ -1310,7 +1258,7 @@ pub async fn logout(
     Ok(())
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn current_user(
     token: String,
 ) -> Result<SessionState, ServerFnError> {

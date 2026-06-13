@@ -1,4 +1,4 @@
-use dioxus::prelude::*;
+use crate::error::ServerFnError;
 
 use crate::models::PoolSummary;
 
@@ -25,7 +25,7 @@ async fn generate_invite_code(pool: &sqlx::SqlitePool) -> Result<String, ServerF
     ))
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnError> {
     use crate::auth::require_user;
     use crate::db::pool;
@@ -57,7 +57,7 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
         .collect())
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn create_pool(
     token: String,
     name: String,
@@ -109,7 +109,7 @@ pub async fn create_pool(
     })
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn join_pool(
     token: String,
     invite_code: String,

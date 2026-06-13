@@ -1,5 +1,7 @@
 target
 **/target
+**/node_modules
+web/dist
 .git
 .gitignore
 .claude

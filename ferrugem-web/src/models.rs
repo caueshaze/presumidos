@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct UserPublic {
     pub id: String,
     pub username: String,
@@ -9,6 +10,7 @@ pub struct UserPublic {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthResult {
     pub user: UserPublic,
     pub token: String,
@@ -16,12 +18,14 @@ pub struct AuthResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionState {
     pub user: Option<UserPublic>,
     pub csrf_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct PoolSummary {
     pub id: String,
     pub name: String,
@@ -30,6 +34,7 @@ pub struct PoolSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct MatchRecord {
     pub id: String,
     pub home_team: String,
@@ -44,9 +49,13 @@ pub struct MatchRecord {
     pub went_to_penalties: bool,
     pub penalty_home_score: Option<i64>,
     pub penalty_away_score: Option<i64>,
+    /// Rótulo oficial de "jogo finalizado". Não afeta a pontuação (o placar já
+    /// conta quando preenchido); é só o indicador de partida encerrada.
+    pub finished: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct PredictionRecord {
     pub match_id: String,
     pub home_score: i64,
@@ -60,6 +69,7 @@ pub struct PredictionRecord {
 
 /// Campos de mata-mata de um palpite ou resultado oficial, transportados juntos.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct KnockoutEntry {
     /// 'home' ou 'away' — quem se classifica.
     pub qualifier: Option<String>,
@@ -81,6 +91,7 @@ pub fn is_knockout(phase: Option<&str>) -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct LeaderboardEntry {
     pub username: String,
     pub points: i64,

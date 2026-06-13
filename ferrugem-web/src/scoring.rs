@@ -1,4 +1,4 @@
-use dioxus::prelude::*;
+use crate::error::ServerFnError;
 
 use crate::models::LeaderboardEntry;
 
@@ -100,7 +100,7 @@ pub fn match_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> i
 
 /// Calcula o ranking de um bolão somando a pontuação de cada palpite contra os
 /// resultados oficiais já lançados.
-#[server]
+#[cfg(feature = "server")]
 pub async fn get_leaderboard(
     token: String,
     pool_id: String,

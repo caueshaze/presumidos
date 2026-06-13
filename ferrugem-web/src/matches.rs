@@ -1,4 +1,4 @@
-use dioxus::prelude::*;
+use crate::error::ServerFnError;
 
 use crate::models::{KnockoutEntry, MatchRecord, PredictionRecord};
 
@@ -17,6 +17,7 @@ struct MatchRow {
     went_to_penalties: bool,
     penalty_home_score: Option<i64>,
     penalty_away_score: Option<i64>,
+    finished: bool,
 }
 
 #[cfg(feature = "server")]
@@ -54,12 +55,12 @@ async fn token_is_admin(
     crate::auth::require_admin(token).await.is_ok()
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn is_knockout_released() -> Result<bool, ServerFnError> {
     knockout_released_flag().await
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn list_matches(
     token: String,
 ) -> Result<Vec<MatchRecord>, ServerFnError> {
@@ -74,7 +75,7 @@ pub async fn list_matches(
         sqlx::query_as::<_, MatchRow>(
             "SELECT id, home_team, away_team, kickoff, group_name, phase,
                     home_score, away_score, qualifier, went_to_penalties,
-                    penalty_home_score, penalty_away_score
+                    penalty_home_score, penalty_away_score, finished
              FROM matches
              ORDER BY kickoff ASC",
         )
@@ -84,7 +85,7 @@ pub async fn list_matches(
         sqlx::query_as::<_, MatchRow>(
             "SELECT id, home_team, away_team, kickoff, group_name, phase,
                     home_score, away_score, qualifier, went_to_penalties,
-                    penalty_home_score, penalty_away_score
+                    penalty_home_score, penalty_away_score, finished
              FROM matches
              WHERE phase = 'Fase de grupos'
              ORDER BY kickoff ASC",
@@ -109,11 +110,12 @@ pub async fn list_matches(
             went_to_penalties: row.went_to_penalties,
             penalty_home_score: row.penalty_home_score,
             penalty_away_score: row.penalty_away_score,
+            finished: row.finished,
         })
         .collect())
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn get_my_predictions(
     token: String,
 ) -> Result<Vec<PredictionRecord>, ServerFnError> {
@@ -231,7 +233,7 @@ fn sanitize_knockout_input(
     })
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn submit_prediction(
     token: String,
     match_id: String,
@@ -247,7 +249,7 @@ pub async fn submit_prediction(
     use uuid::Uuid;
 
     crate::security::apply_security_headers();
-    crate::security::validate_uuid("Partida", &match_id)?;
+    crate::security::validate_match_id(&match_id)?;
     if home_score < 0 || away_score < 0 {
         return Err(crate::security::public_error("Os placares nao podem ser negativos."));
     }
@@ -314,7 +316,7 @@ pub async fn submit_prediction(
     Ok(())
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn set_match_result(
     token: String,
     match_id: String,
@@ -330,7 +332,7 @@ pub async fn set_match_result(
 
     crate::security::apply_security_headers();
     let headers = crate::security::current_headers();
-    crate::security::validate_uuid("Partida", &match_id)?;
+    crate::security::validate_match_id(&match_id)?;
     let session = require_recent_admin(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
@@ -409,7 +411,7 @@ pub async fn set_match_result(
     Ok(())
 }
 
-#[server]
+#[cfg(feature = "server")]
 pub async fn set_knockout_released(
     token: String,
     released: bool,
@@ -445,7 +447,50 @@ pub async fn set_knockout_released(
     Ok(())
 }
 
-#[server]
+/// Marca/desmarca um jogo como finalizado (rótulo oficial). Não altera o placar
+/// nem a pontuação — o placar já conta no ranking quando preenchido.
+#[cfg(feature = "server")]
+pub async fn set_match_finished(
+    token: String,
+    match_id: String,
+    finished: bool,
+    csrf_token: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::require_recent_admin;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    crate::security::validate_match_id(&match_id)?;
+    let headers = crate::security::current_headers();
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    let result = sqlx::query("UPDATE matches SET finished = ?1 WHERE id = ?2")
+        .bind(finished)
+        .bind(&match_id)
+        .execute(pool())
+        .await
+        .map_err(|e| crate::security::internal_error("set_match_finished", e))?;
+
+    if result.rows_affected() == 0 {
+        return Err(crate::security::public_error("Partida nao encontrada."));
+    }
+
+    crate::security::append_audit_log(
+        pool(),
+        Some(&session.user_id),
+        "match_finished_changed",
+        "match",
+        Some(&match_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({ "finished": finished }),
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[cfg(feature = "server")]
 pub async fn update_match_teams(
     token: String,
     match_id: String,
@@ -458,7 +503,7 @@ pub async fn update_match_teams(
 
     crate::security::apply_security_headers();
     let headers = crate::security::current_headers();
-    crate::security::validate_uuid("Partida", &match_id)?;
+    crate::security::validate_match_id(&match_id)?;
     let session = require_recent_admin(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 

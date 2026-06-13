@@ -3,7 +3,7 @@
 //! O cliente le `RESEND_API_KEY`/`RESEND_FROM_EMAIL` da configuracao
 //! (carregada do `.env` em [`crate::config`]).
 
-use dioxus::prelude::ServerFnError;
+use crate::error::ServerFnError;
 use std::sync::OnceLock;
 
 use resend_rs::types::CreateEmailBaseOptions;

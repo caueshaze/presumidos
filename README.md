@@ -117,7 +117,18 @@ Fluxo operacional:
 4. rotacionar ou remover `ADMIN_BOOTSTRAP_SECRET`
 5. seguir a operacao normal
 
-Exemplo recomendado em desenvolvimento, com senha interativa:
+Em desenvolvimento, o atalho é o script (roda da raiz, carrega o `.env` e o `bolao.db`):
+
+```bash
+scripts/dev-admin.sh admin admin@local.dev
+# ou, sem prompt de senha:
+BOOTSTRAP_ADMIN_PASSWORD='senha-de-dev' scripts/dev-admin.sh admin admin@local.dev
+```
+
+> O bootstrap cria o *primeiro* admin e só funciona enquanto não houver nenhum.
+> Para recomeçar o dev do zero: `rm -f bolao.db bolao.db-shm bolao.db-wal` e rode o script de novo.
+
+Equivalente manual, com senha interativa:
 
 ```bash
 cargo run -p ferrugem-web --features server -- \
@@ -140,7 +151,7 @@ Em producao, prefira executar o binario ja construído dentro do container:
 
 ```bash
 docker compose exec ferrugem-web \
-  /app/server bootstrap-admin \
+  /app/ferrugem-web bootstrap-admin \
   --username admin \
   --email admin@seudominio.com
 ```
@@ -195,7 +206,7 @@ O bootstrap inicial do admin deve ser executado dentro do container do app:
 
 ```bash
 docker compose exec ferrugem-web \
-  /app/server bootstrap-admin \
+  /app/ferrugem-web bootstrap-admin \
   --username admin \
   --email admin@seudominio.com
 ```
