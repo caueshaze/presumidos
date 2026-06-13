@@ -24,6 +24,7 @@ services:
     networks:
       origin:
         ipv4_address: 172.31.0.20
+      egress: {}
 
   redis:
     image: redis:7-alpine
@@ -75,6 +76,9 @@ services:
 
 networks:
   public:
+
+  egress:
+
   origin:
     internal: true
     ipam:

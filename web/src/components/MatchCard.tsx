@@ -28,12 +28,28 @@ function ScoreInputs({ children }: { children: React.ReactNode }) {
 function ScoreBox(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <Input
-      type="number"
-      min={0}
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      autoComplete="off"
       className="score-input w-20 text-center text-xl font-heading font-bold"
       {...props}
     />
   );
+}
+
+function scoreToField(value: number | null | undefined): string {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+function normalizeScoreField(raw: string): string {
+  const digits = raw.replace(/\D+/g, "");
+  if (!digits) return "";
+  return digits.replace(/^0+(?=\d)/, "");
+}
+
+function scoreValue(field: string): number {
+  return field === "" ? 0 : parseInt(field, 10) || 0;
 }
 
 interface Props {
@@ -55,17 +71,17 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
   const reauth = useReauth();
 
   // ---- Palpite do usuário ----
-  const initialHome = prediction?.homeScore ?? 0;
-  const initialAway = prediction?.awayScore ?? 0;
+  const initialHome = scoreToField(prediction?.homeScore);
+  const initialAway = scoreToField(prediction?.awayScore);
   const [homeGuess, setHomeGuess] = useState(initialHome);
   const [awayGuess, setAwayGuess] = useState(initialAway);
   const [qualifier, setQualifier] = useState(
-    prediction?.qualifier ?? winnerSide(initialHome, initialAway) ?? "home",
+    prediction?.qualifier ?? winnerSide(scoreValue(initialHome), scoreValue(initialAway)) ?? "home",
   );
   const [qualifierTouched, setQualifierTouched] = useState(!!prediction?.qualifier);
   const [wentPens, setWentPens] = useState(prediction?.wentToPenalties ?? false);
-  const [penHome, setPenHome] = useState<number | null>(prediction?.penaltyHomeScore ?? null);
-  const [penAway, setPenAway] = useState<number | null>(prediction?.penaltyAwayScore ?? null);
+  const [penHome, setPenHome] = useState(scoreToField(prediction?.penaltyHomeScore));
+  const [penAway, setPenAway] = useState(scoreToField(prediction?.penaltyAwayScore));
   const [savedMessage, setSavedMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -77,15 +93,15 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
   }, [savedMessage]);
 
   useEffect(() => {
-    setResultHome(game.homeScore);
-    setResultAway(game.awayScore);
+    setResultHome(scoreToField(game.homeScore));
+    setResultAway(scoreToField(game.awayScore));
     setResultQualifier(
       game.qualifier ?? winnerSide(game.homeScore ?? 0, game.awayScore ?? 0) ?? "home",
     );
     setResultQualTouched(!!game.qualifier);
     setResultPens(game.wentToPenalties);
-    setResultPenHome(game.penaltyHomeScore);
-    setResultPenAway(game.penaltyAwayScore);
+    setResultPenHome(scoreToField(game.penaltyHomeScore));
+    setResultPenAway(scoreToField(game.penaltyAwayScore));
   }, [
     game.homeScore,
     game.awayScore,
@@ -101,15 +117,15 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
   }, [game.homeTeam, game.awayTeam]);
 
   // ---- Resultado oficial (admin) ----
-  const [resultHome, setResultHome] = useState<number | null>(game.homeScore);
-  const [resultAway, setResultAway] = useState<number | null>(game.awayScore);
+  const [resultHome, setResultHome] = useState(scoreToField(game.homeScore));
+  const [resultAway, setResultAway] = useState(scoreToField(game.awayScore));
   const [resultQualifier, setResultQualifier] = useState(
     game.qualifier ?? winnerSide(game.homeScore ?? 0, game.awayScore ?? 0) ?? "home",
   );
   const [resultQualTouched, setResultQualTouched] = useState(!!game.qualifier);
   const [resultPens, setResultPens] = useState(game.wentToPenalties);
-  const [resultPenHome, setResultPenHome] = useState<number | null>(game.penaltyHomeScore);
-  const [resultPenAway, setResultPenAway] = useState<number | null>(game.penaltyAwayScore);
+  const [resultPenHome, setResultPenHome] = useState(scoreToField(game.penaltyHomeScore));
+  const [resultPenAway, setResultPenAway] = useState(scoreToField(game.penaltyAwayScore));
   const [resultError, setResultError] = useState("");
 
   // ---- Confronto (admin) ----
@@ -121,14 +137,14 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
     (team, position, allTeams) => allTeams.indexOf(team) === position && !isKnownSelection(team),
   );
 
-  const buildKnockout = (home: number, away: number, q: string, pens: boolean, ph: number | null, pa: number | null): KnockoutEntry => {
+  const buildKnockout = (home: number, away: number, q: string, pens: boolean, ph: string, pa: string): KnockoutEntry => {
     if (!knockout) return { qualifier: null, wentToPenalties: false, penaltyHome: null, penaltyAway: null };
     const wentPenalties = pens && home === away;
     return {
       qualifier: q,
       wentToPenalties: wentPenalties,
-      penaltyHome: wentPenalties ? ph : null,
-      penaltyAway: wentPenalties ? pa : null,
+      penaltyHome: wentPenalties && ph !== "" ? scoreValue(ph) : null,
+      penaltyAway: wentPenalties && pa !== "" ? scoreValue(pa) : null,
     };
   };
 
@@ -137,11 +153,13 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
     setSavedMessage("");
     setError("");
     try {
+      const home = scoreValue(homeGuess);
+      const away = scoreValue(awayGuess);
       await submit.mutateAsync({
         matchId: game.id,
-        homeScore: homeGuess,
-        awayScore: awayGuess,
-        knockout: buildKnockout(homeGuess, awayGuess, qualifier, wentPens, penHome, penAway),
+        homeScore: home,
+        awayScore: away,
+        knockout: buildKnockout(home, away, qualifier, wentPens, penHome, penAway),
       });
       setSavedMessage("Palpite salvo!");
     } catch (err) {
@@ -152,8 +170,8 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
   const onSaveResult = async (e: FormEvent) => {
     e.preventDefault();
     setResultError("");
-    const home = resultHome ?? 0;
-    const away = resultAway ?? 0;
+    const home = scoreValue(resultHome);
+    const away = scoreValue(resultAway);
     try {
       await withAdminReauth(
         () =>
@@ -270,14 +288,15 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
             <ScoreBox
               value={homeGuess}
               onChange={(e) => {
-                const v = parseInt(e.target.value) || 0;
-                setHomeGuess(v);
+                const next = normalizeScoreField(e.target.value);
+                const v = scoreValue(next);
+                setHomeGuess(next);
                 if (knockout) {
                   if (!qualifierTouched) {
-                    const w = winnerSide(v, awayGuess);
+                    const w = winnerSide(v, scoreValue(awayGuess));
                     if (w) setQualifier(w);
                   }
-                  if (v !== awayGuess) setWentPens(false);
+                  if (v !== scoreValue(awayGuess)) setWentPens(false);
                 }
               }}
             />
@@ -285,14 +304,15 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
             <ScoreBox
               value={awayGuess}
               onChange={(e) => {
-                const v = parseInt(e.target.value) || 0;
-                setAwayGuess(v);
+                const next = normalizeScoreField(e.target.value);
+                const v = scoreValue(next);
+                setAwayGuess(next);
                 if (knockout) {
                   if (!qualifierTouched) {
-                    const w = winnerSide(homeGuess, v);
+                    const w = winnerSide(scoreValue(homeGuess), v);
                     if (w) setQualifier(w);
                   }
-                  if (homeGuess !== v) setWentPens(false);
+                  if (scoreValue(homeGuess) !== v) setWentPens(false);
                 }
               }}
             />
@@ -311,7 +331,7 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
                 <option value="home">{formatSelectionLabel(game.homeTeam)}</option>
                 <option value="away">{formatSelectionLabel(game.awayTeam)}</option>
               </Select>
-              {homeGuess === awayGuess && (
+              {scoreValue(homeGuess) === scoreValue(awayGuess) && (
                 <>
                   <label className="flex items-center gap-2 text-sm">
                     <input
@@ -326,13 +346,13 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
                       <Label>Placar dos pênaltis (opcional)</Label>
                       <ScoreInputs>
                         <ScoreBox
-                          value={penHome ?? 0}
-                          onChange={(e) => setPenHome(parseInt(e.target.value) || 0)}
+                          value={penHome}
+                          onChange={(e) => setPenHome(normalizeScoreField(e.target.value))}
                         />
                         <span className="font-heading text-xl font-bold text-ink-muted">x</span>
                         <ScoreBox
-                          value={penAway ?? 0}
-                          onChange={(e) => setPenAway(parseInt(e.target.value) || 0)}
+                          value={penAway}
+                          onChange={(e) => setPenAway(normalizeScoreField(e.target.value))}
                         />
                       </ScoreInputs>
                     </>
@@ -431,13 +451,14 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
             {knockout && <Label>Resultado no tempo normal</Label>}
             <ScoreInputs>
               <ScoreBox
-                value={resultHome ?? 0}
-                onChange={(e) => {
-                  const v = e.target.value === "" ? null : parseInt(e.target.value) || 0;
-                  setResultHome(v);
+              value={resultHome ?? 0}
+              onChange={(e) => {
+                  const next = normalizeScoreField(e.target.value);
+                  const v = scoreValue(next);
+                  setResultHome(next);
                   if (knockout) {
-                    const h = v ?? 0;
-                    const a = resultAway ?? 0;
+                    const h = v;
+                    const a = scoreValue(resultAway);
                     if (!resultQualTouched) {
                       const w = winnerSide(h, a);
                       if (w) setResultQualifier(w);
@@ -448,13 +469,14 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
               />
               <span className="font-heading text-xl font-bold text-ink-muted">x</span>
               <ScoreBox
-                value={resultAway ?? 0}
+                value={resultAway}
                 onChange={(e) => {
-                  const v = e.target.value === "" ? null : parseInt(e.target.value) || 0;
-                  setResultAway(v);
+                  const next = normalizeScoreField(e.target.value);
+                  const v = scoreValue(next);
+                  setResultAway(next);
                   if (knockout) {
-                    const h = resultHome ?? 0;
-                    const a = v ?? 0;
+                    const h = scoreValue(resultHome);
+                    const a = v;
                     if (!resultQualTouched) {
                       const w = winnerSide(h, a);
                       if (w) setResultQualifier(w);
@@ -478,7 +500,7 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
                   <option value="home">{formatSelectionLabel(game.homeTeam)}</option>
                   <option value="away">{formatSelectionLabel(game.awayTeam)}</option>
                 </Select>
-                {(resultHome ?? 0) === (resultAway ?? 0) && (
+                {scoreValue(resultHome) === scoreValue(resultAway) && (
                   <>
                     <label className="flex items-center gap-2 text-sm">
                       <input
@@ -493,13 +515,13 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
                         <Label>Placar dos pênaltis (opcional)</Label>
                         <ScoreInputs>
                           <ScoreBox
-                            value={resultPenHome ?? 0}
-                            onChange={(e) => setResultPenHome(parseInt(e.target.value) || 0)}
+                            value={resultPenHome}
+                            onChange={(e) => setResultPenHome(normalizeScoreField(e.target.value))}
                           />
                           <span className="font-heading text-xl font-bold text-ink-muted">x</span>
                           <ScoreBox
-                            value={resultPenAway ?? 0}
-                            onChange={(e) => setResultPenAway(parseInt(e.target.value) || 0)}
+                            value={resultPenAway}
+                            onChange={(e) => setResultPenAway(normalizeScoreField(e.target.value))}
                           />
                         </ScoreInputs>
                       </>
