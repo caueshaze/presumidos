@@ -97,6 +97,10 @@ pub fn LoginPage() -> Element {
                 "Não tem conta? "
                 Link { to: Route::Register {}, "Registre-se aqui" }
             }
+            p {
+                class: "form-footer",
+                Link { to: Route::ForgotPassword {}, "Esqueci minha senha" }
+            }
         }
     }
 }

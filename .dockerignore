@@ -1,0 +1,9 @@
+target
+**/target
+.git
+.gitignore
+.claude
+.env
+bolao.db
+**/bolao.db
+**/bolao.db-*

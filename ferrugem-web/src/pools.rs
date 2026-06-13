@@ -126,14 +126,20 @@ pub async fn join_pool(
 
     let invite_code = crate::security::normalize_required_text("Codigo de convite", invite_code, 6, 12)?
         .to_uppercase();
-    crate::security::enforce_rate_limit(
-        "join_pool",
-        &format!("{}:{invite_code}", crate::security::client_ip(&headers)),
-        crate::security::RateLimitRule {
+    let client_ip = crate::security::client_ip(&headers);
+    crate::security::enforce_rate_limit(crate::security::RateLimitRequest {
+        key: format!("rl:join_pool:ip:{client_ip}"),
+        rule: crate::security::RateLimitRule {
             window: Duration::from_secs(60),
             max_attempts: 12,
         },
-    )?;
+        blocked_event: "rate_limit_triggered_join_pool_ip",
+        failure_policy: crate::security::RateLimitFailurePolicy::FailOpen,
+        audit_fields: serde_json::json!({
+            "client_ip": client_ip,
+        }),
+    })
+    .await?;
 
     let db = pool();
 

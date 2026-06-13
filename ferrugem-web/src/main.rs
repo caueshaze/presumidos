@@ -4,6 +4,7 @@ mod auth;
 mod models;
 mod login;
 mod register;
+mod forgot_password;
 mod dashboard;
 mod pools;
 mod matches;
@@ -17,6 +18,10 @@ mod db;
 mod config;
 #[cfg(feature = "server")]
 mod security;
+#[cfg(feature = "server")]
+mod email;
+#[cfg(all(test, feature = "server"))]
+mod http_tests;
 
 use crate::auth::AuthState;
 
@@ -30,6 +35,8 @@ enum Route {
     Login {},
     #[route("/register")]
     Register {},
+    #[route("/forgot-password")]
+    ForgotPassword {},
     #[route("/dashboard")]
     Dashboard {},
     #[route("/predictions")]
@@ -41,6 +48,7 @@ enum Route {
 // Importar os novos componentes
 use crate::login::LoginPage;
 use crate::register::RegisterPage;
+use crate::forgot_password::ForgotPasswordPage;
 use crate::dashboard::Dashboard;
 use crate::predictions::Predictions;
 use crate::leaderboard::Leaderboard;
@@ -48,13 +56,133 @@ use crate::leaderboard::Leaderboard;
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
-fn main() {
-    #[cfg(feature = "server")]
-    {
-        let rt = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
-        rt.block_on(db::init());
+#[cfg(feature = "server")]
+#[derive(Debug)]
+struct BootstrapAdminArgs {
+    username: String,
+    email: String,
+    password: String,
+}
+
+#[cfg(feature = "server")]
+fn parse_bootstrap_admin_args<I>(mut args: I) -> Result<BootstrapAdminArgs, String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut username = None;
+    let mut email = None;
+
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--username" => username = args.next(),
+            "--email" => email = args.next(),
+            unknown => {
+                return Err(format!(
+                    "argumento desconhecido: {unknown}. Use --username e --email."
+                ));
+            }
+        }
     }
 
+    let password = if let Ok(value) = std::env::var("BOOTSTRAP_ADMIN_PASSWORD") {
+        value
+    } else {
+        let first =
+            rpassword::prompt_password("Senha do admin inicial: ").map_err(|e| e.to_string())?;
+        let second = rpassword::prompt_password("Confirme a senha: ").map_err(|e| e.to_string())?;
+        if first != second {
+            return Err("as senhas digitadas nao conferem".to_string());
+        }
+        first
+    };
+
+    Ok(BootstrapAdminArgs {
+        username: username
+            .ok_or_else(|| "faltou --username para o bootstrap inicial".to_string())?,
+        email: email.ok_or_else(|| "faltou --email para o bootstrap inicial".to_string())?,
+        password,
+    })
+}
+
+#[cfg(feature = "server")]
+fn try_handle_server_command() -> Option<i32> {
+    let mut args = std::env::args().skip(1);
+    let command = args.next()?;
+    if command != "bootstrap-admin" {
+        return None;
+    }
+
+    let parsed = match parse_bootstrap_admin_args(args) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("{error}");
+            eprintln!(
+                "uso: cargo run -p ferrugem-web --features server -- bootstrap-admin --username <usuario> --email <email>"
+            );
+            return Some(2);
+        }
+    };
+
+    let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+    let result = runtime.block_on(async {
+        db::init().await;
+        auth::run_bootstrap_admin(
+            parsed.username,
+            parsed.email,
+            parsed.password,
+            crate::config::settings().admin_bootstrap_secret.clone(),
+        )
+        .await
+    });
+
+    match result {
+        Ok(user) => {
+            println!(
+                "admin inicial criado com sucesso: {} <{}>",
+                user.username, user.email
+            );
+            Some(0)
+        }
+        Err(error) => {
+            eprintln!("falha no bootstrap do admin inicial: {error}");
+            Some(1)
+        }
+    }
+}
+
+#[cfg(feature = "server")]
+async fn serve_application() {
+    use dioxus::server::{axum, DioxusRouterExt, ServeConfig};
+    use std::net::SocketAddr;
+
+    db::init().await;
+
+    let addr = dioxus::cli_config::fullstack_address_or_localhost();
+    let router = axum::Router::new().serve_dioxus_application(ServeConfig::new(), App);
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .expect("falha ao abrir listener HTTP");
+
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("falha ao servir aplicacao");
+}
+
+#[cfg(feature = "server")]
+fn main() {
+    if let Some(exit_code) = try_handle_server_command() {
+        std::process::exit(exit_code);
+    }
+
+    let rt = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+    rt.block_on(serve_application());
+}
+
+#[cfg(not(feature = "server"))]
+fn main() {
     dioxus::launch(App);
 }
 
@@ -264,6 +392,14 @@ fn Login() -> Element {
 fn Register() -> Element {
     rsx! {
         RegisterPage {}
+    }
+}
+
+/// Forgot password page
+#[component]
+fn ForgotPassword() -> Element {
+    rsx! {
+        ForgotPasswordPage {}
     }
 }
 
