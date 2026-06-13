@@ -550,6 +550,97 @@ pub async fn require_admin(token: &str) -> Result<AuthSession, ServerFnError> {
     Ok(session)
 }
 
+/// Troca o nome de usuário da conta autenticada. Mantém as mesmas regras de
+/// validação e unicidade (case-insensitive) do cadastro.
+#[cfg(feature = "server")]
+pub async fn change_username(
+    token: String,
+    new_username: String,
+    csrf_token: String,
+) -> Result<crate::models::UserPublic, ServerFnError> {
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    let session = require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    let username = crate::security::normalize_required_text("Usuario", new_username, 3, 32)?;
+    let username_lookup = username.to_lowercase();
+
+    let db = pool();
+
+    // Unicidade contra OUTROS usuários (permite ajustar maiúsc./minúsc. do próprio nome).
+    let taken: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM users WHERE lower(username) = ?1 AND id != ?2")
+            .bind(&username_lookup)
+            .bind(&session.user_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("change_username_lookup", e))?;
+    if taken.is_some() {
+        return Err(crate::security::public_error("Esse nome de usuario ja esta em uso."));
+    }
+
+    sqlx::query("UPDATE users SET username = ?1 WHERE id = ?2")
+        .bind(&username)
+        .bind(&session.user_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("change_username_update", e))?;
+
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "username_changed",
+        "user",
+        Some(&session.user_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({ "new_username": username }),
+    )
+    .await?;
+
+    let row: (String, String, String, bool) =
+        sqlx::query_as("SELECT id, username, email, is_admin FROM users WHERE id = ?1")
+            .bind(&session.user_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("change_username_fetch", e))?;
+
+    Ok(crate::models::UserPublic {
+        id: row.0,
+        username: row.1,
+        email: row.2,
+        is_admin: row.3,
+    })
+}
+
+/// Lista todos os usuários cadastrados (visão de admin), para gestão de bolões.
+#[cfg(feature = "server")]
+pub async fn list_all_users(token: String) -> Result<Vec<crate::models::UserPublic>, ServerFnError> {
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    require_admin(&token).await?;
+
+    let rows: Vec<(String, String, String, bool)> = sqlx::query_as(
+        "SELECT id, username, email, is_admin FROM users ORDER BY username COLLATE NOCASE",
+    )
+    .fetch_all(pool())
+    .await
+    .map_err(|e| crate::security::internal_error("list_all_users", e))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, username, email, is_admin)| crate::models::UserPublic {
+            id,
+            username,
+            email,
+            is_admin,
+        })
+        .collect())
+}
+
 #[cfg(feature = "server")]
 pub async fn require_recent_admin(token: &str) -> Result<AuthSession, ServerFnError> {
     let session = require_admin(token).await?;

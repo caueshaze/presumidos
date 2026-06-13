@@ -256,6 +256,15 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
               Grupo {game.groupName}
             </span>
           )}
+          {locked && !game.finished && (
+            <span className="inline-flex items-center gap-1.5 rounded-pill bg-danger-bg px-3 py-1 text-xs font-semibold text-danger ring-1 ring-danger/40">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-danger opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-danger" />
+              </span>
+              AO VIVO
+            </span>
+          )}
           {game.finished && (
             <span className="rounded-pill bg-success/15 px-3 py-1 text-xs font-semibold text-mint-dark ring-1 ring-success/35">
               Finalizado

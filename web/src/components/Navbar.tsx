@@ -19,7 +19,7 @@ const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
   );
 
 export function Navbar() {
-  const { user, loading, logout } = useAuth();
+  const { user, isAdmin, loading, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -74,11 +74,24 @@ export function Navbar() {
               <NavLink to="/predictions" className={linkClass}>
                 Previsões
               </NavLink>
+              <NavLink to="/palpites-do-bolao" className={linkClass}>
+                Palpites do Bolão
+              </NavLink>
               <NavLink to="/leaderboard" className={linkClass}>
                 Ranking
               </NavLink>
+              {isAdmin && (
+                <NavLink to="/admin" className={linkClass}>
+                  Admin
+                </NavLink>
+              )}
               <div className="flex-1" />
-              <span className="truncate text-sm text-ink-muted">Olá, {user.username}</span>
+              <NavLink
+                to="/conta"
+                className="truncate rounded-pill px-2 py-1 text-sm text-ink-muted transition-colors hover:text-ink"
+              >
+                Olá, {user.username}
+              </NavLink>
               <Button variant="outline" size="sm" onClick={handleLogout}>
                 Sair
               </Button>
@@ -113,7 +126,9 @@ export function Navbar() {
             <div className="mt-3 flex flex-col gap-3 rounded-[24px] border border-mint-dark/10 bg-white/80 p-3 shadow-[0_12px_28px_rgba(63,77,68,0.08)]">
               {user ? (
                 <>
-                  <div className="px-2 pt-1 text-sm text-ink-muted">Olá, {user.username}</div>
+                  <NavLink to="/conta" className={mobileLinkClass}>
+                    Olá, {user.username} · Conta
+                  </NavLink>
                   <div className="grid grid-cols-1 gap-1">
                     <NavLink to="/dashboard" className={mobileLinkClass}>
                       Dashboard
@@ -121,9 +136,17 @@ export function Navbar() {
                     <NavLink to="/predictions" className={mobileLinkClass}>
                       Previsões
                     </NavLink>
+                    <NavLink to="/palpites-do-bolao" className={mobileLinkClass}>
+                      Palpites do Bolão
+                    </NavLink>
                     <NavLink to="/leaderboard" className={mobileLinkClass}>
                       Ranking
                     </NavLink>
+                    {isAdmin && (
+                      <NavLink to="/admin" className={mobileLinkClass}>
+                        Admin
+                      </NavLink>
+                    )}
                   </div>
                   <Button variant="outline" onClick={handleLogout} className="w-full justify-center">
                     Sair

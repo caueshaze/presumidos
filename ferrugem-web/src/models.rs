@@ -96,3 +96,13 @@ pub struct LeaderboardEntry {
     pub username: String,
     pub points: i64,
 }
+
+/// Um membro do bolão com os palpites já visíveis (apenas de partidas que já
+/// começaram). Membros sem palpite visível têm `predictions` vazio.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberPredictions {
+    pub user_id: String,
+    pub username: String,
+    pub predictions: Vec<PredictionRecord>,
+}

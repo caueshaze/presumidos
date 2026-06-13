@@ -137,6 +137,11 @@ struct LoginBody {
 }
 
 #[derive(Deserialize)]
+struct ChangeUsernameBody {
+    username: String,
+}
+
+#[derive(Deserialize)]
 struct ReauthBody {
     password: String,
 }
@@ -186,6 +191,12 @@ struct MatchFinishedBody {
 struct UpdateTeamsBody {
     home_team: String,
     away_team: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PoolMemberBody {
+    user_id: String,
 }
 
 #[derive(Deserialize)]
@@ -240,6 +251,15 @@ async fn reauth(headers: HeaderMap, Json(body): Json<ReauthBody>) -> ApiResult<S
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn change_username(
+    headers: HeaderMap,
+    Json(body): Json<ChangeUsernameBody>,
+) -> ApiResult<impl IntoResponse> {
+    let user =
+        crate::auth::change_username(String::new(), body.username, csrf_header(&headers)).await?;
+    Ok(Json(user))
+}
+
 async fn csrf() -> ApiResult<impl IntoResponse> {
     let state = crate::auth::current_user(String::new()).await?;
     Ok(Json(json!({ "csrfToken": state.csrf_token })))
@@ -268,6 +288,55 @@ async fn join_pool(
     let pool =
         crate::pools::join_pool(String::new(), body.invite_code, csrf_header(&headers)).await?;
     Ok(Json(pool))
+}
+
+async fn pool_member_predictions(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::get_pool_member_predictions(String::new(), pool_id).await?,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Handlers — admin: gestão de membros de bolões
+// ---------------------------------------------------------------------------
+
+async fn admin_list_pools() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::pools::list_all_pools_admin(String::new()).await?))
+}
+
+async fn admin_list_users() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::auth::list_all_users(String::new()).await?))
+}
+
+async fn admin_list_pool_members(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::list_pool_members_admin(String::new(), pool_id).await?,
+    ))
+}
+
+async fn admin_add_pool_member(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<PoolMemberBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::add_pool_member_admin(String::new(), pool_id, body.user_id, csrf_header(&headers))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_remove_pool_member(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<PoolMemberBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::remove_pool_member_admin(
+        String::new(),
+        pool_id,
+        body.user_id,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------
@@ -385,9 +454,11 @@ pub fn router() -> Router {
         .route("/auth/logout", post(logout))
         .route("/auth/current-user", get(current_user))
         .route("/auth/reauth", post(reauth))
+        .route("/auth/username", post(change_username))
         .route("/auth/csrf", get(csrf))
         .route("/pools", get(list_pools).post(create_pool))
         .route("/pools/join", post(join_pool))
+        .route("/pools/{pool_id}/member-predictions", get(pool_member_predictions))
         .route("/matches", get(list_matches))
         .route("/matches/knockout-released", get(knockout_released))
         .route("/predictions", get(my_predictions).post(submit_prediction))
@@ -395,6 +466,13 @@ pub fn router() -> Router {
         .route("/admin/matches/{id}/finished", post(set_match_finished))
         .route("/admin/knockout-released", post(set_knockout_released))
         .route("/admin/matches/{id}/teams", post(update_match_teams))
+        .route("/admin/pools", get(admin_list_pools))
+        .route("/admin/users", get(admin_list_users))
+        .route(
+            "/admin/pools/{pool_id}/members",
+            get(admin_list_pool_members).post(admin_add_pool_member),
+        )
+        .route("/admin/pools/{pool_id}/members/remove", post(admin_remove_pool_member))
         .route("/leaderboard", get(leaderboard))
         .fallback(api_not_found)
 }

@@ -102,6 +102,62 @@ async fn login(client: &reqwest::Client, base: &str, email: &str, password: &str
         .expect("requisicao de login")
 }
 
+async fn insert_pool(name: &str, created_by: &str) -> String {
+    let id = uuid::Uuid::new_v4().to_string();
+    let code = uuid::Uuid::new_v4().simple().to_string();
+    let code = code[..8].to_uppercase();
+    sqlx::query("INSERT INTO pools (id, name, invite_code, created_by) VALUES (?1, ?2, ?3, ?4)")
+        .bind(&id)
+        .bind(name)
+        .bind(&code)
+        .bind(created_by)
+        .execute(crate::db::pool())
+        .await
+        .expect("inserir bolao de teste");
+    id
+}
+
+async fn add_membership(pool_id: &str, user_id: &str) {
+    sqlx::query("INSERT OR IGNORE INTO pool_members (pool_id, user_id) VALUES (?1, ?2)")
+        .bind(pool_id)
+        .bind(user_id)
+        .execute(crate::db::pool())
+        .await
+        .expect("inserir membro de teste");
+}
+
+async fn insert_match(home: &str, away: &str, kickoff: &str) -> String {
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO matches (id, home_team, away_team, kickoff, group_name, phase)
+         VALUES (?1, ?2, ?3, ?4, 'A', 'Fase de grupos')",
+    )
+    .bind(&id)
+    .bind(home)
+    .bind(away)
+    .bind(kickoff)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir partida de teste");
+    id
+}
+
+async fn insert_prediction(user_id: &str, match_id: &str, home: i64, away: i64) {
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO predictions (id, user_id, match_id, home_score, away_score)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(match_id)
+    .bind(home)
+    .bind(away)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir palpite de teste");
+}
+
 #[tokio::test]
 async fn login_sets_session_cookie_and_current_user_works() {
     let base = test_server().await;
@@ -311,5 +367,242 @@ async fn admin_reauth_flow_and_rate_limit() {
     assert!(
         last_message.to_lowercase().contains("muitas tentativas"),
         "esperava erro de rate limit, recebeu: {last_message}"
+    );
+}
+
+/// Troca de nome de usuário: aplica o novo nome, mas rejeita um nome já em uso
+/// por outra conta (case-insensitive).
+#[tokio::test]
+async fn change_username_updates_and_rejects_duplicates() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    // Sufixo curto: o endpoint limita o nome a 32 caracteres (um UUID já tem 36).
+    let short = suffix.simple().to_string();
+    let short = &short[..8];
+    let email = format!("rename-{suffix}@teste.com");
+    let other_email = format!("other-{suffix}@teste.com");
+    let user_id = seed_user(&format!("rename-{suffix}"), &email, "senha-correta-123", false).await;
+    let taken_name = format!("taken{short}");
+    seed_user(&taken_name, &other_email, "senha-correta-123", false).await;
+
+    let client = client();
+    let login_response = login(&client, base, &email, "senha-correta-123").await;
+    let auth: AuthResult = login_response.json().await.expect("login");
+    let csrf = auth.csrf_token;
+    let url = format!("{base}/api/auth/username");
+
+    // Nome novo e livre: sucesso, e a sessão passa a refletir o novo nome.
+    let new_name = format!("novo{short}");
+    let ok = client
+        .post(&url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "username": new_name }))
+        .send()
+        .await
+        .expect("trocar nome");
+    assert!(ok.status().is_success(), "troca de nome deveria ter sucesso");
+    let updated: crate::models::UserPublic = ok.json().await.expect("usuario atualizado");
+    assert_eq!(updated.username, new_name);
+
+    let stored: (String,) = sqlx::query_as("SELECT username FROM users WHERE id = ?1")
+        .bind(&user_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("nome no banco");
+    assert_eq!(stored.0, new_name);
+
+    // Nome já usado por outra conta (variando maiúsc./minúsc.): rejeitado.
+    let dup = client
+        .post(&url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "username": taken_name.to_uppercase() }))
+        .send()
+        .await
+        .expect("trocar para nome ocupado");
+    assert!(!dup.status().is_success(), "nome em uso deveria ser rejeitado");
+    let err: ErrorPayload = dup.json().await.expect("corpo de erro");
+    assert!(err.error.to_lowercase().contains("ja esta em uso"));
+
+    // O nome no banco não mudou após a tentativa rejeitada.
+    let unchanged: (String,) = sqlx::query_as("SELECT username FROM users WHERE id = ?1")
+        .bind(&user_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("nome no banco apos rejeicao");
+    assert_eq!(unchanged.0, new_name);
+}
+
+/// Regra de privacidade: os palpites de um membro só ficam visíveis depois que
+/// a partida começa (kickoff <= agora). Jogos no futuro não podem vazar.
+#[tokio::test]
+async fn pool_member_predictions_hides_matches_before_kickoff() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let email_a = format!("memberA-{suffix}@teste.com");
+    let email_b = format!("memberB-{suffix}@teste.com");
+    let email_c = format!("outsider-{suffix}@teste.com");
+    let user_a = seed_user(&format!("memberA-{suffix}"), &email_a, "senha-correta-123", false).await;
+    let user_b = seed_user(&format!("memberB-{suffix}"), &email_b, "senha-correta-123", false).await;
+    seed_user(&format!("outsider-{suffix}"), &email_c, "senha-correta-123", false).await;
+
+    let pool_id = insert_pool(&format!("Bolao {suffix}"), &user_a).await;
+    add_membership(&pool_id, &user_a).await;
+    add_membership(&pool_id, &user_b).await;
+
+    let past_match = insert_match("Brasil", "Argentina", "2020-01-01T00:00:00Z").await;
+    let future_match = insert_match("Franca", "Espanha", "2999-01-01T00:00:00Z").await;
+
+    // O membro B palpitou nos dois jogos (um já iniciado, um no futuro).
+    insert_prediction(&user_b, &past_match, 2, 1).await;
+    insert_prediction(&user_b, &future_match, 0, 0).await;
+
+    // Membro A consulta os palpites do bolão.
+    let viewer = client();
+    login(&viewer, base, &email_a, "senha-correta-123").await;
+    let response = viewer
+        .get(format!("{base}/api/pools/{pool_id}/member-predictions"))
+        .send()
+        .await
+        .expect("requisicao member-predictions");
+    assert!(response.status().is_success(), "membro deveria poder consultar");
+
+    let members: Vec<crate::models::MemberPredictions> =
+        response.json().await.expect("corpo member-predictions");
+    let b = members
+        .iter()
+        .find(|m| m.user_id == user_b)
+        .expect("membro B presente na resposta");
+
+    // Apenas o palpite do jogo já iniciado deve aparecer.
+    assert_eq!(
+        b.predictions.len(),
+        1,
+        "apenas o palpite do jogo iniciado deve ser visivel, e nao o do futuro"
+    );
+    assert_eq!(b.predictions[0].match_id, past_match);
+
+    // Quem não é membro do bolão é barrado.
+    let outsider = client();
+    login(&outsider, base, &email_c, "senha-correta-123").await;
+    let denied = outsider
+        .get(format!("{base}/api/pools/{pool_id}/member-predictions"))
+        .send()
+        .await
+        .expect("requisicao de nao-membro");
+    assert!(!denied.status().is_success(), "nao-membro nao deveria acessar");
+}
+
+/// Gestão de membros (admin): adicionar/remover exige admin + reautenticação
+/// recente + CSRF; usuário comum é barrado.
+#[tokio::test]
+async fn admin_can_add_and_remove_pool_members() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let admin_email = format!("admin-mgmt-{suffix}@teste.com");
+    let target_email = format!("target-{suffix}@teste.com");
+    let admin_id = seed_user(&format!("admin-mgmt-{suffix}"), &admin_email, "senha-correta-123", true).await;
+    let target_id = seed_user(&format!("target-{suffix}"), &target_email, "senha-correta-123", false).await;
+
+    let pool_id = insert_pool(&format!("Bolao Admin {suffix}"), &admin_id).await;
+
+    let admin = client();
+    let login_response = login(&admin, base, &admin_email, "senha-correta-123").await;
+    let auth: AuthResult = login_response.json().await.expect("login admin");
+    let csrf = auth.csrf_token;
+    let add_url = format!("{base}/api/admin/pools/{pool_id}/members");
+    let members_url = add_url.clone();
+
+    // Sem reautenticação recente, a ação é bloqueada.
+    let needs_reauth = admin
+        .post(&add_url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "userId": target_id }))
+        .send()
+        .await
+        .expect("add sem reauth");
+    assert_eq!(needs_reauth.status().as_u16(), 403);
+    let err: ErrorPayload = needs_reauth.json().await.expect("corpo de erro");
+    assert!(
+        err.error.contains("ADMIN_REAUTH_REQUIRED"),
+        "esperava exigencia de reauth, recebeu: {}",
+        err.error
+    );
+
+    // Marca a sessão como reautenticada recentemente (sem passar pelo endpoint
+    // de reauth, para não interferir no rate limit compartilhado dos testes).
+    sqlx::query("UPDATE sessions SET admin_reauthed_at = datetime('now') WHERE user_id = ?1")
+        .bind(&admin_id)
+        .execute(crate::db::pool())
+        .await
+        .expect("marcar reauth recente");
+
+    // Adiciona o usuário ao bolão.
+    let added = admin
+        .post(&add_url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "userId": target_id }))
+        .send()
+        .await
+        .expect("add membro");
+    assert!(added.status().is_success(), "add deveria ter sucesso");
+
+    // A listagem de membros passa a conter o alvo.
+    let listed: Vec<crate::models::UserPublic> = admin
+        .get(&members_url)
+        .send()
+        .await
+        .expect("listar membros")
+        .json()
+        .await
+        .expect("corpo de membros");
+    assert!(
+        listed.iter().any(|u| u.id == target_id),
+        "alvo deveria estar nos membros"
+    );
+
+    // Remove o usuário do bolão.
+    let removed = admin
+        .post(format!("{base}/api/admin/pools/{pool_id}/members/remove"))
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "userId": target_id }))
+        .send()
+        .await
+        .expect("remover membro");
+    assert!(removed.status().is_success(), "remove deveria ter sucesso");
+
+    let after: Vec<crate::models::UserPublic> = admin
+        .get(&members_url)
+        .send()
+        .await
+        .expect("listar membros apos remocao")
+        .json()
+        .await
+        .expect("corpo de membros 2");
+    assert!(
+        !after.iter().any(|u| u.id == target_id),
+        "alvo deveria ter sido removido"
+    );
+
+    // Usuário comum não pode gerenciar membros.
+    let normal = client();
+    login(&normal, base, &target_email, "senha-correta-123").await;
+    let session: SessionState = normal
+        .get(format!("{base}/api/auth/current-user"))
+        .send()
+        .await
+        .expect("current-user do usuario comum")
+        .json()
+        .await
+        .expect("sessao do usuario comum");
+    let denied = normal
+        .post(&add_url)
+        .header("X-CSRF-Token", &session.csrf_token)
+        .json(&json!({ "userId": admin_id }))
+        .send()
+        .await
+        .expect("add por nao-admin");
+    assert!(
+        !denied.status().is_success(),
+        "usuario comum nao deveria poder gerenciar membros"
     );
 }

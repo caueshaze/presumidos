@@ -62,3 +62,9 @@ export interface LeaderboardEntry {
   username: string;
   points: number;
 }
+
+export interface MemberPredictions {
+  userId: string;
+  username: string;
+  predictions: PredictionRecord[];
+}

@@ -5,8 +5,10 @@ import type {
   KnockoutEntry,
   LeaderboardEntry,
   MatchRecord,
+  MemberPredictions,
   PoolSummary,
   PredictionRecord,
+  UserPublic,
 } from "@/types";
 
 // ---- Auth mutations -------------------------------------------------------
@@ -164,6 +166,14 @@ export function useReauth() {
   });
 }
 
+export function useChangeUsername() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (username: string) => api.post<UserPublic>("/auth/username", { username }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["current-user"] }),
+  });
+}
+
 // ---- Leaderboard ----------------------------------------------------------
 
 export function useLeaderboard(poolId: string | null) {
@@ -172,5 +182,61 @@ export function useLeaderboard(poolId: string | null) {
     queryFn: () =>
       api.get<LeaderboardEntry[]>(`/leaderboard?poolId=${encodeURIComponent(poolId ?? "")}`),
     enabled: !!poolId,
+  });
+}
+
+// ---- Palpites do bolão ----------------------------------------------------
+
+export function usePoolMemberPredictions(poolId: string | null) {
+  return useQuery({
+    queryKey: ["pool-member-predictions", poolId],
+    queryFn: () =>
+      api.get<MemberPredictions[]>(
+        `/pools/${encodeURIComponent(poolId ?? "")}/member-predictions`,
+      ),
+    enabled: !!poolId,
+  });
+}
+
+// ---- Admin: gestão de membros de bolões -----------------------------------
+
+export function useAdminPools() {
+  return useQuery({ queryKey: ["admin-pools"], queryFn: () => api.get<PoolSummary[]>("/admin/pools") });
+}
+
+export function useAdminUsers() {
+  return useQuery({ queryKey: ["admin-users"], queryFn: () => api.get<UserPublic[]>("/admin/users") });
+}
+
+export function useAdminPoolMembers(poolId: string | null) {
+  return useQuery({
+    queryKey: ["admin-pool-members", poolId],
+    queryFn: () =>
+      api.get<UserPublic[]>(`/admin/pools/${encodeURIComponent(poolId ?? "")}/members`),
+    enabled: !!poolId,
+  });
+}
+
+export function useAddPoolMember() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; userId: string }) =>
+      api.post<void>(`/admin/pools/${vars.poolId}/members`, { userId: vars.userId }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["admin-pool-members", vars.poolId] });
+      qc.invalidateQueries({ queryKey: ["admin-pools"] });
+    },
+  });
+}
+
+export function useRemovePoolMember() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; userId: string }) =>
+      api.post<void>(`/admin/pools/${vars.poolId}/members/remove`, { userId: vars.userId }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["admin-pool-members", vars.poolId] });
+      qc.invalidateQueries({ queryKey: ["admin-pools"] });
+    },
   });
 }

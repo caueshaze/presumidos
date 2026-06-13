@@ -8,7 +8,10 @@ import { RegisterPage } from "@/pages/Register";
 import { ForgotPasswordPage } from "@/pages/ForgotPassword";
 import { DashboardPage } from "@/pages/Dashboard";
 import { PredictionsPage } from "@/pages/Predictions";
+import { PoolPredictionsPage } from "@/pages/PoolPredictions";
 import { LeaderboardPage } from "@/pages/Leaderboard";
+import { AdminPage } from "@/pages/Admin";
+import { ContaPage } from "@/pages/Conta";
 
 export function App() {
   return (
@@ -37,10 +40,34 @@ export function App() {
               }
             />
             <Route
+              path="/palpites-do-bolao"
+              element={
+                <AuthGuard>
+                  <PoolPredictionsPage />
+                </AuthGuard>
+              }
+            />
+            <Route
               path="/leaderboard"
               element={
                 <AuthGuard>
                   <LeaderboardPage />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <AuthGuard>
+                  <AdminPage />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/conta"
+              element={
+                <AuthGuard>
+                  <ContaPage />
                 </AuthGuard>
               }
             />

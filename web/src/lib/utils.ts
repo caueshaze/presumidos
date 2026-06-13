@@ -21,6 +21,11 @@ export function isMatchLocked(kickoff: string): boolean {
   return date.getTime() <= Date.now();
 }
 
+/** "Ao vivo" = já começou (kickoff passou) e ainda não foi marcado como finalizado. */
+export function isMatchLive(kickoff: string, finished: boolean): boolean {
+  return !finished && isMatchLocked(kickoff);
+}
+
 /** Lado vencedor do tempo normal ("home"/"away") ou null em empate. */
 export function winnerSide(home: number, away: number): "home" | "away" | null {
   if (home > away) return "home";
