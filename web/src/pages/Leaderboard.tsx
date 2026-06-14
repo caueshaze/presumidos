@@ -92,7 +92,7 @@ export function LeaderboardPage() {
       <h1 className="text-3xl">Ranking</h1>
       <p className="mt-2 max-w-3xl text-sm text-ink-muted">
         A pontuação considera o placar do tempo normal. Placar exato vale 7 pontos; resultado
-        correto vale 3; acertar os gols de um time que marcou pelo menos 1 gol dá +1. No mata-mata,
+        correto vale 3; acertar os gols de um time que marcou pelo menos 1 gol dá +1 se você acertou o ganhador. No mata-mata,
         acertar o classificado dá +2, e palpites corretos sobre pênaltis podem render bônus extras.
       </p>
 
