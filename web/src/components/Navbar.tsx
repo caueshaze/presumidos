@@ -90,7 +90,7 @@ export function Navbar() {
                 to="/conta"
                 className="truncate rounded-pill px-2 py-1 text-sm text-ink-muted transition-colors hover:text-ink"
               >
-                Olá, {user.username}
+                Conta
               </NavLink>
               <Button variant="outline" size="sm" onClick={handleLogout}>
                 Sair
@@ -127,7 +127,7 @@ export function Navbar() {
               {user ? (
                 <>
                   <NavLink to="/conta" className={mobileLinkClass}>
-                    Olá, {user.username} · Conta
+                    Conta
                   </NavLink>
                   <div className="grid grid-cols-1 gap-1">
                     <NavLink to="/dashboard" className={mobileLinkClass}>

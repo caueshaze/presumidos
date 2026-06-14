@@ -52,6 +52,76 @@ function scoreValue(field: string): number {
   return field === "" ? 0 : parseInt(field, 10) || 0;
 }
 
+function qualifierLabel(
+  side: string | null | undefined,
+  homeTeam: string,
+  awayTeam: string,
+): string | null {
+  if (side === "home") return formatSelectionLabel(homeTeam);
+  if (side === "away") return formatSelectionLabel(awayTeam);
+  return null;
+}
+
+function PredictionSummary({
+  title,
+  homeTeam,
+  awayTeam,
+  homeScore,
+  awayScore,
+  qualifier,
+  wentToPenalties,
+  penaltyHomeScore,
+  penaltyAwayScore,
+  tone = "default",
+}: {
+  title: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeScore: number;
+  awayScore: number;
+  qualifier: string | null;
+  wentToPenalties: boolean;
+  penaltyHomeScore: number | null;
+  penaltyAwayScore: number | null;
+  tone?: "default" | "official";
+}) {
+  const qualifierName = qualifierLabel(qualifier, homeTeam, awayTeam);
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border px-4 py-3",
+        tone === "official" ? "border-sky/30 bg-sky/10" : "border-mint/25 bg-mint/10",
+      )}
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-ink-muted">{title}</p>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-sm text-ink">{formatSelectionLabel(homeTeam)}</span>
+        <span className="font-heading text-lg font-bold text-ink">
+          {homeScore} <span className="text-ink-muted">x</span> {awayScore}
+        </span>
+        <span className="text-sm text-ink">{formatSelectionLabel(awayTeam)}</span>
+      </div>
+      {qualifierName && (
+        <p className="mt-2 text-sm text-mint-dark">
+          Classifica: {qualifierName}
+          {wentToPenalties && (
+            <>
+              {" "}· nos pênaltis
+              {penaltyHomeScore !== null && penaltyAwayScore !== null && (
+                <>
+                  {" "}
+                  ({penaltyHomeScore}-{penaltyAwayScore})
+                </>
+              )}
+            </>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   game: MatchRecord;
   prediction?: PredictionRecord;
@@ -219,12 +289,25 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
   const hasOfficial = game.homeScore !== null && game.awayScore !== null;
   const qualifierSuffix =
     knockout && game.qualifier
-      ? ` — ${formatSelectionLabel(game.qualifier === "home" ? game.homeTeam : game.awayTeam)} classificou`
+      ? ` — ${qualifierLabel(game.qualifier, game.homeTeam, game.awayTeam)} classificou`
       : "";
   const penaltyLabel =
     game.penaltyHomeScore !== null && game.penaltyAwayScore !== null
       ? `Pênaltis: ${game.penaltyHomeScore} x ${game.penaltyAwayScore}`
       : "Decidido nos pênaltis";
+  const showInlineOfficialSummary = locked && !isAdmin && !!prediction;
+  const showLockedMessage = locked && !game.finished;
+  const exactScoreHit =
+    hasOfficial &&
+    prediction &&
+    game.homeScore === prediction.homeScore &&
+    game.awayScore === prediction.awayScore;
+  const qualifierHit =
+    knockout &&
+    hasOfficial &&
+    prediction &&
+    game.qualifier &&
+    prediction.qualifier === game.qualifier;
 
   return (
     <MotionCard
@@ -274,22 +357,88 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
       </div>
       <div className="mt-1 text-sm text-ink-muted">{formatKickoff(game.kickoff)}</div>
 
-      {hasOfficial && (
+      {hasOfficial && !showInlineOfficialSummary && (
         <p className="mt-2 font-semibold">
           Resultado oficial: {game.homeScore} x {game.awayScore}
           {qualifierSuffix}
         </p>
       )}
-      {hasOfficial && knockout && game.wentToPenalties && (
+      {hasOfficial && knockout && game.wentToPenalties && !showInlineOfficialSummary && (
         <p className="text-sm text-ink-muted">{penaltyLabel}</p>
       )}
 
       {/* Admin não palpita — vê apenas os controles administrativos abaixo. */}
       {!isAdmin &&
         (locked ? (
-          <p className="mt-3 rounded-md bg-danger-bg px-3 py-2 text-sm font-semibold">
-            Partida já iniciada — palpites encerrados.
-          </p>
+          hasPrediction && prediction ? (
+            <div className="mt-4 space-y-3">
+              <PredictionSummary
+                title="Seu palpite"
+                homeTeam={game.homeTeam}
+                awayTeam={game.awayTeam}
+                homeScore={prediction.homeScore}
+                awayScore={prediction.awayScore}
+                qualifier={prediction.qualifier}
+                wentToPenalties={prediction.wentToPenalties}
+                penaltyHomeScore={prediction.penaltyHomeScore}
+                penaltyAwayScore={prediction.penaltyAwayScore}
+              />
+              {showLockedMessage && (
+                <p className="rounded-md bg-danger-bg px-3 py-2 text-sm font-semibold">
+                  Partida já iniciada — palpites encerrados.
+                </p>
+              )}
+              {hasOfficial && (
+                <>
+                  <PredictionSummary
+                    title="Resultado oficial"
+                    homeTeam={game.homeTeam}
+                    awayTeam={game.awayTeam}
+                    homeScore={game.homeScore ?? 0}
+                    awayScore={game.awayScore ?? 0}
+                    qualifier={game.qualifier}
+                    wentToPenalties={game.wentToPenalties}
+                    penaltyHomeScore={game.penaltyHomeScore}
+                    penaltyAwayScore={game.penaltyAwayScore}
+                    tone="official"
+                  />
+                  <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                    <span
+                      className={cn(
+                        "rounded-pill px-3 py-1 ring-1",
+                        exactScoreHit
+                          ? "bg-success/15 text-mint-dark ring-success/35"
+                          : "bg-card text-ink-muted ring-mint/25",
+                      )}
+                    >
+                      {exactScoreHit ? "Placar exato: acertou" : "Placar exato: não bateu"}
+                    </span>
+                    {knockout && game.qualifier && (
+                      <span
+                        className={cn(
+                          "rounded-pill px-3 py-1 ring-1",
+                          qualifierHit
+                            ? "bg-success/15 text-mint-dark ring-success/35"
+                            : "bg-card text-ink-muted ring-mint/25",
+                        )}
+                      >
+                        {qualifierHit ? "Classificado: acertou" : "Classificado: não bateu"}
+                      </span>
+                    )}
+                  </div>
+                  {knockout && game.wentToPenalties && (
+                    <p className="text-sm text-ink-muted">{penaltyLabel}</p>
+                  )}
+                </>
+              )}
+            </div>
+          ) : (
+            showLockedMessage && (
+              <p className="mt-3 rounded-md bg-danger-bg px-3 py-2 text-sm font-semibold">
+                Partida já iniciada — palpites encerrados.
+              </p>
+            )
+          )
         ) : (
         <form onSubmit={onSave} className="mt-4 flex flex-col gap-3">
           {knockout && <Label>Placar no tempo normal</Label>}
