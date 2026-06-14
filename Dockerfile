@@ -22,7 +22,6 @@ FROM chef AS deps
 COPY --from=planner /build/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
     cargo chef cook --release --recipe-path recipe.json
 
 FROM chef AS backend
@@ -32,7 +31,6 @@ COPY ferrugem-web/ ./ferrugem-web/
 RUN test -f ferrugem-web/src/main.rs && grep -q "serve_application" ferrugem-web/src/main.rs
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
     cargo build --release -p ferrugem-web --features server && \
     test -x target/release/ferrugem-web
 
