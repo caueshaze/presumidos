@@ -1,123 +1,196 @@
-# Ferrugem Web
+# Presumidos
 
-Aplicação de bolão da Copa 2026 feita em Rust com Dioxus Fullstack e SQLite.
+Bolão da Copa do Mundo FIFA 2026: **backend Rust (Axum) servindo uma API
+REST/JSON + SPA React (Vite + Tailwind)**, com SQLite e deploy em Docker atrás
+do Caddy.
+
+> Este projeto passou por uma migração de **Dioxus Fullstack** para a arquitetura
+> atual: **API Rust desacoplada + frontend React**. A pasta `ferrugem-web/`
+> mantém o nome histórico do crate do backend.
 
 ## Estado atual
 
 O projeto já entrega:
 
-- cadastro e login com sessão em cookie `HttpOnly`
+- cadastro e login com **verificação por e-mail** (Resend) e reset de senha
+- sessão no backend em cookie `HttpOnly` + token CSRF em toda mutação
 - criação e entrada em bolões por código de convite
-- listagem de partidas e envio de palpites
+- palpites de partidas (fase de grupos e mata-mata, com classificado e pênaltis)
 - lançamento de resultado oficial por administrador
-- reautenticação de admin para ações sensíveis e trilha de auditoria
-- ranking por bolão com a regra atual do projeto
-- migrations SQLite com seed inicial de partidas
+- ajuste manual de pontos pelo organizador do bolão ou admin
+- visualização dos palpites dos membros do bolão
+- ranking por bolão com a regra de pontuação do projeto
+- reautenticação de admin para ações sensíveis + trilha de auditoria
+- liberação controlada do mata-mata (oculto até o admin liberar)
+- **integração de resultados ao vivo** (worldcup26.ir): preenche o resultado
+  final dos jogos de grupo automaticamente
+- migrations SQLite com seed das 104 partidas oficiais
 
-## Estrutura
-
-Este repositório é um workspace Rust com um app principal:
+## Arquitetura
 
 ```text
 .
-├── Cargo.toml
-├── Cargo.lock
-└── ferrugem-web/
-    ├── Cargo.toml
-    ├── Dioxus.toml
-    ├── assets/
-    ├── migrations/
+├── Cargo.toml                # workspace Rust
+├── Dockerfile                # build multi-stage (frontend + backend)
+├── docker-compose.yml        # ferrugem-web + redis + caddy
+├── deploy/                   # Caddyfile, scripts de deploy/backup/restore
+├── ferrugem-web/             # backend Rust (Axum + SQLite)
+│   ├── migrations/           # schema SQLite + seed de partidas
+│   └── src/
+└── web/                      # frontend React (Vite + Tailwind)
     └── src/
 ```
 
-Arquivos importantes:
+- **Internet → Caddy (`:80/:443`) → `ferrugem-web:8080`.** O backend serve a API
+  em `/api` e, em produção, também os arquivos estáticos da SPA (build do `web/`).
+- Em **desenvolvimento**, o Vite (`:5173`) serve o frontend e faz proxy de `/api`
+  para o backend em `:8080` (cookie de sessão same-origin, sem CORS).
 
-- `ferrugem-web/src/main.rs`: rotas, layout e bootstrap do app
-- `ferrugem-web/src/auth.rs`: autenticação, sessão e helpers de browser
-- `ferrugem-web/src/pools.rs`: criação/entrada em bolões
-- `ferrugem-web/src/matches.rs`: partidas, palpites e resultado oficial
-- `ferrugem-web/src/scoring.rs`: cálculo do ranking
-- `ferrugem-web/migrations/`: schema SQLite e seed inicial
+### Backend (`ferrugem-web/src`)
 
-## Como rodar
+- `main.rs`: bootstrap do servidor Axum, serve `/api` + SPA, comandos CLI
+  (`bootstrap-admin`, `sync-fixtures`) e spawn do poller de resultados
+- `api.rs`: rotas HTTP/JSON e handlers sob `/api`
+- `auth.rs`: autenticação, sessões, hashing Argon2id, bootstrap de admin
+- `pools.rs`: bolões, membros e ajustes de pontos
+- `matches.rs`: partidas, palpites e resultado oficial
+- `scoring.rs`: cálculo do ranking
+- `football.rs`: integração com a worldcup26.ir (poller + `sync-fixtures`)
+- `email.rs`: envio de e-mails de verificação/recuperação via Resend
+- `security.rs`: headers, CSRF, rate limit, resolução de IP/proxy e auditoria
+- `config.rs`: carregamento e validação do `.env`
+- `db.rs`: pool SQLite (WAL) e execução das migrations
+- `models.rs`: tipos compartilhados (serde `camelCase` para o frontend)
+- `context.rs` / `error.rs`: contexto por request e tipos de erro
 
-Pré-requisitos:
+### Frontend (`web/src`)
 
-- Rust instalado
-- Dioxus CLI: `cargo install dioxus-cli`
+- **React 18 + TypeScript + Vite + Tailwind CSS**
+- **TanStack Query** para data fetching/cache, **React Router** para navegação,
+  **Framer Motion** para animação e **lucide-react** para ícones
+- `pages/` (telas), `components/` (UI e `MatchCard`), `hooks/queries.ts`
+  (chamadas à API), `types/` (espelham os models Rust) e `lib/` (utilitários)
 
-Rodar em desenvolvimento:
+## Como rodar (desenvolvimento)
+
+Pré-requisitos: **Rust** e **Node.js 18+**.
 
 ```bash
 cp .env.example .env
-cd ferrugem-web
-dx serve
 ```
 
-O arquivo `.env` e obrigatorio para subir o servidor. O app valida `APP_ENV`, `DATABASE_PATH`, `SESSION_SECRET`, `ADMIN_BOOTSTRAP_SECRET`, `SESSION_TTL_HOURS`, `COOKIE_SECURE`, `ADMIN_REAUTH_TTL_MINUTES`, `TRUSTED_PROXY_CIDRS`, `REQUIRE_TRUSTED_PROXY`, `RATE_LIMIT_BACKEND` e `REDIS_URL` logo no boot, cria o SQLite nesse caminho se necessario e aplica as migrations automaticamente no modo server.
+Em dev, o `.env` já vem com `APP_ENV=development` e `RATE_LIMIT_BACKEND=memory`
+(dispensa Redis). O backend valida o `.env` no boot, cria o SQLite em
+`DATABASE_PATH` se necessário e aplica as migrations automaticamente.
 
-`APP_DOMAIN` e usado pelo proxy reverso do deploy Docker. O app Rust ignora essa variavel.
-
-## Features e targets
-
-O app usa estas features:
-
-- `web`: frontend Dioxus para navegador
-- `server`: server functions + SQLite + autenticação
-- `desktop`: definido no manifesto, mas não é o foco atual do projeto
-
-Validações úteis:
+**Terminal 1 — backend (API em `:8080`):**
 
 ```bash
-cargo check
+cargo run -p ferrugem-web --features server
+```
+
+**Terminal 2 — frontend (Vite em `:5173`):**
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Abra **http://localhost:5173**. O Vite faz proxy de `/api` para o backend.
+
+## Validações
+
+Backend:
+
+```bash
 cargo test --features server
-cargo test --no-default-features --features web
 cargo clippy --features server -- -D warnings
-cargo clippy --no-default-features --features web -- -D warnings
+```
+
+Frontend (a partir de `web/`):
+
+```bash
+npm run lint     # tsc --noEmit
+npm run build    # tsc -b && vite build
 ```
 
 ## Banco de dados
 
-O banco atual é SQLite e usa as tabelas:
+SQLite em modo WAL (`PRAGMA journal_mode = WAL`, ver `ferrugem-web/src/db.rs`),
+com as tabelas:
 
-- `users`
-- `sessions`
-- `pools`
-- `pool_members`
-- `matches`
-- `predictions`
-- `app_settings`
+`users`, `sessions`, `pools`, `pool_members`, `matches`, `predictions`,
+`app_settings`, `audit_logs`, `point_adjustments`, `pending_registrations`,
+`password_reset_codes`.
 
 Observações:
 
 - o cadastro público nunca promove admin automaticamente
-- o primeiro admin precisa ser criado por comando local de bootstrap com `ADMIN_BOOTSTRAP_SECRET`
-- a sessão fica no backend e trafega em cookie `HttpOnly`
-- toda mutação autenticada usa token CSRF de sessão
+- o primeiro admin é criado por comando local de bootstrap com `ADMIN_BOOTSTRAP_SECRET`
+- a sessão fica no backend e trafega em cookie `HttpOnly`; toda mutação usa token CSRF
 - ações sensíveis de admin exigem confirmação recente de senha
 - alterações administrativas críticas geram registro em `audit_logs`
 - palpites são bloqueados após o kickoff da partida
-- `DATABASE_PATH` precisa existir no `.env`
-- headers como `X-Forwarded-For`, `X-Real-IP` e `CF-Connecting-IP` so entram no rate limit e na auditoria quando o peer remoto real pertence a `TRUSTED_PROXY_CIDRS`
-- se `REQUIRE_TRUSTED_PROXY=true`, as server functions autenticadas e de login/cadastro recusam acesso direto fora do proxy confiável
-- o rate limit usa `memory` no desenvolvimento e `redis` em producao
-- quando o backend Redis de rate limit cair, `login`, `register` e `confirm_admin_password` falham fechado; `current_user` e `join_pool` degradam com log e seguem
-- as 104 partidas oficiais da Copa 2026 são carregadas via migration; cada uma tem `phase` (fase de grupos, 16 avos, oitavas, etc.)
-- o mata-mata fica oculto para os participantes enquanto `app_settings.knockout_released = '0'`; o admin sempre vê todos os jogos, monta os confrontos e libera tudo de uma vez pelo botão "Liberar mata-mata" na página de palpites
+- headers como `X-Forwarded-For`/`X-Real-IP`/`CF-Connecting-IP` só entram no rate
+  limit e na auditoria quando o peer remoto pertence a `TRUSTED_PROXY_CIDRS`
+- se `REQUIRE_TRUSTED_PROXY=true`, login/cadastro e endpoints autenticados recusam
+  acesso direto fora do proxy confiável
+- o rate limit usa `memory` em desenvolvimento e `redis` em produção; quando o
+  Redis cai, `login`/`register`/confirmação de senha falham fechado, enquanto
+  leituras degradam com log
+- as 104 partidas oficiais são carregadas via migration, cada uma com `phase`
+- o mata-mata fica oculto enquanto `app_settings.knockout_released = '0'`; o admin
+  sempre vê tudo, monta os confrontos e libera de uma vez
+
+## Resultados ao vivo (worldcup26.ir)
+
+O backend pode preencher resultados automaticamente a partir da API pública e
+gratuita [worldcup26.ir](https://worldcup26.ir) (sem chave). Variáveis no `.env`:
+
+```bash
+FOOTBALL_API_ENABLED=true        # liga a integração
+FOOTBALL_POLLER_ENABLED=true     # sobe o poller (true em UMA instância só)
+FOOTBALL_API_BASE_URL=https://worldcup26.ir
+FOOTBALL_POLL_INTERVAL_SECS=900  # 15 min
+```
+
+Como funciona:
+
+- Um **poller em background** roda a cada `FOOTBALL_POLL_INTERVAL_SECS`. Para
+  economizar requisições, ele só chama a API quando há jogo na janela (de −4h a
+  +30min do kickoff).
+- Quando um jogo de **fase de grupos** é marcado como encerrado, o poller grava
+  o placar oficial (`result_source = 'api'`) e o ranking atualiza sozinho.
+- O **mata-mata** é apenas exibido ao vivo (quando a fonte fornece): a fonte não
+  traz pênaltis nem o classificado, então o resultado oficial continua sendo
+  lançado pelo admin.
+- **Resultado manual é soberano:** o poller nunca sobrescreve um placar lançado
+  pelo admin — em divergência, apenas registra `match_result_api_conflict` na
+  auditoria.
+
+Antes de usar, mapeie os jogos locais (`jogo-001..104`) aos ids da API **uma vez**
+(grava `external_fixture_id`):
+
+```bash
+# pré-visualizar o casamento sem gravar
+cargo run -p ferrugem-web --features server -- sync-fixtures --dry-run
+# gravar
+cargo run -p ferrugem-web --features server -- sync-fixtures --apply
+# override manual de um mapeamento específico
+cargo run -p ferrugem-web --features server -- sync-fixtures --fixture jogo-001=123
+```
+
+Em produção, rode o `sync-fixtures --apply` dentro do container (ver Deploy).
 
 ## Bootstrap do primeiro admin
 
-O bootstrap inicial de admin nao fica exposto por rota HTTP nem por UI publica.
+O bootstrap inicial não fica exposto por rota HTTP nem por UI pública.
 
-Fluxo operacional:
+Fluxo: subir app/banco com `.env` → rodar o bootstrap uma vez → confirmar criação
+→ rotacionar/remover `ADMIN_BOOTSTRAP_SECRET` → operar normalmente.
 
-1. subir app e banco com `.env` configurado
-2. rodar o comando local de bootstrap uma unica vez
-3. confirmar que o admin foi criado
-4. rotacionar ou remover `ADMIN_BOOTSTRAP_SECRET`
-5. seguir a operacao normal
-
-Em desenvolvimento, o atalho é o script (roda da raiz, carrega o `.env` e o `bolao.db`):
+Em desenvolvimento, use o script (roda da raiz, carrega `.env` e `bolao.db`):
 
 ```bash
 scripts/dev-admin.sh admin admin@local.dev
@@ -126,129 +199,85 @@ BOOTSTRAP_ADMIN_PASSWORD='senha-de-dev' scripts/dev-admin.sh admin admin@local.d
 ```
 
 > O bootstrap cria o *primeiro* admin e só funciona enquanto não houver nenhum.
-> Para recomeçar o dev do zero: `rm -f bolao.db bolao.db-shm bolao.db-wal` e rode o script de novo.
+> Para recomeçar o dev do zero: `rm -f bolao.db bolao.db-shm bolao.db-wal` e rode de novo.
 
-Equivalente manual, com senha interativa:
+Equivalente manual (senha interativa, ou via `BOOTSTRAP_ADMIN_PASSWORD`):
 
 ```bash
 cargo run -p ferrugem-web --features server -- \
-  bootstrap-admin \
-  --username admin \
-  --email admin@seudominio.com
+  bootstrap-admin --username admin --email admin@seudominio.com
 ```
 
-Opcao de automacao:
-
-```bash
-BOOTSTRAP_ADMIN_PASSWORD='senha-super-segura' \
-cargo run -p ferrugem-web --features server -- \
-  bootstrap-admin \
-  --username admin \
-  --email admin@seudominio.com
-```
-
-Em producao, prefira executar o binario ja construído dentro do container:
-
-```bash
-docker compose exec ferrugem-web \
-  /app/ferrugem-web bootstrap-admin \
-  --username admin \
-  --email admin@seudominio.com
-```
-
-`ADMIN_BOOTSTRAP_SECRET` autoriza o bootstrap inicial. `BOOTSTRAP_ADMIN_PASSWORD` define a senha do usuario admin apenas para esse comando. Se `BOOTSTRAP_ADMIN_PASSWORD` nao estiver no ambiente, o processo pede a senha de forma interativa.
+`ADMIN_BOOTSTRAP_SECRET` autoriza o bootstrap; `BOOTSTRAP_ADMIN_PASSWORD` define a
+senha apenas para esse comando (se ausente, é pedida interativamente).
 
 ## Deploy com Caddy
 
-O repositório agora inclui:
+O repositório inclui:
 
-- [Dockerfile](/home/caue/presumidos/Dockerfile): build multi-stage com cache local de frontend e dependencias Rust
-- [docker-compose.yml](/home/caue/presumidos/docker-compose.yml): origin sem porta publica + Caddy como entrada oficial + Redis interno para rate limit
-- [deploy/Caddyfile](/home/caue/presumidos/deploy/Caddyfile): proxy reverso com HTTPS automatico e headers reconstruidos
-- [deploy/deploy.sh](/home/caue/presumidos/deploy/deploy.sh): backup pre-deploy + build local + restart dos servicos
+- [Dockerfile](Dockerfile): build multi-stage — estágio Node compila o frontend
+  (`web/` → `dist`), estágio Rust compila o backend com cache via `cargo-chef`, e
+  a imagem final junta o binário com a SPA em `/app/public`
+- [docker-compose.yml](docker-compose.yml): origin sem porta pública + Caddy como
+  entrada + Redis interno para rate limit
+- [deploy/Caddyfile](deploy/Caddyfile): proxy reverso com HTTPS automático
+- [deploy/deploy.sh](deploy/deploy.sh): backup pré-deploy + build + restart + healthcheck
 
 Desenho da rede:
 
-- Internet -> Caddy `:80/:443` -> `ferrugem-web:8080`
-- `ferrugem-web` -> Redis interno para rate limit persistente
-- o origin usa apenas `expose`, sem `ports`
-- a rede `origin` e interna e dedicada
-- o Caddy tambem entra na rede `public` (nao-interna), para ter saida a
-  internet e emitir/renovar certificados (Let's Encrypt) e ser o unico
-  publicado em `80/443` (tambem `443/udp` para HTTP/3)
-- o Caddy tem IP fixo `172.31.0.10` na rede `origin`
-- o app confia apenas em `TRUSTED_PROXY_CIDRS=172.31.0.10/32`
+- Internet → Caddy `:80/:443` → `ferrugem-web:8080`
+- `ferrugem-web` → Redis interno para rate limit persistente
+- o origin usa apenas `expose` (sem `ports`); a rede `origin` é interna e dedicada
+- o Caddy também entra na rede `public` para emitir/renovar certificados
+  (Let's Encrypt) e é o único publicado em `80/443` (e `443/udp` para HTTP/3)
+- o Caddy tem IP fixo `172.31.0.10`; o app confia apenas em `TRUSTED_PROXY_CIDRS=172.31.0.10/32`
 
-Subida recomendada:
+Ajustes no `.env` para produção:
 
-```bash
-cp .env.example .env
-```
-
-Ajuste no `.env` para producao:
-
-- `APP_ENV=production`
-- `APP_DOMAIN=seu-dominio.com`
-- `SESSION_SECRET` com 32+ caracteres fortes
-- `ADMIN_BOOTSTRAP_SECRET` forte
-- `COOKIE_SECURE=true`
+- `APP_ENV=production`, `APP_DOMAIN=seu-dominio.com`, `COOKIE_SECURE=true`
+- `SESSION_SECRET` e `ADMIN_BOOTSTRAP_SECRET` fortes (32+ caracteres)
 - `REQUIRE_TRUSTED_PROXY=true`
-- `RATE_LIMIT_BACKEND=redis`
-- `REDIS_URL=redis://redis:6379`
-- `RATE_LIMIT_IDENTITY_SECRET` com 32+ caracteres fortes (proprio, separado do `SESSION_SECRET`)
+- `RATE_LIMIT_BACKEND=redis`, `REDIS_URL=redis://redis:6379`
+- `RATE_LIMIT_IDENTITY_SECRET` próprio (32+ caracteres, separado do `SESSION_SECRET`)
+- `RESEND_API_KEY` e `RESEND_FROM_EMAIL` para os e-mails transacionais
 
-Depois suba:
+Subida e deploy:
 
 ```bash
 docker compose build ferrugem-web
 docker compose up -d
-```
-
-Fluxo recomendado de deploy na VPS:
-
-```bash
+# fluxo recomendado de atualização na VPS:
 ./deploy/deploy.sh
 ```
 
-O script faz:
+O `deploy.sh` faz: backup pré-deploy do SQLite, `docker compose build` com
+`DOCKER_BUILDKIT=1`, `up -d`, valida `GET /api/health` via Caddy e, em falha de
+healthcheck, reaplica a imagem anterior automaticamente.
 
-- backup pre-deploy do SQLite via `./deploy/backup.sh`
-- `docker compose build ferrugem-web` com `DOCKER_BUILDKIT=1`
-- `docker compose up -d ferrugem-web redis caddy`
-- valida `GET /api/health` pela rede interna via Caddy
-- em falha de healthcheck, reaplica a imagem anterior automaticamente
-- `docker compose ps` ao final
-
-Observacoes operacionais:
-
-- o ganho de performance depende do cache local do host permanecer disponivel
-- alteracoes em `Cargo.toml`/`Cargo.lock` invalidam o cache de dependencias Rust, como esperado
-- alteracoes apenas em `ferrugem-web/src` devem reaproveitar a camada de dependencias compiladas
-- evite rodar limpezas agressivas como `docker system prune -a`, pois isso destroi o beneficio do cache de build
-
-O bootstrap inicial do admin deve ser executado dentro do container do app:
+Depois do deploy, rode (uma vez) o bootstrap do admin e o mapeamento de jogos
+dentro do container:
 
 ```bash
 docker compose exec ferrugem-web \
-  /app/ferrugem-web bootstrap-admin \
-  --username admin \
-  --email admin@seudominio.com
+  /app/ferrugem-web bootstrap-admin --username admin --email admin@seudominio.com
+
+docker compose exec ferrugem-web \
+  /app/ferrugem-web sync-fixtures --apply
 ```
 
-O proxy reconstrói estes headers em vez de encaminhar o que veio do cliente:
+O proxy reconstrói `X-Forwarded-For`, `X-Real-IP` e `Forwarded` em vez de
+encaminhar o que veio do cliente, e remove `CF-Connecting-IP`.
 
-- `X-Forwarded-For`
-- `X-Real-IP`
-- `Forwarded`
-- `CF-Connecting-IP` e removido
+Observações de cache de build: alterações em `Cargo.toml`/`Cargo.lock` invalidam a
+camada de dependências Rust (esperado); mudanças só em `ferrugem-web/src` ou em
+`web/src` reaproveitam o cache. Evite `docker system prune -a`, que destrói o
+benefício do cache.
 
 ## Backup e Restore
 
-O banco SQLite roda em modo WAL (`PRAGMA journal_mode = WAL`, ver
-`ferrugem-web/src/db.rs`) dentro do volume Docker `app_data`
-(`/data/bolao.db`). Os scripts abaixo usam uma imagem auxiliar
-(`deploy/backup/`, alpine + `sqlite3`) para gerar backups consistentes com a
-aplicação rodando, sem depender de instalar nada na VPS.
+O banco SQLite (WAL) vive no volume Docker `app_data` (`/data/bolao.db`). Os
+scripts usam uma imagem auxiliar (`deploy/backup/`, alpine + `sqlite3`) para
+gerar backups consistentes com a aplicação rodando.
 
 ### Backup manual
 
@@ -256,32 +285,20 @@ aplicação rodando, sem depender de instalar nada na VPS.
 ./deploy/backup.sh
 ```
 
-O que esse comando faz:
+- roda `sqlite3 /data/bolao.db ".backup '...'"` (seguro com WAL, app ligada)
+- salva em `./backups/ferrugem-YYYYMMDD-HHMMSS.db`, **fora** do volume `app_data`
+- valida `PRAGMA integrity_check;` (se falhar, apaga o arquivo e retorna erro)
+- aplica `chmod 600` e remove backups com mais de 14 dias
 
-- Roda `sqlite3 /data/bolao.db ".backup '...'"` (seguro com WAL, app ligada).
-- Salva o arquivo em `./backups/ferrugem-YYYYMMDD-HHMMSS.db`, **fora** do
-  volume `app_data`.
-- Roda `PRAGMA integrity_check;` no backup gerado; se falhar, o arquivo é
-  apagado e o script retorna erro.
-- Ajusta o dono do arquivo para o usuário que rodou o script e aplica
-  `chmod 600`.
-- Remove backups com mais de 14 dias em `./backups/`.
-
-`./backups/` é criado com `chmod 700` e está no `.gitignore` — nunca vai para
-o repositório.
+`./backups/` é criado com `chmod 700` e está no `.gitignore`.
 
 ### Backup automático (cron)
-
-Na VPS, agende a execução diária (exemplo às 03h):
 
 ```cron
 0 3 * * * cd /caminho/do/repo && ./deploy/backup.sh >> /var/log/ferrugem-backup.log 2>&1
 ```
 
 ### Cópia externa
-
-Antes de um deploy importante (ou periodicamente), copie `./backups/` para
-fora da VPS, por exemplo:
 
 ```bash
 rsync -av ./backups/ usuario@outro-host:/caminho/de/backups/ferrugem/
@@ -293,37 +310,23 @@ rsync -av ./backups/ usuario@outro-host:/caminho/de/backups/ferrugem/
 ./deploy/restore.sh backups/ferrugem-20260612-030000.db
 ```
 
-Esse script:
-
-1. Valida `PRAGMA integrity_check;` do backup escolhido **antes** de tocar em
-   produção.
-2. Pede confirmação interativa (`sim`).
-3. Cria um backup do estado **atual** em `./backups/` antes de sobrescrever
-   (backup pré-restore — permite desfazer caso o arquivo restaurado seja o
-   errado).
-4. Faz `docker compose down`, substitui `bolao.db`/`bolao.db-wal`/
-   `bolao.db-shm` pelo backup escolhido e roda `docker compose up -d`.
+O script valida `integrity_check` **antes** de tocar em produção, pede confirmação
+interativa, cria um backup pré-restore do estado atual e então faz
+`docker compose down`, substitui os arquivos `bolao.db*` e sobe de novo.
 
 ### Restore testado (ambiente isolado)
-
-Para validar um backup sem tocar em produção:
 
 ```bash
 ./deploy/restore-test.sh backups/ferrugem-20260612-030000.db
 ```
 
-Esse script cria um volume e um container Docker temporários (não usa
-`app_data` nem a rede `origin`), copia o backup para esse volume, e sobe a
-aplicação em `http://localhost:18080` com `APP_ENV=development` e
-`RATE_LIMIT_BACKEND=memory` (dispensa Redis). Use para confirmar que o login
-de admin funciona e que pools/predictions/matches aparecem. Ao encerrar com
-`Ctrl+C`, o container e o volume temporários são removidos automaticamente.
+Cria volume e container temporários (sem tocar em `app_data`/`origin`), sobe em
+`http://localhost:18080` com `APP_ENV=development` e `RATE_LIMIT_BACKEND=memory`.
+Ao encerrar com `Ctrl+C`, tudo é removido automaticamente.
 
 ## Checklist de fechamento do origin
 
-Critérios de pronto esperados neste layout:
-
-1. `curl http://IP_DA_VPS:8080` falha ou nao conecta.
+1. `curl http://IP_DA_VPS:8080` falha ou não conecta.
 2. `curl -I http://seu-dominio.com` redireciona para HTTPS.
 3. `curl -I https://seu-dominio.com` responde pelo Caddy.
 4. `docker compose ps` mostra apenas Caddy com portas publicadas.
@@ -338,3 +341,24 @@ ufw allow 443/tcp
 ufw deny 8080/tcp
 ufw enable
 ```
+
+## Licença
+
+Distribuído sob a licença **MIT**. Veja o arquivo [LICENSE](LICENSE) para os
+termos completos.
+
+## Créditos de dados
+
+O Presumidos utiliza dados públicos da Copa do Mundo FIFA 2026 fornecidos pelo
+projeto open-source [rezarahiminia/worldcup2026](https://github.com/rezarahiminia/worldcup2026),
+incluindo informações de partidas, seleções, grupos, estádios, placares e
+atualizações ao vivo.
+
+A integração é usada apenas como fonte externa de dados para automatizar a
+atualização de placares e resultados no bolão. O Presumidos é um projeto
+independente e não possui afiliação oficial com a FIFA, com a Copa do Mundo
+FIFA, nem com os mantenedores da API.
+
+- **Fonte dos dados:** https://github.com/rezarahiminia/worldcup2026
+- **API pública:** https://worldcup26.ir
+- **Licença declarada pelo projeto original:** ISC
