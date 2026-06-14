@@ -1,5 +1,6 @@
 services:
   ferrugem-web:
+    image: presumidos/ferrugem-web:local-prod
     build:
       context: .
       dockerfile: Dockerfile

@@ -162,9 +162,10 @@ docker compose exec ferrugem-web \
 
 O repositório agora inclui:
 
-- [Dockerfile](/home/caue/presumidos/Dockerfile): build do binario `ferrugem-web`
+- [Dockerfile](/home/caue/presumidos/Dockerfile): build multi-stage com cache local de frontend e dependencias Rust
 - [docker-compose.yml](/home/caue/presumidos/docker-compose.yml): origin sem porta publica + Caddy como entrada oficial + Redis interno para rate limit
 - [deploy/Caddyfile](/home/caue/presumidos/deploy/Caddyfile): proxy reverso com HTTPS automatico e headers reconstruidos
+- [deploy/deploy.sh](/home/caue/presumidos/deploy/deploy.sh): backup pre-deploy + build local + restart dos servicos
 
 Desenho da rede:
 
@@ -199,8 +200,29 @@ Ajuste no `.env` para producao:
 Depois suba:
 
 ```bash
-docker compose up --build -d
+docker compose build ferrugem-web
+docker compose up -d
 ```
+
+Fluxo recomendado de deploy na VPS:
+
+```bash
+./deploy/deploy.sh
+```
+
+O script faz:
+
+- backup pre-deploy do SQLite via `./deploy/backup.sh`
+- `docker compose build ferrugem-web` com `DOCKER_BUILDKIT=1`
+- `docker compose up -d ferrugem-web redis caddy`
+- `docker compose ps` ao final
+
+Observacoes operacionais:
+
+- o ganho de performance depende do cache local do host permanecer disponivel
+- alteracoes em `Cargo.toml`/`Cargo.lock` invalidam o cache de dependencias Rust, como esperado
+- alteracoes apenas em `ferrugem-web/src` devem reaproveitar a camada de dependencias compiladas
+- evite rodar limpezas agressivas como `docker system prune -a`, pois isso destroi o beneficio do cache de build
 
 O bootstrap inicial do admin deve ser executado dentro do container do app:
 
