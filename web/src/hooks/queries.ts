@@ -190,6 +190,12 @@ export function useChangeUsername() {
   });
 }
 
+export function useDeleteAccount() {
+  return useMutation({
+    mutationFn: () => api.post<void>("/auth/delete"),
+  });
+}
+
 export function useNotificationStatus() {
   return useQuery({
     queryKey: ["notification-status"],

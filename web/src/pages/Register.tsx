@@ -128,6 +128,17 @@ export function RegisterPage() {
           Faça login aqui
         </Link>
       </p>
+      <p className="mt-4 text-xs leading-5 text-ink-muted">
+        Ao continuar, você concorda com os{" "}
+        <Link to="/terms" className="font-semibold text-mint-dark hover:underline">
+          Termos de Uso
+        </Link>{" "}
+        e a{" "}
+        <Link to="/privacy" className="font-semibold text-mint-dark hover:underline">
+          Política de Privacidade
+        </Link>
+        .
+      </p>
     </FormShell>
   );
 }

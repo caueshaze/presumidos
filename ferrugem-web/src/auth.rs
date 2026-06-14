@@ -107,10 +107,7 @@ async fn insert_audit_log_tx(
 }
 
 #[cfg(feature = "server")]
-async fn delete_session_by_token(
-    db: &sqlx::SqlitePool,
-    token: &str,
-) -> Result<(), ServerFnError> {
+async fn delete_session_by_token(db: &sqlx::SqlitePool, token: &str) -> Result<(), ServerFnError> {
     sqlx::query("DELETE FROM sessions WHERE token = ?1")
         .bind(token)
         .execute(db)
@@ -191,7 +188,8 @@ async fn resolve_session(
     legacy_token: &str,
     headers: &HeaderMap,
 ) -> Result<Option<AuthSession>, ServerFnError> {
-    let cookie_token = crate::security::parse_cookie(headers, crate::security::session_cookie_name());
+    let cookie_token =
+        crate::security::parse_cookie(headers, crate::security::session_cookie_name());
     let token = cookie_token
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| legacy_token.trim().to_string());
@@ -265,7 +263,8 @@ async fn load_user_public(
 #[cfg(feature = "server")]
 fn admin_reauth_is_fresh(value: Option<&str>) -> bool {
     let ttl = chrono::Duration::minutes(crate::config::settings().admin_reauth_ttl_minutes);
-    value.and_then(parsed_sqlite_utc)
+    value
+        .and_then(parsed_sqlite_utc)
         .is_some_and(|stamp| chrono::Utc::now() - stamp <= ttl)
 }
 
@@ -579,7 +578,9 @@ pub async fn change_username(
             .await
             .map_err(|e| crate::security::internal_error("change_username_lookup", e))?;
     if taken.is_some() {
-        return Err(crate::security::public_error("Esse nome de usuario ja esta em uso."));
+        return Err(crate::security::public_error(
+            "Esse nome de usuario ja esta em uso.",
+        ));
     }
 
     sqlx::query("UPDATE users SET username = ?1 WHERE id = ?2")
@@ -615,9 +616,144 @@ pub async fn change_username(
     })
 }
 
+/// Exclui a própria conta autenticada e limpa os dados operacionais
+/// diretamente vinculados a ela.
+///
+/// Restrições atuais:
+/// - a conta não pode ser a criadora de bolões ainda existentes;
+/// - a última conta admin não pode se autoexcluir.
+#[cfg(feature = "server")]
+pub async fn delete_account(token: String, csrf_token: String) -> Result<(), ServerFnError> {
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    let session = require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    let db = pool();
+    let (email, is_admin): (String, bool) =
+        sqlx::query_as("SELECT email, is_admin FROM users WHERE id = ?1")
+            .bind(&session.user_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("delete_account_load_user", e))?;
+
+    let owned_pools: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pools WHERE created_by = ?1")
+        .bind(&session.user_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_count_owned_pools", e))?;
+    if owned_pools.0 > 0 {
+        return Err(crate::security::public_error(
+            "Sua conta ainda criou bolões ativos. Apague os bolões criados por voce antes de excluir a conta.",
+        ));
+    }
+
+    if is_admin && count_admins(db).await? <= 1 {
+        return Err(crate::security::public_error(
+            "Nao e possivel excluir a unica conta de administrador.",
+        ));
+    }
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_begin_tx", e))?;
+
+    insert_audit_log_tx(
+        &mut tx,
+        None,
+        "account_deleted",
+        "user",
+        Some(&session.user_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({ "email": email, "self_service": true }),
+    )
+    .await?;
+
+    sqlx::query("DELETE FROM push_reminder_deliveries WHERE user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_reminder_deliveries", e))?;
+
+    sqlx::query("DELETE FROM push_subscriptions WHERE user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_push_subscriptions", e))?;
+
+    sqlx::query("DELETE FROM notification_preferences WHERE user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            crate::security::internal_error("delete_account_notification_preferences", e)
+        })?;
+
+    sqlx::query("DELETE FROM point_adjustments WHERE user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_point_adjustments", e))?;
+
+    sqlx::query("DELETE FROM predictions WHERE user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_predictions", e))?;
+
+    sqlx::query("DELETE FROM pool_members WHERE user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_pool_members", e))?;
+
+    sqlx::query("DELETE FROM password_reset_codes WHERE user_id = ?1 OR email = ?2")
+        .bind(&session.user_id)
+        .bind(&email)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_password_reset_codes", e))?;
+
+    sqlx::query("DELETE FROM pending_registrations WHERE email = ?1")
+        .bind(&email)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_pending_registrations", e))?;
+
+    sqlx::query("UPDATE audit_logs SET actor_user_id = NULL WHERE actor_user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_null_actor_audit_logs", e))?;
+
+    sqlx::query("DELETE FROM sessions WHERE user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_sessions", e))?;
+
+    sqlx::query("DELETE FROM users WHERE id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_user", e))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_commit", e))?;
+
+    crate::security::clear_session_cookie();
+    Ok(())
+}
+
 /// Lista todos os usuários cadastrados (visão de admin), para gestão de bolões.
 #[cfg(feature = "server")]
-pub async fn list_all_users(token: String) -> Result<Vec<crate::models::UserPublic>, ServerFnError> {
+pub async fn list_all_users(
+    token: String,
+) -> Result<Vec<crate::models::UserPublic>, ServerFnError> {
     use crate::db::pool;
 
     crate::security::apply_security_headers();
@@ -632,12 +768,14 @@ pub async fn list_all_users(token: String) -> Result<Vec<crate::models::UserPubl
 
     Ok(rows
         .into_iter()
-        .map(|(id, username, email, is_admin)| crate::models::UserPublic {
-            id,
-            username,
-            email,
-            is_admin,
-        })
+        .map(
+            |(id, username, email, is_admin)| crate::models::UserPublic {
+                id,
+                username,
+                email,
+                is_admin,
+            },
+        )
         .collect())
 }
 
@@ -871,12 +1009,11 @@ pub async fn request_password_reset(email: String) -> Result<(), ServerFnError> 
     let email = crate::security::normalize_email(email)?;
     let db = pool();
 
-    let user: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM users WHERE lower(email) = ?1")
-            .bind(&email)
-            .fetch_optional(db)
-            .await
-            .map_err(|e| crate::security::internal_error("password_reset_lookup", e))?;
+    let user: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE lower(email) = ?1")
+        .bind(&email)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| crate::security::internal_error("password_reset_lookup", e))?;
 
     let Some((user_id,)) = user else {
         crate::security::log_event(
@@ -1088,10 +1225,7 @@ pub async fn run_bootstrap_admin(
 }
 
 #[cfg(feature = "server")]
-pub async fn login(
-    username: String,
-    password: String,
-) -> Result<AuthResult, ServerFnError> {
+pub async fn login(username: String, password: String) -> Result<AuthResult, ServerFnError> {
     use crate::db::pool;
     use argon2::{PasswordHash, PasswordVerifier};
     use std::time::Duration;
@@ -1297,7 +1431,9 @@ pub async fn confirm_admin_password(
                 "ip": ip,
             }),
         );
-        return Err(crate::security::public_error("Senha de administrador invalida."));
+        return Err(crate::security::public_error(
+            "Senha de administrador invalida.",
+        ));
     }
 
     let now = sqlite_utc_now();
@@ -1323,10 +1459,7 @@ pub async fn confirm_admin_password(
 }
 
 #[cfg(feature = "server")]
-pub async fn logout(
-    token: String,
-    csrf_token: String,
-) -> Result<(), ServerFnError> {
+pub async fn logout(token: String, csrf_token: String) -> Result<(), ServerFnError> {
     use crate::db::pool;
 
     crate::security::apply_security_headers();
@@ -1350,9 +1483,7 @@ pub async fn logout(
 }
 
 #[cfg(feature = "server")]
-pub async fn current_user(
-    token: String,
-) -> Result<SessionState, ServerFnError> {
+pub async fn current_user(token: String) -> Result<SessionState, ServerFnError> {
     use crate::db::pool;
     use std::time::Duration;
 
@@ -1492,9 +1623,7 @@ mod tests {
     fn admin_reauth_window_respects_recent_timestamps() {
         seed_security_env();
 
-        let recent = chrono::Utc::now()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
+        let recent = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         assert!(admin_reauth_is_fresh(Some(&recent)));
         assert!(!admin_reauth_is_fresh(Some("1999-01-01 00:00:00")));
@@ -1505,18 +1634,33 @@ mod tests {
     fn bootstrap_requires_exact_secret_and_empty_admin_set() {
         seed_security_env();
 
-        assert!(can_bootstrap_admin(false, "bootstrap-secret-super-seguro-0123456789abcdef", "bootstrap-secret-super-seguro-0123456789abcdef"));
-        assert!(!can_bootstrap_admin(false, "errado", "bootstrap-secret-super-seguro-0123456789abcdef"));
-        assert!(!can_bootstrap_admin(true, "bootstrap-secret-super-seguro-0123456789abcdef", "bootstrap-secret-super-seguro-0123456789abcdef"));
+        assert!(can_bootstrap_admin(
+            false,
+            "bootstrap-secret-super-seguro-0123456789abcdef",
+            "bootstrap-secret-super-seguro-0123456789abcdef"
+        ));
+        assert!(!can_bootstrap_admin(
+            false,
+            "errado",
+            "bootstrap-secret-super-seguro-0123456789abcdef"
+        ));
+        assert!(!can_bootstrap_admin(
+            true,
+            "bootstrap-secret-super-seguro-0123456789abcdef",
+            "bootstrap-secret-super-seguro-0123456789abcdef"
+        ));
     }
 
     #[tokio::test]
     async fn public_registration_flow_never_creates_admin() {
         seed_security_env();
         let db = test_db().await;
-        let (username, username_lookup, email) =
-            validate_registration_input("Caue".to_string(), "caue@teste.com".to_string(), "senha-super-segura")
-                .expect("input should validate");
+        let (username, username_lookup, email) = validate_registration_input(
+            "Caue".to_string(),
+            "caue@teste.com".to_string(),
+            "senha-super-segura",
+        )
+        .expect("input should validate");
 
         let user_id = create_public_user_account(
             &db,
@@ -1542,9 +1686,12 @@ mod tests {
     async fn bootstrap_admin_creates_first_admin_and_blocks_second_one() {
         seed_security_env();
         let db = test_db().await;
-        let (username, username_lookup, email) =
-            validate_registration_input("Root".to_string(), "root@teste.com".to_string(), "senha-super-segura")
-                .expect("input should validate");
+        let (username, username_lookup, email) = validate_registration_input(
+            "Root".to_string(),
+            "root@teste.com".to_string(),
+            "senha-super-segura",
+        )
+        .expect("input should validate");
 
         let user_id = create_bootstrap_admin_account(
             &db,

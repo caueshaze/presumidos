@@ -596,10 +596,8 @@ async fn load_active_subscriptions(
         "SELECT ps.user_id, np.lead_time_minutes, ps.endpoint, ps.p256dh, ps.auth, ps.user_agent
          FROM push_subscriptions ps
          INNER JOIN notification_preferences np ON np.user_id = ps.user_id
-         INNER JOIN users u ON u.id = ps.user_id
          WHERE ps.active = 1
-           AND np.enabled = 1
-           AND u.is_admin = 0",
+           AND np.enabled = 1",
     )
     .fetch_all(db)
     .await
@@ -626,6 +624,13 @@ async fn load_active_subscriptions(
     }
 
     Ok(grouped)
+}
+
+#[cfg(all(test, feature = "server"))]
+pub(crate) async fn test_active_subscription_user_ids(
+    db: &sqlx::SqlitePool,
+) -> Result<HashSet<String>, ServerFnError> {
+    Ok(load_active_subscriptions(db).await?.into_keys().collect())
 }
 
 #[cfg(feature = "server")]

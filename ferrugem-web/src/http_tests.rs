@@ -11,7 +11,8 @@ struct ErrorPayload {
 }
 
 fn seed_http_test_env() {
-    let db_path = std::env::temp_dir().join(format!("presumidos-http-test-{}.db", uuid::Uuid::new_v4()));
+    let db_path =
+        std::env::temp_dir().join(format!("presumidos-http-test-{}.db", uuid::Uuid::new_v4()));
     std::env::set_var("APP_ENV", "test");
     std::env::set_var("DATABASE_PATH", db_path.to_string_lossy().to_string());
     std::env::set_var(
@@ -108,7 +109,12 @@ fn weak_password_hash(password: &str) -> String {
         .to_string()
 }
 
-async fn login(client: &reqwest::Client, base: &str, email: &str, password: &str) -> reqwest::Response {
+async fn login(
+    client: &reqwest::Client,
+    base: &str,
+    email: &str,
+    password: &str,
+) -> reqwest::Response {
     client
         .post(format!("{base}/api/auth/login"))
         .json(&json!({ "username": email, "password": password }))
@@ -143,13 +149,15 @@ async fn add_membership(pool_id: &str, user_id: &str) {
 
 /// Membership com `joined_at` explícito (para testar elegibilidade por data de entrada).
 async fn add_membership_at(pool_id: &str, user_id: &str, joined_at: &str) {
-    sqlx::query("INSERT OR IGNORE INTO pool_members (pool_id, user_id, joined_at) VALUES (?1, ?2, ?3)")
-        .bind(pool_id)
-        .bind(user_id)
-        .bind(joined_at)
-        .execute(crate::db::pool())
-        .await
-        .expect("inserir membro com joined_at");
+    sqlx::query(
+        "INSERT OR IGNORE INTO pool_members (pool_id, user_id, joined_at) VALUES (?1, ?2, ?3)",
+    )
+    .bind(pool_id)
+    .bind(user_id)
+    .bind(joined_at)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir membro com joined_at");
 }
 
 /// Partida com resultado oficial já lançado (entra no cálculo do ranking).
@@ -267,12 +275,21 @@ async fn login_sets_session_cookie_and_current_user_works() {
     let base = test_server().await;
     let suffix = uuid::Uuid::new_v4();
     let email = format!("login-{suffix}@teste.com");
-    seed_user(&format!("login-{suffix}"), &email, "senha-correta-123", false).await;
+    seed_user(
+        &format!("login-{suffix}"),
+        &email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     let client = client();
 
     let login_response = login(&client, base, &email, "senha-correta-123").await;
-    assert!(login_response.status().is_success(), "login deveria ter sucesso");
+    assert!(
+        login_response.status().is_success(),
+        "login deveria ter sucesso"
+    );
 
     let auth_result: AuthResult = login_response.json().await.expect("corpo de login");
     assert_eq!(auth_result.user.email, email);
@@ -285,7 +302,10 @@ async fn login_sets_session_cookie_and_current_user_works() {
         .expect("requisicao current_user");
     assert!(current_response.status().is_success());
 
-    let session: SessionState = current_response.json().await.expect("corpo de current_user");
+    let session: SessionState = current_response
+        .json()
+        .await
+        .expect("corpo de current_user");
     let user = session.user.expect("sessao deveria ter usuario");
     assert_eq!(user.email, email);
     assert_eq!(session.csrf_token, auth_result.csrf_token);
@@ -347,7 +367,13 @@ async fn logout_requires_valid_csrf_token() {
     let base = test_server().await;
     let suffix = uuid::Uuid::new_v4();
     let email = format!("logout-{suffix}@teste.com");
-    seed_user(&format!("logout-{suffix}"), &email, "senha-correta-123", false).await;
+    seed_user(
+        &format!("logout-{suffix}"),
+        &email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     let client = client();
 
@@ -394,7 +420,13 @@ async fn admin_reauth_flow_and_rate_limit() {
     let base = test_server().await;
     let suffix = uuid::Uuid::new_v4();
     let email = format!("admin-{suffix}@teste.com");
-    let user_id = seed_user(&format!("admin-{suffix}"), &email, "senha-correta-123", true).await;
+    let user_id = seed_user(
+        &format!("admin-{suffix}"),
+        &email,
+        "senha-correta-123",
+        true,
+    )
+    .await;
 
     let client = client();
 
@@ -413,15 +445,17 @@ async fn admin_reauth_flow_and_rate_limit() {
         .expect("reauth com senha errada");
     assert!(!wrong_password.status().is_success());
     let error: ErrorPayload = wrong_password.json().await.expect("corpo de erro");
-    assert!(error.error.to_lowercase().contains("senha de administrador"));
+    assert!(error
+        .error
+        .to_lowercase()
+        .contains("senha de administrador"));
 
-    let admin_reauthed_after_failure: (Option<String>,) = sqlx::query_as(
-        "SELECT admin_reauthed_at FROM sessions WHERE user_id = ?1",
-    )
-    .bind(&user_id)
-    .fetch_one(crate::db::pool())
-    .await
-    .expect("sessao do admin");
+    let admin_reauthed_after_failure: (Option<String>,) =
+        sqlx::query_as("SELECT admin_reauthed_at FROM sessions WHERE user_id = ?1")
+            .bind(&user_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("sessao do admin");
     assert!(admin_reauthed_after_failure.0.is_none());
 
     // Senha correta confirma a reautenticacao recente.
@@ -434,13 +468,12 @@ async fn admin_reauth_flow_and_rate_limit() {
         .expect("reauth com senha correta");
     assert!(right_password.status().is_success());
 
-    let admin_reauthed_after_success: (Option<String>,) = sqlx::query_as(
-        "SELECT admin_reauthed_at FROM sessions WHERE user_id = ?1",
-    )
-    .bind(&user_id)
-    .fetch_one(crate::db::pool())
-    .await
-    .expect("sessao do admin");
+    let admin_reauthed_after_success: (Option<String>,) =
+        sqlx::query_as("SELECT admin_reauthed_at FROM sessions WHERE user_id = ?1")
+            .bind(&user_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("sessao do admin");
     assert!(admin_reauthed_after_success.0.is_some());
 
     let audit_count: (i64,) = sqlx::query_as(
@@ -482,8 +515,20 @@ async fn pool_creator_can_delete_pool() {
     let suffix = uuid::Uuid::new_v4();
     let creator_email = format!("del-creator-{suffix}@teste.com");
     let member_email = format!("del-member-{suffix}@teste.com");
-    let creator_id = seed_user(&format!("delcreator-{suffix}"), &creator_email, "senha-correta-123", false).await;
-    let member_id = seed_user(&format!("delmember-{suffix}"), &member_email, "senha-correta-123", false).await;
+    let creator_id = seed_user(
+        &format!("delcreator-{suffix}"),
+        &creator_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let member_id = seed_user(
+        &format!("delmember-{suffix}"),
+        &member_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     let pool_id = insert_pool(&format!("Bolao {suffix}"), &creator_id).await;
     add_membership(&pool_id, &creator_id).await;
@@ -500,7 +545,10 @@ async fn pool_creator_can_delete_pool() {
         .send()
         .await
         .expect("delete por membro comum");
-    assert!(!denied.status().is_success(), "membro comum nao deveria apagar");
+    assert!(
+        !denied.status().is_success(),
+        "membro comum nao deveria apagar"
+    );
 
     // Pool e membros continuam existindo após a tentativa barrada.
     let still_there: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pools WHERE id = ?1")
@@ -519,7 +567,10 @@ async fn pool_creator_can_delete_pool() {
         .send()
         .await
         .expect("delete pelo criador");
-    assert!(deleted.status().is_success(), "criador deveria poder apagar");
+    assert!(
+        deleted.status().is_success(),
+        "criador deveria poder apagar"
+    );
 
     // Pool e pool_members somem; nenhum órfão.
     let pools_left: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pools WHERE id = ?1")
@@ -529,12 +580,16 @@ async fn pool_creator_can_delete_pool() {
         .expect("contar pool apos delete");
     assert_eq!(pools_left.0, 0, "bolao deveria ter sido apagado");
 
-    let members_left: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id = ?1")
-        .bind(&pool_id)
-        .fetch_one(crate::db::pool())
-        .await
-        .expect("contar membros apos delete");
-    assert_eq!(members_left.0, 0, "membros do bolao deveriam ter sido removidos");
+    let members_left: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id = ?1")
+            .bind(&pool_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar membros apos delete");
+    assert_eq!(
+        members_left.0, 0,
+        "membros do bolao deveriam ter sido removidos"
+    );
 }
 
 /// Elegibilidade por data de entrada: palpites de jogos que começaram ANTES de
@@ -545,14 +600,21 @@ async fn leaderboard_ignores_predictions_from_before_join() {
     let base = test_server().await;
     let suffix = uuid::Uuid::new_v4();
     let email = format!("joiner-{suffix}@teste.com");
-    let user_id = seed_user(&format!("joiner-{suffix}"), &email, "senha-correta-123", false).await;
+    let user_id = seed_user(
+        &format!("joiner-{suffix}"),
+        &email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     let pool_id = insert_pool(&format!("Bolao {suffix}"), &user_id).await;
     // Entrou no bolão em 2022.
     add_membership_at(&pool_id, &user_id, "2022-01-01 00:00:00").await;
 
     // Jogo anterior à entrada (2020): palpite exato valeria 7, mas NÃO deve contar.
-    let old_match = insert_finished_match("Brasil", "Argentina", "2020-01-01T00:00:00Z", 2, 1).await;
+    let old_match =
+        insert_finished_match("Brasil", "Argentina", "2020-01-01T00:00:00Z", 2, 1).await;
     insert_prediction(&user_id, &old_match, 2, 1).await;
 
     // Jogo posterior à entrada (2023): palpite exato vale 7 e DEVE contar.
@@ -580,10 +642,34 @@ async fn pool_creator_and_admin_can_adjust_points() {
     let target_email = format!("target-adj-{suffix}@teste.com");
     let admin_email = format!("admin-adj-{suffix}@teste.com");
     let outsider_email = format!("outsider-adj-{suffix}@teste.com");
-    let creator_id = seed_user(&format!("creator-{suffix}"), &creator_email, "senha-correta-123", false).await;
-    let target_id = seed_user(&format!("targetadj-{suffix}"), &target_email, "senha-correta-123", false).await;
-    let admin_id = seed_user(&format!("adminadj-{suffix}"), &admin_email, "senha-correta-123", true).await;
-    let outsider_id = seed_user(&format!("outadj-{suffix}"), &outsider_email, "senha-correta-123", false).await;
+    let creator_id = seed_user(
+        &format!("creator-{suffix}"),
+        &creator_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let target_id = seed_user(
+        &format!("targetadj-{suffix}"),
+        &target_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let admin_id = seed_user(
+        &format!("adminadj-{suffix}"),
+        &admin_email,
+        "senha-correta-123",
+        true,
+    )
+    .await;
+    let outsider_id = seed_user(
+        &format!("outadj-{suffix}"),
+        &outsider_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     let pool_id = insert_pool(&format!("Bolao {suffix}"), &creator_id).await;
     add_membership(&pool_id, &creator_id).await;
@@ -595,7 +681,10 @@ async fn pool_creator_and_admin_can_adjust_points() {
     let (creator_token, creator_csrf) = seed_session(&creator_id).await;
     let creator_c = client_with_session(base, &creator_token);
 
-    assert_eq!(leaderboard_points(&creator_c, base, &pool_id, &target_id).await, 0);
+    assert_eq!(
+        leaderboard_points(&creator_c, base, &pool_id, &target_id).await,
+        0
+    );
 
     let added = creator_c
         .post(&adj_url)
@@ -605,7 +694,10 @@ async fn pool_creator_and_admin_can_adjust_points() {
         .await
         .expect("lancar ajuste");
     assert!(added.status().is_success(), "criador deveria poder ajustar");
-    assert_eq!(leaderboard_points(&creator_c, base, &pool_id, &target_id).await, 5);
+    assert_eq!(
+        leaderboard_points(&creator_c, base, &pool_id, &target_id).await,
+        5
+    );
 
     // Lista de ajustes (criador, membro) tem 1 item.
     let list: Vec<crate::models::PointAdjustment> = creator_c
@@ -630,7 +722,10 @@ async fn pool_creator_and_admin_can_adjust_points() {
         .send()
         .await
         .expect("ajuste por membro comum");
-    assert!(!denied.status().is_success(), "membro comum nao deveria ajustar");
+    assert!(
+        !denied.status().is_success(),
+        "membro comum nao deveria ajustar"
+    );
     let seen: Vec<crate::models::PointAdjustment> = target_c
         .get(&adj_url)
         .send()
@@ -651,8 +746,14 @@ async fn pool_creator_and_admin_can_adjust_points() {
         .send()
         .await
         .expect("ajuste do admin");
-    assert!(admin_added.status().is_success(), "admin deveria poder ajustar");
-    assert_eq!(leaderboard_points(&creator_c, base, &pool_id, &target_id).await, 7);
+    assert!(
+        admin_added.status().is_success(),
+        "admin deveria poder ajustar"
+    );
+    assert_eq!(
+        leaderboard_points(&creator_c, base, &pool_id, &target_id).await,
+        7
+    );
 
     // Criador remove o ajuste de +5: total volta a 2.
     let removed = creator_c
@@ -662,8 +763,14 @@ async fn pool_creator_and_admin_can_adjust_points() {
         .send()
         .await
         .expect("remover ajuste");
-    assert!(removed.status().is_success(), "criador deveria poder remover");
-    assert_eq!(leaderboard_points(&creator_c, base, &pool_id, &target_id).await, 2);
+    assert!(
+        removed.status().is_success(),
+        "criador deveria poder remover"
+    );
+    assert_eq!(
+        leaderboard_points(&creator_c, base, &pool_id, &target_id).await,
+        2
+    );
 
     // Não-membro é barrado ao listar ajustes.
     let (outsider_token, _) = seed_session(&outsider_id).await;
@@ -673,7 +780,10 @@ async fn pool_creator_and_admin_can_adjust_points() {
         .send()
         .await
         .expect("nao-membro lista ajustes");
-    assert!(!outsider_list.status().is_success(), "nao-membro nao deveria listar");
+    assert!(
+        !outsider_list.status().is_success(),
+        "nao-membro nao deveria listar"
+    );
 }
 
 /// Troca de nome de usuário: aplica o novo nome, mas rejeita um nome já em uso
@@ -687,7 +797,13 @@ async fn change_username_updates_and_rejects_duplicates() {
     let short = &short[..8];
     let email = format!("rename-{suffix}@teste.com");
     let other_email = format!("other-{suffix}@teste.com");
-    let user_id = seed_user(&format!("rename-{suffix}"), &email, "senha-correta-123", false).await;
+    let user_id = seed_user(
+        &format!("rename-{suffix}"),
+        &email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
     let taken_name = format!("taken{short}");
     seed_user(&taken_name, &other_email, "senha-correta-123", false).await;
 
@@ -704,7 +820,10 @@ async fn change_username_updates_and_rejects_duplicates() {
         .send()
         .await
         .expect("trocar nome");
-    assert!(ok.status().is_success(), "troca de nome deveria ter sucesso");
+    assert!(
+        ok.status().is_success(),
+        "troca de nome deveria ter sucesso"
+    );
     let updated: crate::models::UserPublic = ok.json().await.expect("usuario atualizado");
     assert_eq!(updated.username, new_name);
 
@@ -723,7 +842,10 @@ async fn change_username_updates_and_rejects_duplicates() {
         .send()
         .await
         .expect("trocar para nome ocupado");
-    assert!(!dup.status().is_success(), "nome em uso deveria ser rejeitado");
+    assert!(
+        !dup.status().is_success(),
+        "nome em uso deveria ser rejeitado"
+    );
     let err: ErrorPayload = dup.json().await.expect("corpo de erro");
     assert!(err.error.to_lowercase().contains("ja esta em uso"));
 
@@ -736,6 +858,214 @@ async fn change_username_updates_and_rejects_duplicates() {
     assert_eq!(unchanged.0, new_name);
 }
 
+#[tokio::test]
+async fn delete_account_removes_user_data_and_logs_out() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let owner_email = format!("owner-{suffix}@teste.com");
+    let member_email = format!("member-{suffix}@teste.com");
+    let owner_id = seed_user(
+        &format!("owner-{suffix}"),
+        &owner_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let member_id = seed_user(
+        &format!("member-{suffix}"),
+        &member_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+
+    let pool_id = insert_pool(&format!("Bolao do owner {suffix}"), &owner_id).await;
+    add_membership(&pool_id, &owner_id).await;
+    add_membership(&pool_id, &member_id).await;
+
+    let match_id = insert_match("Brasil", "Japao", "2999-01-01T00:00:00Z").await;
+    insert_prediction(&member_id, &match_id, 2, 1).await;
+
+    sqlx::query(
+        "INSERT INTO notification_preferences (user_id, enabled, lead_time_minutes) VALUES (?1, 1, 20)",
+    )
+    .bind(&member_id)
+    .execute(crate::db::pool())
+    .await
+    .expect("preferencia de notificacao");
+
+    sqlx::query(
+        "INSERT INTO push_subscriptions
+            (id, user_id, endpoint, p256dh, auth, active)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&member_id)
+    .bind(format!("https://push.example/{suffix}"))
+    .bind("p256dh-teste")
+    .bind("auth-teste")
+    .execute(crate::db::pool())
+    .await
+    .expect("subscription de push");
+
+    let (token, csrf) = seed_session(&member_id).await;
+    let client = client_with_session(base, &token);
+    let delete_url = format!("{base}/api/auth/delete");
+
+    let deleted = client
+        .post(&delete_url)
+        .header("X-CSRF-Token", &csrf)
+        .send()
+        .await
+        .expect("excluir conta");
+    assert!(
+        deleted.status().is_success(),
+        "exclusao deveria ter sucesso"
+    );
+
+    let current = client
+        .get(format!("{base}/api/auth/current-user"))
+        .send()
+        .await
+        .expect("current_user apos exclusao");
+    let session: SessionState = current.json().await.expect("sessao apos exclusao");
+    assert!(session.user.is_none(), "sessao deveria estar encerrada");
+
+    let user_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE id = ?1")
+        .bind(&member_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("contar usuario");
+    assert_eq!(user_count.0, 0);
+
+    let prediction_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM predictions WHERE user_id = ?1")
+            .bind(&member_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar palpites");
+    assert_eq!(prediction_count.0, 0);
+
+    let membership_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE user_id = ?1")
+            .bind(&member_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar memberships");
+    assert_eq!(membership_count.0, 0);
+
+    let pref_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM notification_preferences WHERE user_id = ?1")
+            .bind(&member_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar preferencias");
+    assert_eq!(pref_count.0, 0);
+
+    let push_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM push_subscriptions WHERE user_id = ?1")
+            .bind(&member_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar subscriptions");
+    assert_eq!(push_count.0, 0);
+
+    let audit_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM audit_logs WHERE action = 'account_deleted' AND target_id = ?1",
+    )
+    .bind(&member_id)
+    .fetch_one(crate::db::pool())
+    .await
+    .expect("contar auditoria de exclusao");
+    assert_eq!(audit_count.0, 1);
+}
+
+#[tokio::test]
+async fn delete_account_blocks_pool_owner() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let email = format!("pool-owner-{suffix}@teste.com");
+    let user_id = seed_user(
+        &format!("pool-owner-{suffix}"),
+        &email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let pool_id = insert_pool(&format!("Bolao {suffix}"), &user_id).await;
+    add_membership(&pool_id, &user_id).await;
+
+    let (token, csrf) = seed_session(&user_id).await;
+    let client = client_with_session(base, &token);
+
+    let blocked = client
+        .post(format!("{base}/api/auth/delete"))
+        .header("X-CSRF-Token", &csrf)
+        .send()
+        .await
+        .expect("exclusao bloqueada");
+    assert!(
+        !blocked.status().is_success(),
+        "criador de bolao nao deveria excluir a conta"
+    );
+    let err: ErrorPayload = blocked.json().await.expect("erro da exclusao bloqueada");
+    assert!(err.error.to_lowercase().contains("criou bol"));
+
+    let user_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE id = ?1")
+        .bind(&user_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("usuario ainda existe");
+    assert_eq!(user_count.0, 1);
+}
+
+#[tokio::test]
+async fn load_active_subscriptions_includes_admin_accounts() {
+    let _base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let admin_email = format!("admin-push-{suffix}@teste.com");
+    let user_email = format!("user-push-{suffix}@teste.com");
+    let admin_id =
+        seed_user(&format!("admin-push-{suffix}"), &admin_email, "senha-correta-123", true).await;
+    let user_id =
+        seed_user(&format!("user-push-{suffix}"), &user_email, "senha-correta-123", false).await;
+
+    for (user_id, endpoint) in [
+        (&admin_id, format!("https://push.example/admin-{suffix}")),
+        (&user_id, format!("https://push.example/user-{suffix}")),
+    ] {
+        sqlx::query(
+            "INSERT INTO notification_preferences (user_id, enabled, lead_time_minutes)
+             VALUES (?1, 1, 20)",
+        )
+        .bind(user_id)
+        .execute(crate::db::pool())
+        .await
+        .expect("preferencia ativa");
+
+        sqlx::query(
+            "INSERT INTO push_subscriptions
+                (id, user_id, endpoint, p256dh, auth, active)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(user_id)
+        .bind(endpoint)
+        .bind("p256dh-teste")
+        .bind("auth-teste")
+        .execute(crate::db::pool())
+        .await
+        .expect("subscription ativa");
+    }
+
+    let grouped = crate::push::test_active_subscription_user_ids(crate::db::pool())
+        .await
+        .expect("subscriptions ativas");
+
+    assert!(grouped.contains(&admin_id), "admin deveria receber notificacoes se ativar push");
+    assert!(grouped.contains(&user_id), "usuario comum deveria seguir recebendo notificacoes");
+}
+
 /// Regra de privacidade: os palpites de um membro só ficam visíveis depois que
 /// a partida começa (kickoff <= agora). Jogos no futuro não podem vazar.
 #[tokio::test]
@@ -745,9 +1075,27 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
     let email_a = format!("memberA-{suffix}@teste.com");
     let email_b = format!("memberB-{suffix}@teste.com");
     let email_c = format!("outsider-{suffix}@teste.com");
-    let user_a = seed_user(&format!("memberA-{suffix}"), &email_a, "senha-correta-123", false).await;
-    let user_b = seed_user(&format!("memberB-{suffix}"), &email_b, "senha-correta-123", false).await;
-    let user_c = seed_user(&format!("outsider-{suffix}"), &email_c, "senha-correta-123", false).await;
+    let user_a = seed_user(
+        &format!("memberA-{suffix}"),
+        &email_a,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let user_b = seed_user(
+        &format!("memberB-{suffix}"),
+        &email_b,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let user_c = seed_user(
+        &format!("outsider-{suffix}"),
+        &email_c,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     let pool_id = insert_pool(&format!("Bolao {suffix}"), &user_a).await;
     // Entraram no bolão antes do jogo "passado", para isolar o teste da regra de
@@ -770,7 +1118,10 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
         .send()
         .await
         .expect("requisicao member-predictions");
-    assert!(response.status().is_success(), "membro deveria poder consultar");
+    assert!(
+        response.status().is_success(),
+        "membro deveria poder consultar"
+    );
 
     let members: Vec<crate::models::MemberPredictions> =
         response.json().await.expect("corpo member-predictions");
@@ -795,7 +1146,10 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
         .send()
         .await
         .expect("requisicao de nao-membro");
-    assert!(!denied.status().is_success(), "nao-membro nao deveria acessar");
+    assert!(
+        !denied.status().is_success(),
+        "nao-membro nao deveria acessar"
+    );
 }
 
 /// Gestão de membros (admin): adicionar/remover exige admin + reautenticação
@@ -806,8 +1160,20 @@ async fn admin_can_add_and_remove_pool_members() {
     let suffix = uuid::Uuid::new_v4();
     let admin_email = format!("admin-mgmt-{suffix}@teste.com");
     let target_email = format!("target-{suffix}@teste.com");
-    let admin_id = seed_user(&format!("admin-mgmt-{suffix}"), &admin_email, "senha-correta-123", true).await;
-    let target_id = seed_user(&format!("target-{suffix}"), &target_email, "senha-correta-123", false).await;
+    let admin_id = seed_user(
+        &format!("admin-mgmt-{suffix}"),
+        &admin_email,
+        "senha-correta-123",
+        true,
+    )
+    .await;
+    let target_id = seed_user(
+        &format!("target-{suffix}"),
+        &target_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     let pool_id = insert_pool(&format!("Bolao Admin {suffix}"), &admin_id).await;
 

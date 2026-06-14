@@ -22,8 +22,8 @@ O projeto já entrega:
 - ranking por bolão com a regra de pontuação do projeto
 - reautenticação de admin para ações sensíveis + trilha de auditoria
 - liberação controlada do mata-mata (oculto até o admin liberar)
-- **integração de resultados ao vivo** (worldcup26.ir): preenche o resultado
-  final dos jogos de grupo automaticamente
+- **integração de resultados ao vivo** a partir de uma fonte pública de
+  terceiros: preenche o resultado final dos jogos de grupo automaticamente
 - migrations SQLite com seed das 104 partidas oficiais
 
 ## Arquitetura
@@ -55,7 +55,7 @@ O projeto já entrega:
 - `pools.rs`: bolões, membros e ajustes de pontos
 - `matches.rs`: partidas, palpites e resultado oficial
 - `scoring.rs`: cálculo do ranking
-- `football.rs`: integração com a worldcup26.ir (poller + `sync-fixtures`)
+- `football.rs`: integração de resultados ao vivo (poller + `sync-fixtures`)
 - `email.rs`: envio de e-mails de verificação/recuperação via Resend
 - `security.rs`: headers, CSRF, rate limit, resolução de IP/proxy e auditoria
 - `config.rs`: carregamento e validação do `.env`
@@ -143,15 +143,16 @@ Observações:
 - o mata-mata fica oculto enquanto `app_settings.knockout_released = '0'`; o admin
   sempre vê tudo, monta os confrontos e libera de uma vez
 
-## Resultados ao vivo (worldcup26.ir)
+## Resultados ao vivo
 
-O backend pode preencher resultados automaticamente a partir da API pública e
-gratuita [worldcup26.ir](https://worldcup26.ir) (sem chave). Variáveis no `.env`:
+O backend pode preencher resultados automaticamente a partir de uma **fonte
+pública de terceiros** (configurável via `FOOTBALL_API_BASE_URL`). Variáveis no
+`.env`:
 
 ```bash
 FOOTBALL_API_ENABLED=true        # liga a integração
 FOOTBALL_POLLER_ENABLED=true     # sobe o poller (true em UMA instância só)
-FOOTBALL_API_BASE_URL=https://worldcup26.ir
+FOOTBALL_API_BASE_URL=<endpoint da fonte de placares>
 FOOTBALL_POLL_INTERVAL_SECS=900  # 15 min
 ```
 
@@ -162,9 +163,8 @@ Como funciona:
   +30min do kickoff).
 - Quando um jogo de **fase de grupos** é marcado como encerrado, o poller grava
   o placar oficial (`result_source = 'api'`) e o ranking atualiza sozinho.
-- O **mata-mata** é apenas exibido ao vivo (quando a fonte fornece): a fonte não
-  traz pênaltis nem o classificado, então o resultado oficial continua sendo
-  lançado pelo admin.
+- O **mata-mata** é apenas exibido ao vivo (quando disponível): o resultado
+  oficial (classificado/pênaltis) continua sendo lançado pelo admin.
 - **Resultado manual é soberano:** o poller nunca sobrescreve um placar lançado
   pelo admin — em divergência, apenas registra `match_result_api_conflict` na
   auditoria.
@@ -346,19 +346,3 @@ ufw enable
 
 Distribuído sob a licença **MIT**. Veja o arquivo [LICENSE](LICENSE) para os
 termos completos.
-
-## Créditos de dados
-
-O Presumidos utiliza dados públicos da Copa do Mundo FIFA 2026 fornecidos pelo
-projeto open-source [rezarahiminia/worldcup2026](https://github.com/rezarahiminia/worldcup2026),
-incluindo informações de partidas, seleções, grupos, estádios, placares e
-atualizações ao vivo.
-
-A integração é usada apenas como fonte externa de dados para automatizar a
-atualização de placares e resultados no bolão. O Presumidos é um projeto
-independente e não possui afiliação oficial com a FIFA, com a Copa do Mundo
-FIFA, nem com os mantenedores da API.
-
-- **Fonte dos dados:** https://github.com/rezarahiminia/worldcup2026
-- **API pública:** https://worldcup26.ir
-- **Licença declarada pelo projeto original:** ISC

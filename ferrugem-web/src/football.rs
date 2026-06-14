@@ -1,19 +1,20 @@
-//! Integração de resultados ao vivo via API pública worldcup26.ir
-//! (open-source, gratuita, sem chave): <https://github.com/rezarahiminia/worldcup2026>.
+//! Integração de resultados ao vivo via API pública da ESPN (scoreboard da
+//! FIFA World Cup). Endpoint usado:
+//! `.../sports/soccer/fifa.world/scoreboard?dates=YYYYMMDD&lang=pt&region=br`.
 //!
 //! - Poller em background (`spawn_poller`) que, a cada `poll_interval_secs`, só
-//!   chama a API se há jogo na janela (evita martelar o host gratuito).
-//! - Comando CLI (`sync_fixtures`) que mapeia cada `jogo-NNN` local ao `id` da API.
-//!   O `id` da API é `1..104` e bate 1:1 com a ordem de `jogo-001..jogo-104`,
-//!   então o mapeamento é direto (com validação dos nomes na fase de grupos).
+//!   chama a API quando há jogo na janela.
+//! - Comando CLI (`sync_fixtures`) que mapeia cada `jogo-NNN` local ao `id` do
+//!   evento da ESPN, casando por par de seleções (nomes em PT, normalizados).
 //!
-//! Limitações da fonte (decisões de produto):
-//! - A API **não** traz placar de pênaltis nem o classificado, e não distingue o
-//!   placar do tempo normal do placar com prorrogação. Por isso, o poller só
-//!   **finaliza automaticamente os jogos de fase de grupos**. No mata-mata ele
-//!   apenas exibe o placar ao vivo; o resultado oficial (classificado/pênaltis)
-//!   continua sendo lançado pelo admin.
+//! Semântica de produto:
+//! - O poller **finaliza automaticamente apenas a fase de grupos** (placar +
+//!   `finished`). No mata-mata ele só exibe o placar ao vivo; o resultado oficial
+//!   (classificado/pênaltis) é lançado pelo admin.
 //! - Resultado de origem `manual` (admin) é soberano: nunca é sobrescrito.
+//!
+//! Detalhe de data: a ESPN agrupa o `dates=YYYYMMDD` por horário ET (EDT durante
+//! a Copa, UTC−4). Por isso a data consultada é o kickoff convertido para ET.
 
 #![cfg(feature = "server")]
 
@@ -24,65 +25,84 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 // ---------------------------------------------------------------------------
-// Estruturas da resposta da API (apenas os campos que usamos). Tudo vem como
-// string nessa API ("2", "TRUE", ...), então parseamos manualmente.
+// Estruturas da resposta do scoreboard da ESPN (apenas o que usamos).
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
-struct GamesResponse {
+struct Scoreboard {
     #[serde(default)]
-    games: Vec<Game>,
+    events: Vec<Event>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct Game {
-    /// Id "1".."104" (alinhado a jogo-001..jogo-104).
+struct Event {
     id: String,
     #[serde(default)]
-    home_score: String,
+    competitions: Vec<Competition>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Competition {
+    status: Status,
     #[serde(default)]
-    away_score: String,
-    /// "TRUE" / "FALSE".
+    competitors: Vec<Competitor>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Status {
+    #[serde(default, rename = "displayClock")]
+    display_clock: String,
+    #[serde(rename = "type")]
+    type_: StatusType,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StatusType {
+    /// "pre" | "in" | "post".
     #[serde(default)]
-    finished: String,
-    /// "notstarted" / "finished" / minuto corrido (ex.: "45'", "HT") ao vivo.
+    state: String,
     #[serde(default)]
-    time_elapsed: String,
+    completed: bool,
+    /// Ex.: "STATUS_FULL_TIME", "STATUS_FIRST_HALF".
     #[serde(default)]
-    home_team_name_en: String,
+    name: String,
+    #[serde(default, rename = "shortDetail")]
+    short_detail: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Competitor {
+    #[serde(default, rename = "homeAway")]
+    home_away: String,
     #[serde(default)]
-    away_team_name_en: String,
+    score: String,
+    team: Team,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Team {
+    #[serde(default, rename = "displayName")]
+    display_name: String,
 }
 
 fn parse_score(raw: &str) -> i64 {
     raw.trim().parse::<i64>().unwrap_or(0)
 }
 
-fn is_finished(game: &Game) -> bool {
-    game.finished.trim().eq_ignore_ascii_case("true")
-}
-
-/// Detecta jogo em andamento pelo `time_elapsed` (qualquer valor que não seja
-/// "notstarted"/"finished"/vazio), desde que ainda não esteja finalizado.
-fn live_label(game: &Game) -> Option<String> {
-    let t = game.time_elapsed.trim();
-    if is_finished(game) || t.is_empty() {
-        return None;
-    }
-    match t.to_ascii_lowercase().as_str() {
-        "notstarted" | "finished" => None,
-        _ => Some(t.to_string()),
+impl Event {
+    fn competition(&self) -> Option<&Competition> {
+        self.competitions.first()
     }
 }
 
-/// Minuto corrido extraído do `time_elapsed`, se houver dígitos (ex.: "45'"→45).
-fn live_elapsed(label: &str) -> Option<i64> {
-    let digits: String = label.chars().take_while(|c| c.is_ascii_digit()).collect();
-    digits.parse::<i64>().ok()
+impl Competition {
+    fn side(&self, which: &str) -> Option<&Competitor> {
+        self.competitors.iter().find(|c| c.home_away == which)
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Classificação de um jogo da API: o que fazer com ele no banco.
+// Classificação de um evento da ESPN: o que fazer com ele no banco.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,36 +115,63 @@ enum GameApply {
         elapsed: Option<i64>,
     },
     /// Fase de grupos encerrada — gravar o resultado oficial.
-    FinalGroup { home: i64, away: i64 },
+    FinalGroup {
+        home: i64,
+        away: i64,
+        raw_status: String,
+    },
     /// Mata-mata encerrado — não finaliza (admin lança). Limpa o placar ao vivo.
     FinishedKnockout,
-    /// Não começou ou status irrelevante — ignorar.
+    /// Não começou ou sem dados — ignorar.
     Skip,
 }
 
-/// Decide, de forma pura e testável, o que fazer com um jogo da API.
-fn classify_game(is_knockout: bool, game: &Game) -> GameApply {
-    if let Some(label) = live_label(game) {
+/// Minuto corrido extraído do relógio da ESPN (ex.: "45'" -> 45).
+fn live_elapsed(label: &str) -> Option<i64> {
+    let digits: String = label.chars().filter(|c| c.is_ascii_digit()).collect();
+    digits.parse::<i64>().ok()
+}
+
+/// Decide, de forma pura e testável, o que fazer com um evento da ESPN.
+fn classify_event(is_knockout: bool, event: &Event) -> GameApply {
+    let Some(comp) = event.competition() else {
+        return GameApply::Skip;
+    };
+    let (Some(home), Some(away)) = (comp.side("home"), comp.side("away")) else {
+        return GameApply::Skip;
+    };
+    let home_score = parse_score(&home.score);
+    let away_score = parse_score(&away.score);
+    let state = comp.status.type_.state.as_str();
+    let finished = state == "post" || comp.status.type_.completed;
+
+    if state == "in" && !finished {
+        let label = if !comp.status.display_clock.trim().is_empty() {
+            comp.status.display_clock.trim().to_string()
+        } else {
+            comp.status.type_.short_detail.trim().to_string()
+        };
         return GameApply::Live {
-            home: parse_score(&game.home_score),
-            away: parse_score(&game.away_score),
+            home: home_score,
+            away: away_score,
             elapsed: live_elapsed(&label),
             status: label,
         };
     }
 
-    if !is_finished(game) {
+    if !finished {
         return GameApply::Skip;
     }
 
     if is_knockout {
-        // Sem pênaltis/classificado/tempo-normal confiáveis: deixa para o admin.
+        // Sem placar do tempo normal / pênaltis confiáveis aqui: deixa p/ o admin.
         return GameApply::FinishedKnockout;
     }
 
     GameApply::FinalGroup {
-        home: parse_score(&game.home_score),
-        away: parse_score(&game.away_score),
+        home: home_score,
+        away: away_score,
+        raw_status: comp.status.type_.name.clone(),
     }
 }
 
@@ -138,14 +185,12 @@ fn client() -> &'static reqwest::Client {
         reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(30))
-            .user_agent("Presumidos/1.0 (+https://github.com/rezarahiminia/worldcup2026)")
+            .user_agent("Presumidos/1.0")
             .build()
             .expect("falha ao construir cliente HTTP")
     })
 }
 
-/// Mensagem de erro com toda a cadeia de causas (ex.: "error sending request ->
-/// dns error -> ..."), para o log mostrar a causa real (DNS x timeout x conexão).
 fn error_chain(err: &dyn std::error::Error) -> String {
     let mut msg = err.to_string();
     let mut source = err.source();
@@ -159,36 +204,43 @@ fn error_chain(err: &dyn std::error::Error) -> String {
 
 const FETCH_ATTEMPTS: u32 = 3;
 
-async fn fetch_games() -> Result<Vec<Game>, ServerFnError> {
-    let base = settings().football.base_url.trim_end_matches('/');
-    let url = format!("{base}/get/games");
+/// Busca o scoreboard da ESPN de uma data (formato YYYYMMDD, em ET).
+async fn fetch_scoreboard(date: &str) -> Result<Vec<Event>, ServerFnError> {
+    let url = settings().football.base_url.trim_end_matches('/').to_string();
 
-    // A fonte é um host gratuito instável: tolera blips transitórios com algumas
-    // retentativas antes de desistir do ciclo.
     let mut last_err: Option<reqwest::Error> = None;
     for attempt in 1..=FETCH_ATTEMPTS {
-        match client().get(&url).send().await {
+        let send = client()
+            .get(&url)
+            .query(&[
+                ("dates", date),
+                ("limit", "100"),
+                ("lang", "pt"),
+                ("region", "br"),
+            ])
+            .send()
+            .await;
+
+        match send {
             Ok(resp) => {
                 let status = resp.status();
                 let body = resp
                     .text()
                     .await
                     .map_err(|e| crate::security::internal_error("football_fetch_body", e))?;
-
                 if !status.is_success() {
                     return Err(crate::security::public_error(format!(
-                        "API de resultados respondeu {status}: {}",
+                        "ESPN respondeu {status}: {}",
                         body.chars().take(200).collect::<String>()
                     )));
                 }
-
-                let parsed: GamesResponse = serde_json::from_str(&body)
+                let parsed: Scoreboard = serde_json::from_str(&body)
                     .map_err(|e| crate::security::internal_error("football_parse", e))?;
-                return Ok(parsed.games);
+                return Ok(parsed.events);
             }
             Err(e) => {
                 eprintln!(
-                    "[football] tentativa {attempt}/{FETCH_ATTEMPTS} falhou ao buscar {url}: {}",
+                    "[football] tentativa {attempt}/{FETCH_ATTEMPTS} falhou ao buscar ESPN ({date}): {}",
                     error_chain(&e)
                 );
                 last_err = Some(e);
@@ -212,11 +264,20 @@ async fn fetch_games() -> Result<Vec<Game>, ServerFnError> {
 #[derive(sqlx::FromRow)]
 struct PollCandidate {
     id: String,
+    kickoff: String,
     external_fixture_id: Option<i64>,
     phase: Option<String>,
     result_source: Option<String>,
     home_score: Option<i64>,
     away_score: Option<i64>,
+}
+
+/// O que o poller fez com um jogo neste ciclo (para o log de heartbeat).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ApplyOutcome {
+    Finalized,
+    Live,
+    Noop,
 }
 
 async fn clear_live(db: &sqlx::SqlitePool, match_id: &str) -> Result<(), ServerFnError> {
@@ -232,20 +293,23 @@ async fn clear_live(db: &sqlx::SqlitePool, match_id: &str) -> Result<(), ServerF
     Ok(())
 }
 
-/// Aplica um jogo da API a um jogo local já mapeado.
-async fn apply_game(
+/// Aplica um evento da ESPN a um jogo local já mapeado.
+async fn apply_event(
     db: &sqlx::SqlitePool,
     candidate: &PollCandidate,
-    game: &Game,
-) -> Result<(), ServerFnError> {
+    event: &Event,
+) -> Result<ApplyOutcome, ServerFnError> {
     use crate::models::is_knockout;
     use serde_json::json;
 
     let is_ko = is_knockout(candidate.phase.as_deref());
-    match classify_game(is_ko, game) {
-        GameApply::Skip => Ok(()),
+    match classify_event(is_ko, event) {
+        GameApply::Skip => Ok(ApplyOutcome::Noop),
 
-        GameApply::FinishedKnockout => clear_live(db, &candidate.id).await,
+        GameApply::FinishedKnockout => {
+            clear_live(db, &candidate.id).await?;
+            Ok(ApplyOutcome::Noop)
+        }
 
         GameApply::Live {
             home,
@@ -268,10 +332,14 @@ async fn apply_game(
             .execute(db)
             .await
             .map_err(|e| crate::security::internal_error("football_live_update", e))?;
-            Ok(())
+            Ok(ApplyOutcome::Live)
         }
 
-        GameApply::FinalGroup { home, away } => {
+        GameApply::FinalGroup {
+            home,
+            away,
+            raw_status,
+        } => {
             // Resultado manual é soberano: não sobrescreve, só registra conflito.
             if candidate.result_source.as_deref() == Some("manual") {
                 if candidate.home_score != Some(home) || candidate.away_score != Some(away) {
@@ -289,7 +357,7 @@ async fn apply_game(
                     )
                     .await?;
                 }
-                return Ok(());
+                return Ok(ApplyOutcome::Noop);
             }
 
             let already = candidate.home_score == Some(home)
@@ -302,13 +370,14 @@ async fn apply_game(
                     finished = 1,
                     result_source = 'api',
                     result_synced_at = datetime('now'),
-                    result_external_raw_status = 'finished',
+                    result_external_raw_status = ?3,
                     live_home_score = NULL, live_away_score = NULL,
                     live_status = NULL, live_elapsed = NULL, live_updated_at = NULL
-                 WHERE id = ?3",
+                 WHERE id = ?4",
             )
             .bind(home)
             .bind(away)
+            .bind(&raw_status)
             .bind(&candidate.id)
             .execute(db)
             .await
@@ -331,34 +400,62 @@ async fn apply_game(
                 )
                 .await?;
             }
-            Ok(())
+            Ok(if already {
+                ApplyOutcome::Noop
+            } else {
+                ApplyOutcome::Finalized
+            })
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Datas: a ESPN agrupa por dia ET (EDT na Copa, UTC−4).
+// ---------------------------------------------------------------------------
+
+/// Data ET (YYYYMMDD) de um kickoff em UTC. EDT = UTC−4 durante toda a Copa.
+fn et_date(kickoff: &str) -> Option<String> {
+    let dt = chrono::DateTime::parse_from_rfc3339(kickoff).ok()?;
+    let et = dt.with_timezone(&chrono::Utc) - chrono::Duration::hours(4);
+    Some(et.format("%Y%m%d").to_string())
+}
+
+fn distinct_et_dates(kickoffs: impl Iterator<Item = String>) -> Vec<String> {
+    let mut dates: Vec<String> = kickoffs.filter_map(|k| et_date(&k)).collect();
+    dates.sort();
+    dates.dedup();
+    dates
 }
 
 // ---------------------------------------------------------------------------
 // Poller em background.
 // ---------------------------------------------------------------------------
 
-/// Sobe a task de polling. Deve ser chamada apenas se a integração e o poller
+/// Sobe a task de polling. Só deve ser chamada se a integração e o poller
 /// estiverem habilitados (ver [crate::config::FootballConfig]).
 pub fn spawn_poller() {
+    use rand_core::{OsRng, RngCore};
+
     let interval_secs = settings().football.poll_interval_secs;
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-        eprintln!("[football] poller iniciado (intervalo {interval_secs}s)");
+        eprintln!(
+            "[football] poller iniciado (intervalo {interval_secs}s + jitter 0–60s, fonte ESPN)"
+        );
         loop {
-            ticker.tick().await;
             if let Err(e) = run_poll_cycle().await {
                 eprintln!("[football] ciclo falhou: {e:?}");
             }
+            // Jitter de 0–60s sobre o intervalo base: evita bater sempre cravado
+            // no mesmo segundo (ex.: :00, :10, :20) e espalha as requisições.
+            let jitter = u64::from(OsRng.next_u32() % 61);
+            tokio::time::sleep(std::time::Duration::from_secs(interval_secs + jitter)).await;
         }
     });
 }
 
 async fn load_candidates(db: &sqlx::SqlitePool) -> Result<Vec<PollCandidate>, ServerFnError> {
     sqlx::query_as::<_, PollCandidate>(
-        "SELECT id, external_fixture_id, phase, result_source, home_score, away_score
+        "SELECT id, kickoff, external_fixture_id, phase, result_source, home_score, away_score
          FROM matches
          WHERE finished = 0
            AND external_fixture_id IS NOT NULL
@@ -373,32 +470,45 @@ async fn run_poll_cycle() -> Result<(), ServerFnError> {
     let db = crate::db::pool();
     let candidates = load_candidates(db).await?;
     if candidates.is_empty() {
-        return Ok(()); // Nenhum jogo na janela — não chama a API.
+        eprintln!("[football] ciclo: nenhum jogo na janela");
+        return Ok(());
     }
 
-    let games = fetch_games().await?;
-    let by_id: HashMap<&str, &Game> = games.iter().map(|g| (g.id.as_str(), g)).collect();
-
-    for candidate in &candidates {
-        let key = candidate.external_fixture_id.map(|id| id.to_string());
-        if let Some(game) = key.as_deref().and_then(|k| by_id.get(k)) {
-            apply_game(db, candidate, game).await?;
+    // Busca os scoreboards das datas ET envolvidas (normalmente 1, às vezes 2).
+    let dates = distinct_et_dates(candidates.iter().map(|c| c.kickoff.clone()));
+    let mut by_id: HashMap<String, Event> = HashMap::new();
+    for date in &dates {
+        for ev in fetch_scoreboard(date).await? {
+            by_id.insert(ev.id.clone(), ev);
         }
     }
 
+    let (mut finalized, mut live) = (0u32, 0u32);
+    for candidate in &candidates {
+        let key = candidate.external_fixture_id.map(|id| id.to_string());
+        if let Some(event) = key.as_deref().and_then(|k| by_id.get(k)) {
+            match apply_event(db, candidate, event).await? {
+                ApplyOutcome::Finalized => finalized += 1,
+                ApplyOutcome::Live => live += 1,
+                ApplyOutcome::Noop => {}
+            }
+        }
+    }
+
+    eprintln!(
+        "[football] ciclo: {} jogo(s) na janela, {finalized} finalizado(s), {live} ao vivo",
+        candidates.len()
+    );
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Comando CLI: mapeamento jogo local <-> id da API.
+// Comando CLI: mapeamento jogo local <-> id do evento da ESPN.
 // ---------------------------------------------------------------------------
 
 pub enum SyncMode {
-    /// Mostra o casamento proposto sem gravar.
     DryRun,
-    /// Grava o `external_fixture_id` dos jogos casados.
     Apply,
-    /// Override manual de um único mapeamento.
     Override { match_id: String, fixture_id: i64 },
 }
 
@@ -407,7 +517,7 @@ struct LocalMatch {
     id: String,
     home_team: String,
     away_team: String,
-    phase: Option<String>,
+    kickoff: String,
 }
 
 /// Remove acentos e normaliza para comparação de nomes de seleção.
@@ -429,7 +539,8 @@ fn normalize_name(name: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Token canônico por seleção, cobrindo o nome em PT (local) e em inglês (API).
+/// Token canônico por seleção, cobrindo o nome local (PT) e o da ESPN (PT, com
+/// algumas variações: Catar/Qatar, Holanda/Países Baixos, etc.).
 fn canonical_team(name: &str) -> String {
     static TABLE: OnceLock<HashMap<String, &'static str>> = OnceLock::new();
     let table = TABLE.get_or_init(build_team_table);
@@ -449,11 +560,11 @@ fn build_team_table() -> HashMap<String, &'static str> {
         ("belgium", &["Bélgica", "Belgium"]),
         ("bosnia", &["Bósnia e Herzegovina", "Bosnia and Herzegovina"]),
         ("brazil", &["Brasil", "Brazil"]),
-        ("cape-verde", &["Cabo Verde", "Cape Verde", "Cabo Verde Islands"]),
+        ("cape-verde", &["Cabo Verde", "Cape Verde"]),
         ("canada", &["Canadá", "Canada"]),
         ("colombia", &["Colômbia", "Colombia"]),
         ("south-korea", &["Coreia do Sul", "South Korea", "Korea Republic"]),
-        ("ivory-coast", &["Costa do Marfim", "Ivory Coast", "Cote d'Ivoire", "Côte d'Ivoire"]),
+        ("ivory-coast", &["Costa do Marfim", "Ivory Coast", "Côte d'Ivoire"]),
         ("croatia", &["Croácia", "Croatia"]),
         ("curacao", &["Curaçao", "Curacao"]),
         ("egypt", &["Egito", "Egypt"]),
@@ -465,7 +576,7 @@ fn build_team_table() -> HashMap<String, &'static str> {
         ("ghana", &["Gana", "Ghana"]),
         ("haiti", &["Haiti"]),
         ("england", &["Inglaterra", "England"]),
-        ("iran", &["Irã", "Iran", "IR Iran"]),
+        ("iran", &["Irã", "Iran"]),
         ("iraq", &["Iraque", "Iraq"]),
         ("japan", &["Japão", "Japan"]),
         ("jordan", &["Jordânia", "Jordan"]),
@@ -473,24 +584,23 @@ fn build_team_table() -> HashMap<String, &'static str> {
         ("mexico", &["México", "Mexico"]),
         ("norway", &["Noruega", "Norway"]),
         ("new-zealand", &["Nova Zelândia", "New Zealand"]),
-        ("netherlands", &["Países Baixos", "Netherlands", "Holland"]),
+        ("netherlands", &["Países Baixos", "Holanda", "Netherlands"]),
         ("panama", &["Panamá", "Panama"]),
         ("paraguay", &["Paraguai", "Paraguay"]),
         ("portugal", &["Portugal"]),
-        ("qatar", &["Qatar"]),
+        ("qatar", &["Qatar", "Catar"]),
         ("dr-congo", &[
             "RD Congo",
             "DR Congo",
             "Congo DR",
-            "Congo-Kinshasa",
-            "Democratic Republic of the Congo",
+            "República Democrática do Congo",
         ]),
         ("senegal", &["Senegal"]),
         ("sweden", &["Suécia", "Sweden"]),
         ("switzerland", &["Suíça", "Switzerland"]),
-        ("czechia", &["Tchéquia", "Czech Republic", "Czechia"]),
+        ("czechia", &["Tchéquia", "República Tcheca", "Czech Republic", "Czechia"]),
         ("tunisia", &["Tunísia", "Tunisia"]),
-        ("turkey", &["Turquia", "Turkey", "Türkiye", "Turkiye"]),
+        ("turkey", &["Turquia", "Turkey", "Türkiye"]),
         ("uruguay", &["Uruguai", "Uruguay"]),
         ("uzbekistan", &["Uzbequistão", "Uzbekistan"]),
     ];
@@ -504,12 +614,6 @@ fn build_team_table() -> HashMap<String, &'static str> {
     table
 }
 
-/// Número do fixture externo derivado do id local (jogo-027 -> 27).
-fn fixture_id_from_match(match_id: &str) -> Option<i64> {
-    match_id.rsplit('-').next()?.parse::<i64>().ok()
-}
-
-/// Grava (UPSERT) o mapeamento de um jogo para um id externo, com auditoria.
 async fn set_mapping(
     db: &sqlx::SqlitePool,
     match_id: &str,
@@ -539,8 +643,7 @@ async fn set_mapping(
     Ok(true)
 }
 
-/// Mapeia os jogos locais aos ids da API (jogo-NNN -> id N). Valida os nomes na
-/// fase de grupos e avisa quando divergem. Em `Apply`, grava os mapeamentos.
+/// Mapeia os jogos locais aos ids de evento da ESPN, casando por par de times.
 pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
     let db = crate::db::pool();
 
@@ -550,7 +653,7 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
     } = &mode
     {
         if set_mapping(db, match_id, *fixture_id).await? {
-            println!("Mapeado {match_id} -> id {fixture_id}");
+            println!("Mapeado {match_id} -> evento {fixture_id}");
         } else {
             println!("Jogo {match_id} não encontrado.");
         }
@@ -560,52 +663,43 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
     let apply = matches!(mode, SyncMode::Apply);
 
     let locals: Vec<LocalMatch> =
-        sqlx::query_as("SELECT id, home_team, away_team, phase FROM matches")
+        sqlx::query_as("SELECT id, home_team, away_team, kickoff FROM matches")
             .fetch_all(db)
             .await
             .map_err(|e| crate::security::internal_error("football_sync_locals", e))?;
 
-    let games = fetch_games().await?;
-    println!("API retornou {} jogos.", games.len());
-
-    // Fase de grupos: a numeração das duas fontes diverge (a ordem dos jogos do
-    // mesmo dia muda), então casamos por par de times (canônico, único).
-    let by_pair: HashMap<(String, String), &Game> = games
-        .iter()
-        .map(|g| {
-            (
-                (
-                    canonical_team(&g.home_team_name_en),
-                    canonical_team(&g.away_team_name_en),
-                ),
-                g,
-            )
-        })
-        .collect();
+    // Busca os scoreboards de todas as datas ET dos jogos locais e indexa por par.
+    let dates = distinct_et_dates(locals.iter().map(|m| m.kickoff.clone()));
+    println!("Consultando {} data(s) na ESPN...", dates.len());
+    let mut by_pair: HashMap<(String, String), i64> = HashMap::new();
+    for date in &dates {
+        for ev in fetch_scoreboard(date).await? {
+            let Some(comp) = ev.competition() else { continue };
+            let (Some(home), Some(away)) = (comp.side("home"), comp.side("away")) else {
+                continue;
+            };
+            if let Ok(id) = ev.id.parse::<i64>() {
+                by_pair.insert(
+                    (
+                        canonical_team(&home.team.display_name),
+                        canonical_team(&away.team.display_name),
+                    ),
+                    id,
+                );
+            }
+        }
+    }
+    println!("ESPN retornou {} confronto(s).", by_pair.len());
 
     let mut matched = 0usize;
     let mut unmatched: Vec<String> = Vec::new();
-
     for local in &locals {
-        let is_knockout = crate::models::is_knockout(local.phase.as_deref());
-
-        let fixture_id = if is_knockout {
-            // Mata-mata: os números 73..104 são canônicos da FIFA e alinhados nas
-            // duas fontes (os confrontos ainda são placeholders, sem times).
-            fixture_id_from_match(&local.id)
-        } else {
-            // Grupos: casa pelo par de times.
-            let key = (
-                canonical_team(&local.home_team),
-                canonical_team(&local.away_team),
-            );
-            by_pair
-                .get(&key)
-                .and_then(|g| g.id.parse::<i64>().ok())
-        };
-
-        match fixture_id {
-            Some(id) => {
+        let key = (
+            canonical_team(&local.home_team),
+            canonical_team(&local.away_team),
+        );
+        match by_pair.get(&key) {
+            Some(&id) => {
                 matched += 1;
                 if apply {
                     set_mapping(db, &local.id, id).await?;
@@ -620,7 +714,7 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
 
     println!("\nMapeados: {matched}. Não casados: {}.", unmatched.len());
     if !unmatched.is_empty() {
-        println!("Não casados (mapeie manualmente com --fixture jogo-XXX=ID):");
+        println!("Não casados (mata-mata sem times definidos ou nome novo — use --fixture jogo-XXX=ID):");
         for line in &unmatched {
             println!("{line}");
         }
@@ -640,83 +734,80 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
 mod tests {
     use super::*;
 
-    fn game(id: &str, hs: &str, aws: &str, finished: &str, elapsed: &str) -> Game {
-        Game {
-            id: id.into(),
-            home_score: hs.into(),
-            away_score: aws.into(),
-            finished: finished.into(),
-            time_elapsed: elapsed.into(),
-            home_team_name_en: "A".into(),
-            away_team_name_en: "B".into(),
+    fn event(state: &str, completed: bool, hs: &str, aws: &str, clock: &str) -> Event {
+        Event {
+            id: "760415".into(),
+            competitions: vec![Competition {
+                status: Status {
+                    display_clock: clock.into(),
+                    type_: StatusType {
+                        state: state.into(),
+                        completed,
+                        name: "STATUS_X".into(),
+                        short_detail: "1st".into(),
+                    },
+                },
+                competitors: vec![
+                    Competitor {
+                        home_away: "home".into(),
+                        score: hs.into(),
+                        team: Team { display_name: "México".into() },
+                    },
+                    Competitor {
+                        home_away: "away".into(),
+                        score: aws.into(),
+                        team: Team { display_name: "África do Sul".into() },
+                    },
+                ],
+            }],
         }
     }
 
     #[test]
-    fn live_group_game_updates_partial_score() {
-        let g = game("1", "1", "0", "FALSE", "45'");
+    fn live_group_game() {
         assert_eq!(
-            classify_game(false, &g),
-            GameApply::Live {
-                home: 1,
-                away: 0,
-                status: "45'".into(),
-                elapsed: Some(45)
-            }
+            classify_event(false, &event("in", false, "1", "0", "67'")),
+            GameApply::Live { home: 1, away: 0, status: "67'".into(), elapsed: Some(67) }
         );
     }
 
     #[test]
-    fn not_started_is_skipped() {
+    fn scheduled_is_skipped() {
+        assert_eq!(classify_event(false, &event("pre", false, "0", "0", "")), GameApply::Skip);
+    }
+
+    #[test]
+    fn finished_group_autofilled() {
         assert_eq!(
-            classify_game(false, &game("1", "0", "0", "FALSE", "notstarted")),
-            GameApply::Skip
+            classify_event(false, &event("post", true, "2", "0", "")),
+            GameApply::FinalGroup { home: 2, away: 0, raw_status: "STATUS_X".into() }
         );
     }
 
     #[test]
-    fn finished_group_is_autofilled() {
+    fn finished_knockout_left_to_admin() {
         assert_eq!(
-            classify_game(false, &game("1", "2", "1", "TRUE", "finished")),
-            GameApply::FinalGroup { home: 2, away: 1 }
-        );
-    }
-
-    #[test]
-    fn finished_knockout_is_left_to_admin() {
-        assert_eq!(
-            classify_game(true, &game("73", "1", "1", "TRUE", "finished")),
+            classify_event(true, &event("post", true, "1", "1", "")),
             GameApply::FinishedKnockout
         );
     }
 
     #[test]
-    fn live_knockout_still_shows_score() {
-        let g = game("73", "0", "0", "FALSE", "HT");
+    fn team_aliases_espn_variants() {
+        assert_eq!(canonical_team("Catar"), canonical_team("Qatar"));
+        assert_eq!(canonical_team("Holanda"), canonical_team("Países Baixos"));
         assert_eq!(
-            classify_game(true, &g),
-            GameApply::Live {
-                home: 0,
-                away: 0,
-                status: "HT".into(),
-                elapsed: None
-            }
+            canonical_team("República Democrática do Congo"),
+            canonical_team("RD Congo")
         );
-    }
-
-    #[test]
-    fn fixture_id_is_parsed_from_match_id() {
-        assert_eq!(fixture_id_from_match("jogo-027"), Some(27));
-        assert_eq!(fixture_id_from_match("jogo-104"), Some(104));
-        assert_eq!(fixture_id_from_match("jogo-abc"), None);
-    }
-
-    #[test]
-    fn team_name_normalization_handles_variants() {
+        assert_eq!(canonical_team("República Tcheca"), canonical_team("Tchéquia"));
         assert_eq!(canonical_team("Brasil"), canonical_team("Brazil"));
-        assert_eq!(canonical_team("Estados Unidos"), canonical_team("United States"));
-        assert_eq!(canonical_team("Tchéquia"), canonical_team("Czech Republic"));
-        assert_eq!(canonical_team("Coreia do Sul"), canonical_team("Korea Republic"));
-        assert_eq!(canonical_team("RD Congo"), canonical_team("Congo DR"));
+    }
+
+    #[test]
+    fn et_date_shifts_late_utc_games_back_a_day() {
+        // 02:00Z do dia 15 é, em ET (UTC−4), 22:00 do dia 14.
+        assert_eq!(et_date("2026-06-15T02:00:00Z").as_deref(), Some("20260614"));
+        assert_eq!(et_date("2026-06-14T19:00:00Z").as_deref(), Some("20260614"));
     }
 }

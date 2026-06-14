@@ -33,9 +33,9 @@ pub struct AppConfig {
     pub web_push: WebPushConfig,
 }
 
-/// Configuração da integração de resultados ao vivo (API worldcup26.ir).
-/// Tudo é opcional: se `enabled` for false, o poller nunca sobe. A API é
-/// pública (sem chave) e gratuita, então não há cota/segredo aqui.
+/// Configuração da integração de resultados ao vivo (scoreboard público da ESPN).
+/// Tudo é opcional: se `enabled` for false, o poller nunca sobe. A API é pública
+/// (sem chave), então não há cota/segredo aqui.
 #[cfg(feature = "server")]
 #[derive(Debug, Clone)]
 pub struct FootballConfig {
@@ -238,9 +238,11 @@ pub fn settings() -> &'static AppConfig {
         let football = FootballConfig {
             enabled: football_enabled,
             poller_enabled: optional_bool_var("FOOTBALL_POLLER_ENABLED", false),
-            base_url: optional_var("FOOTBALL_API_BASE_URL")
-                .unwrap_or_else(|| "https://worldcup26.ir".to_string()),
-            poll_interval_secs: optional_u64_var("FOOTBALL_POLL_INTERVAL_SECS", 900),
+            base_url: optional_var("FOOTBALL_API_BASE_URL").unwrap_or_else(|| {
+                "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+                    .to_string()
+            }),
+            poll_interval_secs: optional_u64_var("FOOTBALL_POLL_INTERVAL_SECS", 600),
         };
         if football_enabled {
             assert!(

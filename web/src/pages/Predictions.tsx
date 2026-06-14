@@ -1,10 +1,11 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useMatches, useMyPredictions, useKnockoutReleased } from "@/hooks/queries";
 import { isMatchLocked } from "@/lib/utils";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/field";
 import { KnockoutControl } from "@/components/KnockoutControl";
 import { MatchCard } from "@/components/MatchCard";
@@ -12,6 +13,7 @@ import { MatchCard } from "@/components/MatchCard";
 export function PredictionsPage() {
   const { isAdmin } = useAuth();
   const [searchParams] = useSearchParams();
+  const [hideFinished, setHideFinished] = useState(true);
   const matches = useMatches();
   const predictions = useMyPredictions();
   const knockout = useKnockoutReleased();
@@ -19,7 +21,27 @@ export function PredictionsPage() {
   const isLoading = matches.isLoading || predictions.isLoading || knockout.isLoading;
   const error = matches.error || predictions.error || knockout.error;
   const targetMatchId = searchParams.get("matchId");
-  const visibleMatches = useMemo(() => matches.data ?? [], [matches.data]);
+  const allMatches = useMemo(() => matches.data ?? [], [matches.data]);
+  const finishedCount = useMemo(
+    () => allMatches.filter((game) => game.finished).length,
+    [allMatches],
+  );
+  const hiddenFinishedCount = useMemo(
+    () =>
+      hideFinished
+        ? allMatches.filter((game) => game.finished && game.id !== targetMatchId).length
+        : 0,
+    [allMatches, hideFinished, targetMatchId],
+  );
+  const visibleMatches = useMemo(
+    () =>
+      allMatches.filter((game) => {
+        if (!hideFinished) return true;
+        if (!game.finished) return true;
+        return game.id === targetMatchId;
+      }),
+    [allMatches, hideFinished, targetMatchId],
+  );
 
   useEffect(() => {
     if (!targetMatchId || visibleMatches.length === 0) return;
@@ -55,6 +77,30 @@ export function PredictionsPage() {
         ) : (
           <>
             {isAdmin && <KnockoutControl released={knockout.data?.released ?? false} />}
+            {finishedCount > 0 && (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-mint/20 bg-white/60 px-4 py-3">
+                <div className="text-sm text-ink-muted">
+                  {hideFinished ? (
+                    <>
+                      {visibleMatches.length} jogo(s) em foco agora.
+                      {hiddenFinishedCount > 0 && ` ${hiddenFinishedCount} finalizado(s) oculto(s).`}
+                    </>
+                  ) : (
+                    <>
+                      Mostrando todos os {allMatches.length} jogo(s), incluindo {finishedCount} finalizado(s).
+                    </>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant={hideFinished ? "primary" : "outline"}
+                  size="sm"
+                  onClick={() => setHideFinished((current) => !current)}
+                >
+                  {hideFinished ? "Mostrar finalizados" : "Ocultar finalizados"}
+                </Button>
+              </div>
+            )}
             <div>
               {visibleMatches.map((game, i) => (
                 <MatchCard

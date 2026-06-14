@@ -287,6 +287,11 @@ async fn change_username(
     Ok(Json(user))
 }
 
+async fn delete_account(headers: HeaderMap) -> ApiResult<StatusCode> {
+    crate::auth::delete_account(String::new(), csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn csrf() -> ApiResult<impl IntoResponse> {
     let state = crate::auth::current_user(String::new()).await?;
     Ok(Json(json!({ "csrfToken": state.csrf_token })))
@@ -409,10 +414,7 @@ async fn remove_point_adjustment(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn delete_pool(
-    Path(pool_id): Path<String>,
-    headers: HeaderMap,
-) -> ApiResult<StatusCode> {
+async fn delete_pool(Path(pool_id): Path<String>, headers: HeaderMap) -> ApiResult<StatusCode> {
     crate::pools::delete_pool(String::new(), pool_id, csrf_header(&headers)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -422,7 +424,9 @@ async fn delete_pool(
 // ---------------------------------------------------------------------------
 
 async fn admin_list_pools() -> ApiResult<impl IntoResponse> {
-    Ok(Json(crate::pools::list_all_pools_admin(String::new()).await?))
+    Ok(Json(
+        crate::pools::list_all_pools_admin(String::new()).await?,
+    ))
 }
 
 async fn admin_list_users() -> ApiResult<impl IntoResponse> {
@@ -440,8 +444,13 @@ async fn admin_add_pool_member(
     headers: HeaderMap,
     Json(body): Json<PoolMemberBody>,
 ) -> ApiResult<StatusCode> {
-    crate::pools::add_pool_member_admin(String::new(), pool_id, body.user_id, csrf_header(&headers))
-        .await?;
+    crate::pools::add_pool_member_admin(
+        String::new(),
+        pool_id,
+        body.user_id,
+        csrf_header(&headers),
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -530,8 +539,13 @@ async fn set_match_finished(
     headers: HeaderMap,
     Json(body): Json<MatchFinishedBody>,
 ) -> ApiResult<StatusCode> {
-    crate::matches::set_match_finished(String::new(), match_id, body.finished, csrf_header(&headers))
-        .await?;
+    crate::matches::set_match_finished(
+        String::new(),
+        match_id,
+        body.finished,
+        csrf_header(&headers),
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -577,6 +591,7 @@ pub fn router() -> Router {
         .route("/auth/current-user", get(current_user))
         .route("/auth/reauth", post(reauth))
         .route("/auth/username", post(change_username))
+        .route("/auth/delete", post(delete_account))
         .route("/auth/csrf", get(csrf))
         .route("/notifications/status", get(notification_status))
         .route(
@@ -593,12 +608,18 @@ pub fn router() -> Router {
         )
         .route("/pools", get(list_pools).post(create_pool))
         .route("/pools/join", post(join_pool))
-        .route("/pools/{pool_id}/member-predictions", get(pool_member_predictions))
+        .route(
+            "/pools/{pool_id}/member-predictions",
+            get(pool_member_predictions),
+        )
         .route(
             "/pools/{pool_id}/adjustments",
             get(list_pool_adjustments).post(add_point_adjustment),
         )
-        .route("/pools/{pool_id}/adjustments/remove", post(remove_point_adjustment))
+        .route(
+            "/pools/{pool_id}/adjustments/remove",
+            post(remove_point_adjustment),
+        )
         .route("/pools/{pool_id}/delete", post(delete_pool))
         .route("/matches", get(list_matches))
         .route("/matches/knockout-released", get(knockout_released))
@@ -613,7 +634,10 @@ pub fn router() -> Router {
             "/admin/pools/{pool_id}/members",
             get(admin_list_pool_members).post(admin_add_pool_member),
         )
-        .route("/admin/pools/{pool_id}/members/remove", post(admin_remove_pool_member))
+        .route(
+            "/admin/pools/{pool_id}/members/remove",
+            post(admin_remove_pool_member),
+        )
         .route("/leaderboard", get(leaderboard))
         .fallback(api_not_found)
 }

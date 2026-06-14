@@ -12,6 +12,9 @@ import { PoolPredictionsPage } from "@/pages/PoolPredictions";
 import { LeaderboardPage } from "@/pages/Leaderboard";
 import { AdminPage } from "@/pages/Admin";
 import { ContaPage } from "@/pages/Conta";
+import { TermsPage } from "@/pages/Terms";
+import { PrivacyPage } from "@/pages/Privacy";
+import { ContactPage } from "@/pages/Contact";
 
 export function App() {
   return (
@@ -23,6 +26,9 @@ export function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/terms" element={<TermsPage />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/contact" element={<ContactPage />} />
             <Route
               path="/dashboard"
               element={

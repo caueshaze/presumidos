@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Bell, CheckCircle2, Circle, Smartphone } from "lucide-react";
+import { Bell, CheckCircle2, Circle, Smartphone, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePools, useMatches, useMyPredictions, useLeaderboard } from "@/hooks/queries";
 import { usePushReminders } from "@/hooks/usePushReminders";
@@ -45,6 +46,7 @@ const section = {
 
 function LoggedInHome({ user }: { user: UserPublic }) {
   const navigate = useNavigate();
+  const [reminderBannerDismissed, setReminderBannerDismissed] = useState(false);
   const pools = usePools();
   const matches = useMatches();
   const predictions = useMyPredictions();
@@ -64,7 +66,15 @@ function LoggedInHome({ user }: { user: UserPublic }) {
   const myIndex = ranking.findIndex((e) => e.username === user.username);
   const myEntry = myIndex >= 0 ? ranking[myIndex] : null;
   const firstPool = pools.data?.[0];
+  const reminderBannerKey = `presumidos:push-reminder-banner:dismissed:${user.id}`;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setReminderBannerDismissed(window.localStorage.getItem(reminderBannerKey) === "1");
+  }, [reminderBannerKey]);
+
   const showReminderBanner =
+    !reminderBannerDismissed &&
     !pushReminders.status.isLoading &&
     (!pushReminders.preference.enabled ||
       !pushReminders.currentDeviceSubscribed ||
@@ -72,6 +82,13 @@ function LoggedInHome({ user }: { user: UserPublic }) {
 
   const enableReminders = async () => {
     await pushReminders.enableForCurrentDevice(pushReminders.preference.leadTimeMinutes);
+  };
+
+  const dismissReminderBanner = () => {
+    setReminderBannerDismissed(true);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(reminderBannerKey, "1");
+    }
   };
 
   return (
@@ -90,47 +107,63 @@ function LoggedInHome({ user }: { user: UserPublic }) {
 
       {showReminderBanner && (
         <motion.section {...section} transition={{ duration: 0.3 }} className="mt-8">
-          <Card className="border border-sky/30 bg-sky/10">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="max-w-3xl">
-                <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-sky-dark">
-                  <Bell className="h-4 w-4" />
-                  Lembretes de palpite
-                </div>
-                <h2 className="mt-2 text-xl">Receba aviso antes do jogo começar</h2>
-                <p className="mt-2 text-sm text-ink-muted">
-                  A gente pode te lembrar quando faltar pouco para o apito inicial e ainda houver
-                  palpite pendente. Você pode desligar isso depois em Conta.
-                </p>
-                {pushReminders.browserState.isProbablyIosBrowser && (
-                  <div className="mt-3 rounded-md border border-mint/30 bg-card px-4 py-3 text-sm text-ink">
-                    <div className="flex items-center gap-2 font-semibold">
-                      <Smartphone className="h-4 w-4 text-mint-dark" />
-                      iPhone/iPad
-                    </div>
-                    <p className="mt-1 text-ink-muted">
-                      No iPhone/iPad, as notificações web pedem que o app seja adicionado à Tela
-                      Inicial antes de ativar o lembrete.
-                    </p>
+          <Card className="border border-sky/20 bg-white/70 p-4">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="max-w-3xl">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-sky-dark">
+                    <Bell className="h-4 w-4" />
+                    Lembretes de palpite
                   </div>
-                )}
-                {pushReminders.actionError && (
-                  <p className="mt-3 text-sm font-semibold text-danger">{pushReminders.actionError}</p>
-                )}
-                {pushReminders.actionMessage && (
-                  <p className="mt-3 text-sm font-semibold text-mint-dark">
-                    {pushReminders.actionMessage}
+                  <h2 className="mt-1 text-lg">Receba aviso antes do jogo começar</h2>
+                  <p className="mt-1 text-sm text-ink-muted">
+                    Ative notificações neste navegador para não esquecer jogo aberto sem palpite.
+                    Você pode ajustar isso depois em Conta.
                   </p>
-                )}
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissReminderBanner}
+                  aria-label="Fechar lembrete de notificações"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-mint/10 hover:text-ink"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-3">
+
+              {pushReminders.browserState.isProbablyIosBrowser && (
+                <div className="rounded-md border border-mint/20 bg-bg px-4 py-3 text-sm text-ink">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <Bell className="h-4 w-4" />
+                    <Smartphone className="h-4 w-4 text-mint-dark" />
+                    iPhone/iPad
+                  </div>
+                  <p className="mt-1 text-ink-muted">
+                    No iPhone/iPad, as notificações web pedem que o app seja adicionado à Tela
+                    Inicial antes de ativar o lembrete.
+                  </p>
+                </div>
+              )}
+
+              {pushReminders.actionError && (
+                <p className="text-sm font-semibold text-danger">{pushReminders.actionError}</p>
+              )}
+              {pushReminders.actionMessage && (
+                <p className="text-sm font-semibold text-mint-dark">{pushReminders.actionMessage}</p>
+              )}
+
+              <div className="flex shrink-0 flex-wrap gap-2">
                 <Button
+                  size="sm"
                   onClick={() => void enableReminders()}
                   disabled={pushReminders.actionPending || !pushReminders.status.data}
                 >
-                  {pushReminders.actionPending ? "Ativando..." : "Ativar lembrete"}
+                  {pushReminders.actionPending ? "Ativando..." : "Ativar"}
                 </Button>
-                <Button variant="outline" onClick={() => navigate("/conta")}>
+                <Button variant="outline" size="sm" onClick={dismissReminderBanner}>
+                  Agora não
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => navigate("/conta")}>
                   Ajustar em Conta
                 </Button>
               </div>
