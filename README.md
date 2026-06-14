@@ -215,6 +215,8 @@ O script faz:
 - backup pre-deploy do SQLite via `./deploy/backup.sh`
 - `docker compose build ferrugem-web` com `DOCKER_BUILDKIT=1`
 - `docker compose up -d ferrugem-web redis caddy`
+- valida `GET /api/health` pela rede interna via Caddy
+- em falha de healthcheck, reaplica a imagem anterior automaticamente
 - `docker compose ps` ao final
 
 Observacoes operacionais:
