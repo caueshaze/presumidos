@@ -436,17 +436,25 @@ fn distinct_et_dates(kickoffs: impl Iterator<Item = String>) -> Vec<String> {
 pub fn spawn_poller() {
     use rand_core::{OsRng, RngCore};
 
-    let interval_secs = settings().football.poll_interval_secs;
+    let base_secs = settings().football.poll_interval_secs;
+    let live_secs = settings().football.live_poll_interval_secs;
     tokio::spawn(async move {
         eprintln!(
-            "[football] poller iniciado (intervalo {interval_secs}s + jitter 0–60s, fonte ESPN)"
+            "[football] poller iniciado (intervalo {base_secs}s, {live_secs}s com jogo na janela, + jitter 0–60s, fonte ESPN)"
         );
         loop {
-            if let Err(e) = run_poll_cycle().await {
-                eprintln!("[football] ciclo falhou: {e:?}");
-            }
-            // Jitter de 0–60s sobre o intervalo base: evita bater sempre cravado
-            // no mesmo segundo (ex.: :00, :10, :20) e espalha as requisições.
+            // `active` indica que havia jogo na janela: enquanto rola jogo, o
+            // poller acelera (live_secs) para a pontuação ao vivo andar mais
+            // rápido; ocioso, volta ao intervalo base.
+            let active = match run_poll_cycle().await {
+                Ok(active) => active,
+                Err(e) => {
+                    eprintln!("[football] ciclo falhou: {e:?}");
+                    false
+                }
+            };
+            let interval_secs = if active { live_secs } else { base_secs };
+            // Jitter de 0–60s: evita bater sempre cravado no mesmo segundo.
             let jitter = u64::from(OsRng.next_u32() % 61);
             tokio::time::sleep(std::time::Duration::from_secs(interval_secs + jitter)).await;
         }
@@ -466,12 +474,14 @@ async fn load_candidates(db: &sqlx::SqlitePool) -> Result<Vec<PollCandidate>, Se
     .map_err(|e| crate::security::internal_error("football_load_candidates", e))
 }
 
-async fn run_poll_cycle() -> Result<(), ServerFnError> {
+/// Roda um ciclo. Retorna `true` se havia jogo na janela (sinal para o poller
+/// acelerar a cadência enquanto há jogo).
+async fn run_poll_cycle() -> Result<bool, ServerFnError> {
     let db = crate::db::pool();
     let candidates = load_candidates(db).await?;
     if candidates.is_empty() {
         eprintln!("[football] ciclo: nenhum jogo na janela");
-        return Ok(());
+        return Ok(false);
     }
 
     // Busca os scoreboards das datas ET envolvidas (normalmente 1, às vezes 2).
@@ -499,7 +509,7 @@ async fn run_poll_cycle() -> Result<(), ServerFnError> {
         "[football] ciclo: {} jogo(s) na janela, {finalized} finalizado(s), {live} ao vivo",
         candidates.len()
     );
-    Ok(())
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------

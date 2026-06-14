@@ -159,11 +159,16 @@ pub async fn get_leaderboard(
         p_pen_away: Option<i64>,
     }
 
+    // Pontuação provisória ao vivo: além do resultado oficial, conta também o
+    // placar parcial dos jogos em andamento (`live_*`). Para esses, usamos o
+    // placar ao vivo como resultado corrente — os campos de mata-mata ficam
+    // nulos, então o jogo ao vivo soma só a pontuação base (sem bônus de KO até
+    // o resultado oficial). O total "trava" quando a partida encerra.
     let rows = sqlx::query_as::<_, ScoredRow>(
         "SELECT pm.user_id AS user_id,
                 m.phase AS phase,
-                m.home_score AS m_home,
-                m.away_score AS m_away,
+                COALESCE(m.home_score, m.live_home_score) AS m_home,
+                COALESCE(m.away_score, m.live_away_score) AS m_away,
                 m.qualifier AS m_qualifier,
                 m.went_to_penalties AS m_penalties,
                 m.penalty_home_score AS m_pen_home,
@@ -177,8 +182,12 @@ pub async fn get_leaderboard(
          FROM pool_members pm
          JOIN predictions pr ON pr.user_id = pm.user_id
          JOIN matches m ON m.id = pr.match_id
-                       AND m.home_score IS NOT NULL
-                       AND m.away_score IS NOT NULL
+                       AND (
+                            (m.home_score IS NOT NULL AND m.away_score IS NOT NULL)
+                            OR (m.finished = 0
+                                AND m.live_home_score IS NOT NULL
+                                AND m.live_away_score IS NOT NULL)
+                       )
                        -- Só conta se o usuário já era membro quando a partida
                        -- começou: bloqueia pontuar palpites de jogos que
                        -- terminaram antes de ele entrar no bolão.

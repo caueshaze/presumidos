@@ -46,6 +46,9 @@ pub struct FootballConfig {
     pub poller_enabled: bool,
     pub base_url: String,
     pub poll_interval_secs: u64,
+    /// Intervalo (menor) usado enquanto há jogo na janela, para a pontuação ao
+    /// vivo andar mais rápido. Fora de jogo, usa `poll_interval_secs`.
+    pub live_poll_interval_secs: u64,
 }
 
 #[cfg(feature = "server")]
@@ -243,11 +246,16 @@ pub fn settings() -> &'static AppConfig {
                     .to_string()
             }),
             poll_interval_secs: optional_u64_var("FOOTBALL_POLL_INTERVAL_SECS", 600),
+            live_poll_interval_secs: optional_u64_var("FOOTBALL_LIVE_POLL_INTERVAL_SECS", 300),
         };
         if football_enabled {
             assert!(
                 football.poll_interval_secs >= 60,
                 "FOOTBALL_POLL_INTERVAL_SECS deve ser >= 60"
+            );
+            assert!(
+                football.live_poll_interval_secs >= 60,
+                "FOOTBALL_LIVE_POLL_INTERVAL_SECS deve ser >= 60"
             );
         }
 

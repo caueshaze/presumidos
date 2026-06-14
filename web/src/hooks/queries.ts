@@ -220,6 +220,8 @@ export function useLeaderboard(poolId: string | null) {
     queryFn: () =>
       api.get<LeaderboardEntry[]>(`/leaderboard?poolId=${encodeURIComponent(poolId ?? "")}`),
     enabled: !!poolId,
+    // Revalida sozinho para refletir a pontuação ao vivo (provisória) durante os jogos.
+    refetchInterval: 60_000,
   });
 }
 

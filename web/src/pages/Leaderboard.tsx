@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import {
   usePools,
   useLeaderboard,
+  useMatches,
   usePoolAdjustments,
   useAddAdjustment,
   useRemoveAdjustment,
@@ -29,7 +30,12 @@ export function LeaderboardPage() {
   }, [pools.data, selectedPool]);
 
   const leaderboard = useLeaderboard(selectedPool || null);
+  const matches = useMatches();
   const adjustments = usePoolAdjustments(selectedPool || null);
+
+  // Há jogo em andamento? Aí a pontuação exibida é provisória (ao vivo).
+  const liveMatches = (matches.data ?? []).filter((m) => m.liveStatus && !m.finished);
+  const hasLive = liveMatches.length > 0;
   const addAdjustment = useAddAdjustment();
   const removeAdjustment = useRemoveAdjustment();
 
@@ -89,7 +95,25 @@ export function LeaderboardPage() {
 
   return (
     <PageShell>
-      <h1 className="text-3xl">Ranking</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-3xl">Ranking</h1>
+        {hasLive && (
+          <span className="inline-flex items-center gap-1.5 rounded-pill bg-danger-bg px-3 py-1 text-xs font-semibold text-danger ring-1 ring-danger/40">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-danger opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-danger" />
+            </span>
+            Parcial ao vivo
+          </span>
+        )}
+      </div>
+      {hasLive && (
+        <p className="mt-2 max-w-3xl text-sm font-semibold text-danger">
+          Há {liveMatches.length === 1 ? "1 jogo" : `${liveMatches.length} jogos`} em andamento — a
+          pontuação abaixo é provisória e muda conforme o placar ao vivo. Ela só se firma quando os
+          jogos terminam.
+        </p>
+      )}
       <p className="mt-2 max-w-3xl text-sm text-ink-muted">
         A pontuação considera o placar do tempo normal. Placar exato vale 7 pontos; resultado
         correto vale 3; acertar os gols de um time que marcou pelo menos 1 gol dá +1 se você acertou o ganhador. No mata-mata,
