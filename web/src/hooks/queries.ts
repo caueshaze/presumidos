@@ -81,7 +81,12 @@ export function useDeletePool() {
 // ---- Matches / predictions ------------------------------------------------
 
 export function useMatches() {
-  return useQuery({ queryKey: ["matches"], queryFn: () => api.get<MatchRecord[]>("/matches") });
+  return useQuery({
+    queryKey: ["matches"],
+    queryFn: () => api.get<MatchRecord[]>("/matches"),
+    // Revalida sozinho para refletir o placar ao vivo entre os ciclos do poller.
+    refetchInterval: 60_000,
+  });
 }
 
 export function useMyPredictions() {

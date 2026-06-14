@@ -7,6 +7,7 @@ mod api;
 mod auth;
 mod context;
 mod error;
+mod football;
 mod matches;
 mod models;
 mod pools;
@@ -66,9 +67,76 @@ where
     })
 }
 
+fn parse_sync_fixtures_args<I>(mut args: I) -> Result<football::SyncMode, String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut mode: Option<football::SyncMode> = None;
+
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--dry-run" => mode = Some(football::SyncMode::DryRun),
+            "--apply" => mode = Some(football::SyncMode::Apply),
+            "--fixture" => {
+                let pair = args
+                    .next()
+                    .ok_or_else(|| "--fixture exige jogo-XXX=ID".to_string())?;
+                let (match_id, fixture_id) = pair
+                    .split_once('=')
+                    .ok_or_else(|| format!("formato inválido para --fixture: {pair} (use jogo-XXX=ID)"))?;
+                let fixture_id = fixture_id
+                    .parse::<i64>()
+                    .map_err(|_| format!("ID de fixture inválido: {fixture_id}"))?;
+                mode = Some(football::SyncMode::Override {
+                    match_id: match_id.to_string(),
+                    fixture_id,
+                });
+            }
+            unknown => {
+                return Err(format!(
+                    "argumento desconhecido: {unknown}. Use --dry-run, --apply ou --fixture jogo-XXX=ID."
+                ));
+            }
+        }
+    }
+
+    // Sem flag explícita, o padrão é dry-run (não grava nada por acidente).
+    Ok(mode.unwrap_or(football::SyncMode::DryRun))
+}
+
+fn run_sync_fixtures_command<I>(args: I) -> i32
+where
+    I: Iterator<Item = String>,
+{
+    let mode = match parse_sync_fixtures_args(args) {
+        Ok(mode) => mode,
+        Err(error) => {
+            eprintln!("{error}");
+            return 2;
+        }
+    };
+
+    let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+    let result = runtime.block_on(async {
+        db::init().await;
+        football::sync_fixtures(mode).await
+    });
+
+    match result {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("falha no sync-fixtures: {error:?}");
+            1
+        }
+    }
+}
+
 fn try_handle_server_command() -> Option<i32> {
     let mut args = std::env::args().skip(1);
     let command = args.next()?;
+    if command == "sync-fixtures" {
+        return Some(run_sync_fixtures_command(args));
+    }
     if command != "bootstrap-admin" {
         return None;
     }
@@ -134,6 +202,14 @@ async fn serve_application() {
     use tower_http::services::{ServeDir, ServeFile};
 
     db::init().await;
+
+    // Poller de resultados ao vivo (API-Football). Sobe apenas se a integração e
+    // o poller estiverem habilitados — mantenha o poller ligado em uma única
+    // instância para não duplicar o consumo de cota.
+    let football = &crate::config::settings().football;
+    if football.enabled && football.poller_enabled {
+        football::spawn_poller();
+    }
 
     let dir = static_dir();
     // index.html é lido uma vez e devolvido (200) como fallback de client-side routing:

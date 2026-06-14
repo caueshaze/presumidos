@@ -18,6 +18,10 @@ struct MatchRow {
     penalty_home_score: Option<i64>,
     penalty_away_score: Option<i64>,
     finished: bool,
+    live_home_score: Option<i64>,
+    live_away_score: Option<i64>,
+    live_status: Option<String>,
+    live_elapsed: Option<i64>,
 }
 
 #[cfg(feature = "server")]
@@ -75,7 +79,8 @@ pub async fn list_matches(
         sqlx::query_as::<_, MatchRow>(
             "SELECT id, home_team, away_team, kickoff, group_name, phase,
                     home_score, away_score, qualifier, went_to_penalties,
-                    penalty_home_score, penalty_away_score, finished
+                    penalty_home_score, penalty_away_score, finished,
+                    live_home_score, live_away_score, live_status, live_elapsed
              FROM matches
              ORDER BY kickoff ASC",
         )
@@ -85,7 +90,8 @@ pub async fn list_matches(
         sqlx::query_as::<_, MatchRow>(
             "SELECT id, home_team, away_team, kickoff, group_name, phase,
                     home_score, away_score, qualifier, went_to_penalties,
-                    penalty_home_score, penalty_away_score, finished
+                    penalty_home_score, penalty_away_score, finished,
+                    live_home_score, live_away_score, live_status, live_elapsed
              FROM matches
              WHERE phase = 'Fase de grupos'
              ORDER BY kickoff ASC",
@@ -111,6 +117,10 @@ pub async fn list_matches(
             penalty_home_score: row.penalty_home_score,
             penalty_away_score: row.penalty_away_score,
             finished: row.finished,
+            live_home_score: row.live_home_score,
+            live_away_score: row.live_away_score,
+            live_status: row.live_status,
+            live_elapsed: row.live_elapsed,
         })
         .collect())
 }
@@ -362,11 +372,17 @@ pub async fn set_match_result(
         knockout,
     )?;
 
+    // Resultado lançado pelo admin é soberano: marca a origem como 'manual'
+    // (o poller nunca sobrescreve) e limpa o placar ao vivo.
     sqlx::query(
         "UPDATE matches SET
             home_score = ?1, away_score = ?2,
             qualifier = ?3, went_to_penalties = ?4,
-            penalty_home_score = ?5, penalty_away_score = ?6
+            penalty_home_score = ?5, penalty_away_score = ?6,
+            result_source = 'manual',
+            result_synced_at = datetime('now'),
+            live_home_score = NULL, live_away_score = NULL,
+            live_status = NULL, live_elapsed = NULL, live_updated_at = NULL
          WHERE id = ?7",
     )
     .bind(home_score)

@@ -40,6 +40,11 @@ export interface MatchRecord {
   penaltyHomeScore: number | null;
   penaltyAwayScore: number | null;
   finished: boolean;
+  // Placar ao vivo (parcial) vindo do poller da API-Football. Só exibição.
+  liveHomeScore: number | null;
+  liveAwayScore: number | null;
+  liveStatus: string | null;
+  liveElapsed: number | null;
 }
 
 export interface PredictionRecord {

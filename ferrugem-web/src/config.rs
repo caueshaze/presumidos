@@ -29,6 +29,22 @@ pub struct AppConfig {
     pub argon2_time_cost: u32,
     pub argon2_parallelism: u32,
     pub argon2_policy_version: String,
+    pub football: FootballConfig,
+}
+
+/// Configuração da integração de resultados ao vivo (API worldcup26.ir).
+/// Tudo é opcional: se `enabled` for false, o poller nunca sobe. A API é
+/// pública (sem chave) e gratuita, então não há cota/segredo aqui.
+#[cfg(feature = "server")]
+#[derive(Debug, Clone)]
+pub struct FootballConfig {
+    /// Liga a integração (sync + leitura). Sem isso, nada de chamadas externas.
+    pub enabled: bool,
+    /// Sobe o poller em background nesta instância. Mantenha `true` em apenas
+    /// uma réplica para não duplicar requisições à API pública.
+    pub poller_enabled: bool,
+    pub base_url: String,
+    pub poll_interval_secs: u64,
 }
 
 #[cfg(feature = "server")]
@@ -84,6 +100,28 @@ fn optional_u32_var(name: &str, default: u32) -> u32 {
         Some(value) => value
             .parse::<u32>()
             .unwrap_or_else(|_| panic!("variavel {name} deve ser numerica")),
+        None => default,
+    }
+}
+
+#[cfg(feature = "server")]
+fn optional_u64_var(name: &str, default: u64) -> u64 {
+    match optional_var(name) {
+        Some(value) => value
+            .parse::<u64>()
+            .unwrap_or_else(|_| panic!("variavel {name} deve ser numerica")),
+        None => default,
+    }
+}
+
+#[cfg(feature = "server")]
+fn optional_bool_var(name: &str, default: bool) -> bool {
+    match optional_var(name) {
+        Some(value) => match value.trim().to_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => panic!("variavel {name} deve ser booleana"),
+        },
         None => default,
     }
 }
@@ -185,6 +223,21 @@ pub fn settings() -> &'static AppConfig {
         let argon2_policy_version =
             optional_var("ARGON2_POLICY_VERSION").unwrap_or_else(|| "v1".to_string());
 
+        let football_enabled = optional_bool_var("FOOTBALL_API_ENABLED", false);
+        let football = FootballConfig {
+            enabled: football_enabled,
+            poller_enabled: optional_bool_var("FOOTBALL_POLLER_ENABLED", false),
+            base_url: optional_var("FOOTBALL_API_BASE_URL")
+                .unwrap_or_else(|| "https://worldcup26.ir".to_string()),
+            poll_interval_secs: optional_u64_var("FOOTBALL_POLL_INTERVAL_SECS", 900),
+        };
+        if football_enabled {
+            assert!(
+                football.poll_interval_secs >= 60,
+                "FOOTBALL_POLL_INTERVAL_SECS deve ser >= 60"
+            );
+        }
+
         assert!(
             !resend_api_key.trim().is_empty(),
             "RESEND_API_KEY nao pode ser vazio"
@@ -249,6 +302,7 @@ pub fn settings() -> &'static AppConfig {
             argon2_time_cost,
             argon2_parallelism,
             argon2_policy_version,
+            football,
         }
     })
 }

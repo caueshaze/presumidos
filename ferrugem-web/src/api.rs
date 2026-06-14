@@ -280,6 +280,10 @@ async fn csrf() -> ApiResult<impl IntoResponse> {
     Ok(Json(json!({ "csrfToken": state.csrf_token })))
 }
 
+async fn health() -> impl IntoResponse {
+    (StatusCode::OK, Json(json!({ "ok": true })))
+}
+
 // ---------------------------------------------------------------------------
 // Handlers — pools
 // ---------------------------------------------------------------------------
@@ -507,6 +511,7 @@ async fn leaderboard(Query(query): Query<PoolIdQuery>) -> ApiResult<impl IntoRes
 
 pub fn router() -> Router {
     Router::new()
+        .route("/health", get(health))
         .route("/auth/register", post(register))
         .route("/auth/register/confirm", post(register_confirm))
         .route("/auth/password-reset", post(password_reset))

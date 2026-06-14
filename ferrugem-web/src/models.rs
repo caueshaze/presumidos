@@ -54,6 +54,14 @@ pub struct MatchRecord {
     /// Rótulo oficial de "jogo finalizado". Não afeta a pontuação (o placar já
     /// conta quando preenchido); é só o indicador de partida encerrada.
     pub finished: bool,
+    /// Placar ao vivo (parcial), preenchido pelo poller da API-Football enquanto
+    /// o jogo acontece. Apenas exibição — não conta no ranking.
+    pub live_home_score: Option<i64>,
+    pub live_away_score: Option<i64>,
+    /// Status curto da API (ex.: "1H", "HT", "2H", "ET", "P") quando ao vivo.
+    pub live_status: Option<String>,
+    /// Minuto corrido do jogo, quando disponível.
+    pub live_elapsed: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -21,6 +21,22 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label, Select, ErrorBanner } from "./ui/field";
 
+// Rótulo amigável do status ao vivo. O status vem como texto livre da API
+// (ex.: "45'", "HT", "90+2'"); mapeamos os códigos conhecidos e exibimos o resto.
+function formatLiveStatus(status: string | null, elapsed: number | null): string {
+  const known: Record<string, string> = {
+    HT: "Intervalo",
+    P: "Pênaltis",
+    ET: "Prorrogação",
+    SUSP: "Suspenso",
+    INT: "Interrompido",
+  };
+  if (status && known[status]) return known[status];
+  if (status && status.trim() !== "") return status;
+  if (elapsed) return `${elapsed}'`;
+  return "Ao vivo";
+}
+
 function ScoreInputs({ children }: { children: React.ReactNode }) {
   return <div className="flex items-center gap-3">{children}</div>;
 }
@@ -287,6 +303,11 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
   // (o `savedMessage` cobre o instante entre salvar e a lista revalidar).
   const hasPrediction = !!prediction || !!savedMessage;
   const hasOfficial = game.homeScore !== null && game.awayScore !== null;
+
+  // Jogo em andamento segundo o poller (placar parcial). O backend só mantém
+  // live_status preenchido enquanto o jogo está em andamento.
+  const liveInProgress = !game.finished && !hasOfficial && !!game.liveStatus;
+  const liveLabel = formatLiveStatus(game.liveStatus, game.liveElapsed);
   const qualifierSuffix =
     knockout && game.qualifier
       ? ` — ${qualifierLabel(game.qualifier, game.homeTeam, game.awayTeam)} classificou`
@@ -356,6 +377,17 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
         </div>
       </div>
       <div className="mt-1 text-sm text-ink-muted">{formatKickoff(game.kickoff)}</div>
+
+      {liveInProgress && (
+        <p className="mt-2 flex flex-wrap items-center gap-2 font-semibold text-danger">
+          <span>
+            Ao vivo: {game.liveHomeScore ?? 0} x {game.liveAwayScore ?? 0}
+          </span>
+          <span className="rounded-pill bg-danger-bg px-2 py-0.5 text-xs font-semibold text-danger ring-1 ring-danger/40">
+            {liveLabel}
+          </span>
+        </p>
+      )}
 
       {hasOfficial && !showInlineOfficialSummary && (
         <p className="mt-2 font-semibold">
