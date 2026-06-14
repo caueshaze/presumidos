@@ -220,6 +220,18 @@ struct PoolIdQuery {
     pool_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationPreferenceBody {
+    enabled: bool,
+    lead_time_minutes: i64,
+}
+
+#[derive(Deserialize)]
+struct SubscriptionRemoveBody {
+    endpoint: String,
+}
+
 // ---------------------------------------------------------------------------
 // Handlers — auth
 // ---------------------------------------------------------------------------
@@ -278,6 +290,50 @@ async fn change_username(
 async fn csrf() -> ApiResult<impl IntoResponse> {
     let state = crate::auth::current_user(String::new()).await?;
     Ok(Json(json!({ "csrfToken": state.csrf_token })))
+}
+
+async fn notification_status() -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::push::get_notification_status(String::new()).await?,
+    ))
+}
+
+async fn update_notification_preference_handler(
+    headers: HeaderMap,
+    Json(body): Json<NotificationPreferenceBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::push::update_notification_preference(
+            String::new(),
+            body.enabled,
+            body.lead_time_minutes,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
+}
+
+async fn upsert_push_subscription_handler(
+    headers: HeaderMap,
+    Json(body): Json<crate::models::WebPushSubscriptionInput>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::push::upsert_push_subscription(String::new(), body, csrf_header(&headers)).await?,
+    ))
+}
+
+async fn remove_push_subscription_handler(
+    headers: HeaderMap,
+    Json(body): Json<SubscriptionRemoveBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::push::deactivate_push_subscription(
+            String::new(),
+            body.endpoint,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
 }
 
 async fn health() -> impl IntoResponse {
@@ -522,6 +578,19 @@ pub fn router() -> Router {
         .route("/auth/reauth", post(reauth))
         .route("/auth/username", post(change_username))
         .route("/auth/csrf", get(csrf))
+        .route("/notifications/status", get(notification_status))
+        .route(
+            "/notifications/preferences",
+            post(update_notification_preference_handler),
+        )
+        .route(
+            "/notifications/subscriptions",
+            post(upsert_push_subscription_handler),
+        )
+        .route(
+            "/notifications/subscriptions/remove",
+            post(remove_push_subscription_handler),
+        )
         .route("/pools", get(list_pools).post(create_pool))
         .route("/pools/join", post(join_pool))
         .route("/pools/{pool_id}/member-predictions", get(pool_member_predictions))

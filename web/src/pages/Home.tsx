@@ -1,8 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CheckCircle2, Circle } from "lucide-react";
+import { Bell, CheckCircle2, Circle, Smartphone } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePools, useMatches, useMyPredictions, useLeaderboard } from "@/hooks/queries";
+import { usePushReminders } from "@/hooks/usePushReminders";
 import { formatSelectionLabel } from "@/lib/selections";
 import { formatKickoff } from "@/lib/utils";
 import type { UserPublic } from "@/types";
@@ -47,6 +48,7 @@ function LoggedInHome({ user }: { user: UserPublic }) {
   const pools = usePools();
   const matches = useMatches();
   const predictions = useMyPredictions();
+  const pushReminders = usePushReminders();
   const firstPoolId = pools.data?.[0]?.id ?? null;
   const leaderboard = useLeaderboard(firstPoolId);
 
@@ -62,6 +64,15 @@ function LoggedInHome({ user }: { user: UserPublic }) {
   const myIndex = ranking.findIndex((e) => e.username === user.username);
   const myEntry = myIndex >= 0 ? ranking[myIndex] : null;
   const firstPool = pools.data?.[0];
+  const showReminderBanner =
+    !pushReminders.status.isLoading &&
+    (!pushReminders.preference.enabled ||
+      !pushReminders.currentDeviceSubscribed ||
+      pushReminders.browserState.permission !== "granted");
+
+  const enableReminders = async () => {
+    await pushReminders.enableForCurrentDevice(pushReminders.preference.leadTimeMinutes);
+  };
 
   return (
     <PageShell>
@@ -76,6 +87,57 @@ function LoggedInHome({ user }: { user: UserPublic }) {
           Ver ranking
         </Button>
       </div>
+
+      {showReminderBanner && (
+        <motion.section {...section} transition={{ duration: 0.3 }} className="mt-8">
+          <Card className="border border-sky/30 bg-sky/10">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="max-w-3xl">
+                <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-sky-dark">
+                  <Bell className="h-4 w-4" />
+                  Lembretes de palpite
+                </div>
+                <h2 className="mt-2 text-xl">Receba aviso antes do jogo começar</h2>
+                <p className="mt-2 text-sm text-ink-muted">
+                  A gente pode te lembrar quando faltar pouco para o apito inicial e ainda houver
+                  palpite pendente. Você pode desligar isso depois em Conta.
+                </p>
+                {pushReminders.browserState.isProbablyIosBrowser && (
+                  <div className="mt-3 rounded-md border border-mint/30 bg-card px-4 py-3 text-sm text-ink">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <Smartphone className="h-4 w-4 text-mint-dark" />
+                      iPhone/iPad
+                    </div>
+                    <p className="mt-1 text-ink-muted">
+                      No iPhone/iPad, as notificações web pedem que o app seja adicionado à Tela
+                      Inicial antes de ativar o lembrete.
+                    </p>
+                  </div>
+                )}
+                {pushReminders.actionError && (
+                  <p className="mt-3 text-sm font-semibold text-danger">{pushReminders.actionError}</p>
+                )}
+                {pushReminders.actionMessage && (
+                  <p className="mt-3 text-sm font-semibold text-mint-dark">
+                    {pushReminders.actionMessage}
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-3">
+                <Button
+                  onClick={() => void enableReminders()}
+                  disabled={pushReminders.actionPending || !pushReminders.status.data}
+                >
+                  {pushReminders.actionPending ? "Ativando..." : "Ativar lembrete"}
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/conta")}>
+                  Ajustar em Conta
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </motion.section>
+      )}
 
       {/* Seus bolões */}
       <motion.section {...section} transition={{ duration: 0.3 }} className="mt-8">

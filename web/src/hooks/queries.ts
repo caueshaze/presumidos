@@ -6,6 +6,8 @@ import type {
   LeaderboardEntry,
   MatchRecord,
   MemberPredictions,
+  NotificationPreference,
+  NotificationStatus,
   PointAdjustment,
   PoolSummary,
   PredictionRecord,
@@ -185,6 +187,22 @@ export function useChangeUsername() {
   return useMutation({
     mutationFn: (username: string) => api.post<UserPublic>("/auth/username", { username }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["current-user"] }),
+  });
+}
+
+export function useNotificationStatus() {
+  return useQuery({
+    queryKey: ["notification-status"],
+    queryFn: () => api.get<NotificationStatus>("/notifications/status"),
+  });
+}
+
+export function useUpdateNotificationPreference() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: NotificationPreference) =>
+      api.post<NotificationPreference>("/notifications/preferences", vars),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notification-status"] }),
   });
 }
 

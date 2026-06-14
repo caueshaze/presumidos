@@ -11,6 +11,7 @@ mod football;
 mod matches;
 mod models;
 mod pools;
+mod push;
 mod scoring;
 
 mod config;
@@ -210,6 +211,9 @@ async fn serve_application() {
     if football.enabled && football.poller_enabled {
         football::spawn_poller();
     }
+    if crate::config::settings().web_push.enabled {
+        push::spawn_reminder_worker();
+    }
 
     let dir = static_dir();
     // index.html é lido uma vez e devolvido (200) como fallback de client-side routing:
@@ -229,6 +233,31 @@ async fn serve_application() {
         .nest("/api", api::router())
         .nest_service("/assets", ServeDir::new(format!("{dir}/assets")))
         .route_service("/favicon.ico", get_service(ServeFile::new(format!("{dir}/favicon.ico"))))
+        .route_service(
+            "/favicon-16x16.png",
+            get_service(ServeFile::new(format!("{dir}/favicon-16x16.png"))),
+        )
+        .route_service(
+            "/favicon-32x32.png",
+            get_service(ServeFile::new(format!("{dir}/favicon-32x32.png"))),
+        )
+        .route_service(
+            "/apple-touch-icon.png",
+            get_service(ServeFile::new(format!("{dir}/apple-touch-icon.png"))),
+        )
+        .route_service(
+            "/android-chrome-192x192.png",
+            get_service(ServeFile::new(format!("{dir}/android-chrome-192x192.png"))),
+        )
+        .route_service(
+            "/android-chrome-512x512.png",
+            get_service(ServeFile::new(format!("{dir}/android-chrome-512x512.png"))),
+        )
+        .route_service(
+            "/site.webmanifest",
+            get_service(ServeFile::new(format!("{dir}/site.webmanifest"))),
+        )
+        .route_service("/sw.js", get_service(ServeFile::new(format!("{dir}/sw.js"))))
         .fallback(spa_fallback)
         .layer(axum::middleware::from_fn(api::context_middleware));
 

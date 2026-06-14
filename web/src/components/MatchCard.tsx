@@ -144,9 +144,19 @@ interface Props {
   locked: boolean;
   isAdmin: boolean;
   index: number;
+  cardId?: string;
+  highlighted?: boolean;
 }
 
-export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
+export function MatchCard({
+  game,
+  prediction,
+  locked,
+  isAdmin,
+  index,
+  cardId,
+  highlighted = false,
+}: Props) {
   const knockout = isKnockout(game.phase);
   const selectionGroups = getSelectionGroups();
 
@@ -332,10 +342,12 @@ export function MatchCard({ game, prediction, locked, isAdmin, index }: Props) {
 
   return (
     <MotionCard
+      id={cardId}
       className={cn(
-        "mb-4 transition-shadow duration-500",
+        "mb-4 scroll-mt-24 transition-shadow duration-500",
         hasPrediction && "ring-2 ring-success/60",
         savedMessage && "shadow-[0_0_0_6px_rgba(95,191,159,0.18)]",
+        highlighted && "ring-2 ring-sky/60 shadow-[0_0_0_6px_rgba(130,207,255,0.22)]",
       )}
       transition={{ delay: Math.min(index * 0.03, 0.3), duration: 0.28 }}
     >

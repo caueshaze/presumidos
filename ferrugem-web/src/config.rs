@@ -30,6 +30,7 @@ pub struct AppConfig {
     pub argon2_parallelism: u32,
     pub argon2_policy_version: String,
     pub football: FootballConfig,
+    pub web_push: WebPushConfig,
 }
 
 /// Configuração da integração de resultados ao vivo (API worldcup26.ir).
@@ -45,6 +46,16 @@ pub struct FootballConfig {
     pub poller_enabled: bool,
     pub base_url: String,
     pub poll_interval_secs: u64,
+}
+
+#[cfg(feature = "server")]
+#[derive(Debug, Clone)]
+pub struct WebPushConfig {
+    pub enabled: bool,
+    pub poll_interval_secs: u64,
+    pub vapid_public_key: Option<String>,
+    pub vapid_private_key: Option<String>,
+    pub contact_email: Option<String>,
 }
 
 #[cfg(feature = "server")]
@@ -238,6 +249,42 @@ pub fn settings() -> &'static AppConfig {
             );
         }
 
+        let web_push_enabled = optional_bool_var("WEB_PUSH_ENABLED", false);
+        let web_push = WebPushConfig {
+            enabled: web_push_enabled,
+            poll_interval_secs: optional_u64_var("WEB_PUSH_POLL_INTERVAL_SECS", 60),
+            vapid_public_key: optional_var("WEB_PUSH_VAPID_PUBLIC_KEY"),
+            vapid_private_key: optional_var("WEB_PUSH_VAPID_PRIVATE_KEY"),
+            contact_email: optional_var("WEB_PUSH_CONTACT_EMAIL"),
+        };
+        if web_push_enabled {
+            assert!(
+                web_push.poll_interval_secs >= 30,
+                "WEB_PUSH_POLL_INTERVAL_SECS deve ser >= 30"
+            );
+            assert!(
+                web_push
+                    .vapid_public_key
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                "WEB_PUSH_VAPID_PUBLIC_KEY precisa ser configurada quando WEB_PUSH_ENABLED=true"
+            );
+            assert!(
+                web_push
+                    .vapid_private_key
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                "WEB_PUSH_VAPID_PRIVATE_KEY precisa ser configurada quando WEB_PUSH_ENABLED=true"
+            );
+            assert!(
+                web_push
+                    .contact_email
+                    .as_deref()
+                    .is_some_and(|value| value.contains('@')),
+                "WEB_PUSH_CONTACT_EMAIL precisa ser um email valido quando WEB_PUSH_ENABLED=true"
+            );
+        }
+
         assert!(
             !resend_api_key.trim().is_empty(),
             "RESEND_API_KEY nao pode ser vazio"
@@ -303,6 +350,7 @@ pub fn settings() -> &'static AppConfig {
             argon2_parallelism,
             argon2_policy_version,
             football,
+            web_push,
         }
     })
 }

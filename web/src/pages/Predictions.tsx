@@ -1,3 +1,5 @@
+import { useEffect, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useMatches, useMyPredictions, useKnockoutReleased } from "@/hooks/queries";
 import { isMatchLocked } from "@/lib/utils";
@@ -9,12 +11,27 @@ import { MatchCard } from "@/components/MatchCard";
 
 export function PredictionsPage() {
   const { isAdmin } = useAuth();
+  const [searchParams] = useSearchParams();
   const matches = useMatches();
   const predictions = useMyPredictions();
   const knockout = useKnockoutReleased();
 
   const isLoading = matches.isLoading || predictions.isLoading || knockout.isLoading;
   const error = matches.error || predictions.error || knockout.error;
+  const targetMatchId = searchParams.get("matchId");
+  const visibleMatches = useMemo(() => matches.data ?? [], [matches.data]);
+
+  useEffect(() => {
+    if (!targetMatchId || visibleMatches.length === 0) return;
+    const element = document.getElementById(`match-card-${targetMatchId}`);
+    if (!element) return;
+
+    const timer = window.setTimeout(() => {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [targetMatchId, visibleMatches]);
 
   return (
     <PageShell>
@@ -39,7 +56,7 @@ export function PredictionsPage() {
           <>
             {isAdmin && <KnockoutControl released={knockout.data?.released ?? false} />}
             <div>
-              {matches.data?.map((game, i) => (
+              {visibleMatches.map((game, i) => (
                 <MatchCard
                   key={game.id}
                   index={i}
@@ -47,6 +64,8 @@ export function PredictionsPage() {
                   prediction={predictions.data?.find((p) => p.matchId === game.id)}
                   locked={isMatchLocked(game.kickoff)}
                   isAdmin={isAdmin}
+                  cardId={`match-card-${game.id}`}
+                  highlighted={game.id === targetMatchId}
                 />
               ))}
             </div>
