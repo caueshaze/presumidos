@@ -148,9 +148,7 @@ fn web_push_client() -> Result<&'static HyperWebPushClient, ServerFnError> {
         ));
     }
 
-    WEB_PUSH_CLIENT.get_or_try_init(|| {
-        Ok(HyperWebPushClient::new())
-    })
+    Ok(WEB_PUSH_CLIENT.get_or_init(HyperWebPushClient::new))
 }
 
 #[cfg(feature = "server")]
@@ -161,15 +159,23 @@ fn vapid_builder() -> Result<&'static PartialVapidSignatureBuilder, ServerFnErro
         ));
     }
 
-    VAPID_BUILDER.get_or_try_init(|| {
-        let private_key = crate::config::settings()
-            .web_push
-            .vapid_private_key
-            .as_deref()
-            .ok_or_else(|| crate::security::public_error("Chave privada VAPID ausente."))?;
-        PartialVapidSignatureBuilder::from_base64_no_sub(private_key, URL_SAFE_NO_PAD)
-            .map_err(|e| crate::security::internal_error("vapid_builder_init", e))
-    })
+    if let Some(builder) = VAPID_BUILDER.get() {
+        return Ok(builder);
+    }
+
+    let private_key = crate::config::settings()
+        .web_push
+        .vapid_private_key
+        .as_deref()
+        .ok_or_else(|| crate::security::public_error("Chave privada VAPID ausente."))?;
+    let builder = VapidSignatureBuilder::from_base64_no_sub(private_key, URL_SAFE_NO_PAD)
+        .map_err(|e| crate::security::internal_error("vapid_builder_init", e))?;
+
+    // Corrida benigna: se outra thread inicializou primeiro, mantém a versão dela.
+    let _ = VAPID_BUILDER.set(builder);
+    Ok(VAPID_BUILDER
+        .get()
+        .expect("VAPID_BUILDER inicializado logo acima"))
 }
 
 #[cfg(feature = "server")]

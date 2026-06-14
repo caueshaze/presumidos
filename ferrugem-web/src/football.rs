@@ -136,38 +136,73 @@ fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .user_agent("Presumidos/1.0 (+https://github.com/rezarahiminia/worldcup2026)")
             .build()
             .expect("falha ao construir cliente HTTP")
     })
 }
 
+/// Mensagem de erro com toda a cadeia de causas (ex.: "error sending request ->
+/// dns error -> ..."), para o log mostrar a causa real (DNS x timeout x conexão).
+fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut msg = err.to_string();
+    let mut source = err.source();
+    while let Some(inner) = source {
+        msg.push_str(" -> ");
+        msg.push_str(&inner.to_string());
+        source = inner.source();
+    }
+    msg
+}
+
+const FETCH_ATTEMPTS: u32 = 3;
+
 async fn fetch_games() -> Result<Vec<Game>, ServerFnError> {
     let base = settings().football.base_url.trim_end_matches('/');
     let url = format!("{base}/get/games");
 
-    let resp = client()
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| crate::security::internal_error("football_fetch_send", e))?;
+    // A fonte é um host gratuito instável: tolera blips transitórios com algumas
+    // retentativas antes de desistir do ciclo.
+    let mut last_err: Option<reqwest::Error> = None;
+    for attempt in 1..=FETCH_ATTEMPTS {
+        match client().get(&url).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp
+                    .text()
+                    .await
+                    .map_err(|e| crate::security::internal_error("football_fetch_body", e))?;
 
-    let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| crate::security::internal_error("football_fetch_body", e))?;
+                if !status.is_success() {
+                    return Err(crate::security::public_error(format!(
+                        "API de resultados respondeu {status}: {}",
+                        body.chars().take(200).collect::<String>()
+                    )));
+                }
 
-    if !status.is_success() {
-        return Err(crate::security::public_error(format!(
-            "API de resultados respondeu {status}: {}",
-            body.chars().take(200).collect::<String>()
-        )));
+                let parsed: GamesResponse = serde_json::from_str(&body)
+                    .map_err(|e| crate::security::internal_error("football_parse", e))?;
+                return Ok(parsed.games);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[football] tentativa {attempt}/{FETCH_ATTEMPTS} falhou ao buscar {url}: {}",
+                    error_chain(&e)
+                );
+                last_err = Some(e);
+                if attempt < FETCH_ATTEMPTS {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+            }
+        }
     }
 
-    let parsed: GamesResponse = serde_json::from_str(&body)
-        .map_err(|e| crate::security::internal_error("football_parse", e))?;
-    Ok(parsed.games)
+    Err(crate::security::internal_error(
+        "football_fetch_send",
+        last_err.expect("last_err preenchido após o loop"),
+    ))
 }
 
 // ---------------------------------------------------------------------------
