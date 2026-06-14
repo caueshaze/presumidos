@@ -126,10 +126,32 @@ enum GameApply {
     Skip,
 }
 
-/// Minuto corrido extraído do relógio da ESPN (ex.: "45'" -> 45).
-fn live_elapsed(label: &str) -> Option<i64> {
-    let digits: String = label.chars().filter(|c| c.is_ascii_digit()).collect();
+/// Minuto-base extraído do relógio da ESPN. Pega só os dígitos iniciais, para
+/// que acréscimos como "45'+3'" virem 45 (e não 453).
+fn live_elapsed(clock: &str) -> Option<i64> {
+    let digits: String = clock.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse::<i64>().ok()
+}
+
+/// Rótulo amigável da fase do jogo ao vivo. Detecta intervalo, prorrogação e
+/// pênaltis pelo status da ESPN; caso contrário, mostra o minuto do relógio.
+fn live_label(status_name: &str, clock: &str, short_detail: &str) -> String {
+    match status_name {
+        "STATUS_HALFTIME" => "Intervalo".to_string(),
+        "STATUS_END_OF_REGULATION" => "Fim do 2º tempo".to_string(),
+        "STATUS_EXTRA_TIME_HALFTIME" => "Intervalo da prorrogação".to_string(),
+        "STATUS_PENALTIES" | "STATUS_SHOOTOUT" => "Pênaltis".to_string(),
+        name if name.contains("EXTRA_TIME") => {
+            if clock.is_empty() {
+                "Prorrogação".to_string()
+            } else {
+                format!("Prorrogação · {clock}")
+            }
+        }
+        _ if !clock.is_empty() => clock.to_string(),
+        _ if !short_detail.is_empty() => short_detail.to_string(),
+        _ => "Ao vivo".to_string(),
+    }
 }
 
 /// Decide, de forma pura e testável, o que fazer com um evento da ESPN.
@@ -146,16 +168,12 @@ fn classify_event(is_knockout: bool, event: &Event) -> GameApply {
     let finished = state == "post" || comp.status.type_.completed;
 
     if state == "in" && !finished {
-        let label = if !comp.status.display_clock.trim().is_empty() {
-            comp.status.display_clock.trim().to_string()
-        } else {
-            comp.status.type_.short_detail.trim().to_string()
-        };
+        let clock = comp.status.display_clock.trim();
         return GameApply::Live {
             home: home_score,
             away: away_score,
-            elapsed: live_elapsed(&label),
-            status: label,
+            elapsed: live_elapsed(clock),
+            status: live_label(comp.status.type_.name.as_str(), clock, comp.status.type_.short_detail.trim()),
         };
     }
 
@@ -778,6 +796,27 @@ mod tests {
         assert_eq!(
             classify_event(false, &event("in", false, "1", "0", "67'")),
             GameApply::Live { home: 1, away: 0, status: "67'".into(), elapsed: Some(67) }
+        );
+    }
+
+    #[test]
+    fn halftime_shows_intervalo() {
+        // displayClock real observado da ESPN no intervalo: "45'+3'".
+        let mut ev = event("in", false, "0", "0", "45'+3'");
+        ev.competitions[0].status.type_.name = "STATUS_HALFTIME".into();
+        assert_eq!(
+            classify_event(false, &ev),
+            GameApply::Live { home: 0, away: 0, status: "Intervalo".into(), elapsed: Some(45) }
+        );
+    }
+
+    #[test]
+    fn stoppage_time_keeps_base_minute() {
+        // "45'+3'" em jogo (não intervalo): rótulo mostra o relógio, minuto = 45.
+        let g = event("in", false, "1", "0", "45'+3'");
+        assert_eq!(
+            classify_event(false, &g),
+            GameApply::Live { home: 1, away: 0, status: "45'+3'".into(), elapsed: Some(45) }
         );
     }
 
