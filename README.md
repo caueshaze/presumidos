@@ -235,6 +235,7 @@ Desenho da rede:
 Ajustes no `.env` para produção:
 
 - `APP_ENV=production`, `APP_DOMAIN=seu-dominio.com`, `COOKIE_SECURE=true`
+- `CONTACT_EMAIL=contato@seu-dominio.com` para a página pública de contato
 - `SESSION_SECRET` e `ADMIN_BOOTSTRAP_SECRET` fortes (32+ caracteres)
 - `REQUIRE_TRUSTED_PROXY=true`
 - `RATE_LIMIT_BACKEND=redis`, `REDIS_URL=redis://redis:6379`

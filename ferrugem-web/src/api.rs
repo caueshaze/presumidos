@@ -232,6 +232,12 @@ struct SubscriptionRemoveBody {
     endpoint: String,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContactInfoResponse {
+    email: String,
+}
+
 // ---------------------------------------------------------------------------
 // Handlers — auth
 // ---------------------------------------------------------------------------
@@ -271,6 +277,15 @@ async fn logout(headers: HeaderMap) -> ApiResult<StatusCode> {
 async fn current_user() -> ApiResult<impl IntoResponse> {
     let state = crate::auth::current_user(String::new()).await?;
     Ok(Json(state))
+}
+
+async fn contact_info() -> ApiResult<impl IntoResponse> {
+    crate::security::apply_security_headers();
+    let email = crate::config::settings()
+        .contact_email
+        .clone()
+        .unwrap_or_default();
+    Ok(Json(ContactInfoResponse { email }))
 }
 
 async fn reauth(headers: HeaderMap, Json(body): Json<ReauthBody>) -> ApiResult<StatusCode> {
@@ -582,6 +597,7 @@ async fn leaderboard(Query(query): Query<PoolIdQuery>) -> ApiResult<impl IntoRes
 pub fn router() -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/contact", get(contact_info))
         .route("/auth/register", post(register))
         .route("/auth/register/confirm", post(register_confirm))
         .route("/auth/password-reset", post(password_reset))

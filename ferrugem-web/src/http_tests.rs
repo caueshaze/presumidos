@@ -15,6 +15,7 @@ fn seed_http_test_env() {
         std::env::temp_dir().join(format!("presumidos-http-test-{}.db", uuid::Uuid::new_v4()));
     std::env::set_var("APP_ENV", "test");
     std::env::set_var("DATABASE_PATH", db_path.to_string_lossy().to_string());
+    std::env::set_var("CONTACT_EMAIL", "contato@example.com");
     std::env::set_var(
         "SESSION_SECRET",
         "0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -77,6 +78,26 @@ async fn test_server() -> &'static str {
             format!("http://{addr}")
         })
         .await
+}
+
+#[tokio::test]
+async fn contact_endpoint_returns_runtime_configured_email() {
+    let base = test_server().await;
+    let client = client();
+
+    let response = client
+        .get(format!("{base}/api/contact"))
+        .send()
+        .await
+        .expect("contact request");
+
+    assert!(response.status().is_success());
+    let payload: serde_json::Value = response.json().await.expect("contact json");
+    let expected = crate::config::settings()
+        .contact_email
+        .clone()
+        .unwrap_or_default();
+    assert_eq!(payload["email"], expected);
 }
 
 fn client() -> reqwest::Client {

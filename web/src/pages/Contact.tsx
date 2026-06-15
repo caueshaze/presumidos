@@ -1,11 +1,23 @@
 import { Mail } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
+
+type ContactInfoResponse = {
+  email: string;
+};
 
 export function ContactPage() {
-  const contactEmail = __CONTACT_EMAIL__.trim();
+  const { data } = useQuery({
+    queryKey: ["contact-info"],
+    queryFn: () => api.get<ContactInfoResponse>("/contact"),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const contactEmail = (data?.email || __CONTACT_EMAIL__).trim();
   const contactHref = contactEmail
     ? `mailto:${contactEmail}?subject=${encodeURIComponent("Contato Presumidos")}`
     : "";

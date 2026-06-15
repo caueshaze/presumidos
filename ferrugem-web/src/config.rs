@@ -13,6 +13,7 @@ pub enum RateLimitBackendKind {
 pub struct AppConfig {
     pub app_env: String,
     pub database_path: String,
+    pub contact_email: Option<String>,
     pub session_secret: String,
     pub admin_bootstrap_secret: String,
     pub session_ttl_hours: i64,
@@ -216,6 +217,9 @@ pub fn settings() -> &'static AppConfig {
 
         let app_env = required_var("APP_ENV").trim().to_lowercase();
         let database_path = required_var("DATABASE_PATH");
+        let contact_email = optional_var("CONTACT_EMAIL")
+            .or_else(|| optional_var("VITE_CONTACT_EMAIL"))
+            .or_else(|| optional_var("WEB_PUSH_CONTACT_EMAIL"));
         let session_secret = required_var("SESSION_SECRET");
         let admin_bootstrap_secret = required_var("ADMIN_BOOTSTRAP_SECRET");
         let session_ttl_hours = parse_i64_var("SESSION_TTL_HOURS");
@@ -343,6 +347,7 @@ pub fn settings() -> &'static AppConfig {
         AppConfig {
             app_env,
             database_path,
+            contact_email,
             session_secret,
             admin_bootstrap_secret,
             session_ttl_hours,
