@@ -34,7 +34,7 @@ pub struct AppConfig {
     pub web_push: WebPushConfig,
 }
 
-/// Configuração da integração de resultados ao vivo (scoreboard público da ESPN).
+/// Configuração da integração de resultados ao vivo via provedor público de placares.
 /// Tudo é opcional: se `enabled` for false, o poller nunca sobe. A API é pública
 /// (sem chave), então não há cota/segredo aqui.
 #[cfg(feature = "server")]
@@ -245,14 +245,15 @@ pub fn settings() -> &'static AppConfig {
         let football = FootballConfig {
             enabled: football_enabled,
             poller_enabled: optional_bool_var("FOOTBALL_POLLER_ENABLED", false),
-            base_url: optional_var("FOOTBALL_API_BASE_URL").unwrap_or_else(|| {
-                "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
-                    .to_string()
-            }),
+            base_url: optional_var("FOOTBALL_API_BASE_URL").unwrap_or_default(),
             poll_interval_secs: optional_u64_var("FOOTBALL_POLL_INTERVAL_SECS", 600),
             live_poll_interval_secs: optional_u64_var("FOOTBALL_LIVE_POLL_INTERVAL_SECS", 300),
         };
         if football_enabled {
+            assert!(
+                !football.base_url.trim().is_empty(),
+                "FOOTBALL_API_BASE_URL precisa ser configurada quando FOOTBALL_API_ENABLED=true"
+            );
             assert!(
                 football.poll_interval_secs >= 60,
                 "FOOTBALL_POLL_INTERVAL_SECS deve ser >= 60"

@@ -1,11 +1,10 @@
-//! Integração de resultados ao vivo via API pública da ESPN (scoreboard da
-//! FIFA World Cup). Endpoint usado:
-//! `.../sports/soccer/fifa.world/scoreboard?dates=YYYYMMDD&lang=pt&region=br`.
+//! Integração de resultados ao vivo via provedor público de placares da
+//! competição.
 //!
 //! - Poller em background (`spawn_poller`) que, a cada `poll_interval_secs`, só
 //!   chama a API quando há jogo na janela.
 //! - Comando CLI (`sync_fixtures`) que mapeia cada `jogo-NNN` local ao `id` do
-//!   evento da ESPN, casando por par de seleções (nomes em PT, normalizados).
+//!   evento externo, casando por par de seleções (nomes em PT, normalizados).
 //!
 //! Semântica de produto:
 //! - O poller **finaliza automaticamente apenas a fase de grupos** (placar +
@@ -13,7 +12,7 @@
 //!   (classificado/pênaltis) é lançado pelo admin.
 //! - Resultado de origem `manual` (admin) é soberano: nunca é sobrescrito.
 //!
-//! Detalhe de data: a ESPN agrupa o `dates=YYYYMMDD` por horário ET (EDT durante
+//! Detalhe de data: o provedor agrupa o `dates=YYYYMMDD` por horário ET (EDT durante
 //! a Copa, UTC−4). Por isso a data consultada é o kickoff convertido para ET.
 
 #![cfg(feature = "server")]
@@ -25,7 +24,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 // ---------------------------------------------------------------------------
-// Estruturas da resposta do scoreboard da ESPN (apenas o que usamos).
+// Estruturas da resposta do scoreboard externo (apenas o que usamos).
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -102,7 +101,7 @@ impl Competition {
 }
 
 // ---------------------------------------------------------------------------
-// Classificação de um evento da ESPN: o que fazer com ele no banco.
+// Classificação de um evento externo: o que fazer com ele no banco.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -126,7 +125,7 @@ enum GameApply {
     Skip,
 }
 
-/// Minuto-base extraído do relógio da ESPN. Pega só os dígitos iniciais, para
+/// Minuto-base extraído do relógio do provedor. Pega só os dígitos iniciais, para
 /// que acréscimos como "45'+3'" virem 45 (e não 453).
 fn live_elapsed(clock: &str) -> Option<i64> {
     let digits: String = clock.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -134,7 +133,7 @@ fn live_elapsed(clock: &str) -> Option<i64> {
 }
 
 /// Rótulo amigável da fase do jogo ao vivo. Detecta intervalo, prorrogação e
-/// pênaltis pelo status da ESPN; caso contrário, mostra o minuto do relógio.
+/// pênaltis pelo status do provedor; caso contrário, mostra o minuto do relógio.
 fn live_label(status_name: &str, clock: &str, short_detail: &str) -> String {
     match status_name {
         "STATUS_HALFTIME" => "Intervalo".to_string(),
@@ -154,7 +153,7 @@ fn live_label(status_name: &str, clock: &str, short_detail: &str) -> String {
     }
 }
 
-/// Decide, de forma pura e testável, o que fazer com um evento da ESPN.
+/// Decide, de forma pura e testável, o que fazer com um evento externo.
 fn classify_event(is_knockout: bool, event: &Event) -> GameApply {
     let Some(comp) = event.competition() else {
         return GameApply::Skip;
@@ -222,7 +221,7 @@ fn error_chain(err: &dyn std::error::Error) -> String {
 
 const FETCH_ATTEMPTS: u32 = 3;
 
-/// Busca o scoreboard da ESPN de uma data (formato YYYYMMDD, em ET).
+/// Busca o scoreboard externo de uma data (formato YYYYMMDD, em ET).
 async fn fetch_scoreboard(date: &str) -> Result<Vec<Event>, ServerFnError> {
     let url = settings().football.base_url.trim_end_matches('/').to_string();
 
@@ -248,7 +247,7 @@ async fn fetch_scoreboard(date: &str) -> Result<Vec<Event>, ServerFnError> {
                     .map_err(|e| crate::security::internal_error("football_fetch_body", e))?;
                 if !status.is_success() {
                     return Err(crate::security::public_error(format!(
-                        "ESPN respondeu {status}: {}",
+                        "Provedor de placares respondeu {status}: {}",
                         body.chars().take(200).collect::<String>()
                     )));
                 }
@@ -258,7 +257,7 @@ async fn fetch_scoreboard(date: &str) -> Result<Vec<Event>, ServerFnError> {
             }
             Err(e) => {
                 eprintln!(
-                    "[football] tentativa {attempt}/{FETCH_ATTEMPTS} falhou ao buscar ESPN ({date}): {}",
+                    "[football] tentativa {attempt}/{FETCH_ATTEMPTS} falhou ao buscar provedor de placares ({date}): {}",
                     error_chain(&e)
                 );
                 last_err = Some(e);
@@ -311,7 +310,7 @@ async fn clear_live(db: &sqlx::SqlitePool, match_id: &str) -> Result<(), ServerF
     Ok(())
 }
 
-/// Aplica um evento da ESPN a um jogo local já mapeado.
+/// Aplica um evento externo a um jogo local já mapeado.
 async fn apply_event(
     db: &sqlx::SqlitePool,
     candidate: &PollCandidate,
@@ -428,7 +427,7 @@ async fn apply_event(
 }
 
 // ---------------------------------------------------------------------------
-// Datas: a ESPN agrupa por dia ET (EDT na Copa, UTC−4).
+// Datas: o provedor agrupa por dia ET (EDT na Copa, UTC−4).
 // ---------------------------------------------------------------------------
 
 /// Data ET (YYYYMMDD) de um kickoff em UTC. EDT = UTC−4 durante toda a Copa.
@@ -458,7 +457,7 @@ pub fn spawn_poller() {
     let live_secs = settings().football.live_poll_interval_secs;
     tokio::spawn(async move {
         eprintln!(
-            "[football] poller iniciado (intervalo {base_secs}s, {live_secs}s com jogo na janela, + jitter 0–60s, fonte ESPN)"
+            "[football] poller iniciado (intervalo {base_secs}s, {live_secs}s com jogo na janela, + jitter 0–60s, fonte externa)"
         );
         loop {
             // `active` indica que havia jogo na janela: enquanto rola jogo, o
@@ -531,7 +530,7 @@ async fn run_poll_cycle() -> Result<bool, ServerFnError> {
 }
 
 // ---------------------------------------------------------------------------
-// Comando CLI: mapeamento jogo local <-> id do evento da ESPN.
+// Comando CLI: mapeamento jogo local <-> id do evento externo.
 // ---------------------------------------------------------------------------
 
 pub enum SyncMode {
@@ -567,7 +566,7 @@ fn normalize_name(name: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Token canônico por seleção, cobrindo o nome local (PT) e o da ESPN (PT, com
+/// Token canônico por seleção, cobrindo o nome local (PT) e o do provedor (PT, com
 /// algumas variações: Catar/Qatar, Holanda/Países Baixos, etc.).
 fn canonical_team(name: &str) -> String {
     static TABLE: OnceLock<HashMap<String, &'static str>> = OnceLock::new();
@@ -671,7 +670,7 @@ async fn set_mapping(
     Ok(true)
 }
 
-/// Mapeia os jogos locais aos ids de evento da ESPN, casando por par de times.
+/// Mapeia os jogos locais aos ids de evento externos, casando por par de times.
 pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
     let db = crate::db::pool();
 
@@ -698,7 +697,7 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
 
     // Busca os scoreboards de todas as datas ET dos jogos locais e indexa por par.
     let dates = distinct_et_dates(locals.iter().map(|m| m.kickoff.clone()));
-    println!("Consultando {} data(s) na ESPN...", dates.len());
+    println!("Consultando {} data(s) no provedor de placares...", dates.len());
     let mut by_pair: HashMap<(String, String), i64> = HashMap::new();
     for date in &dates {
         for ev in fetch_scoreboard(date).await? {
@@ -717,7 +716,7 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
             }
         }
     }
-    println!("ESPN retornou {} confronto(s).", by_pair.len());
+    println!("O provedor retornou {} confronto(s).", by_pair.len());
 
     let mut matched = 0usize;
     let mut unmatched: Vec<String> = Vec::new();
@@ -801,7 +800,7 @@ mod tests {
 
     #[test]
     fn halftime_shows_intervalo() {
-        // displayClock real observado da ESPN no intervalo: "45'+3'".
+        // displayClock real observado no provedor durante o intervalo: "45'+3'".
         let mut ev = event("in", false, "0", "0", "45'+3'");
         ev.competitions[0].status.type_.name = "STATUS_HALFTIME".into();
         assert_eq!(
@@ -842,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn team_aliases_espn_variants() {
+    fn team_aliases_provider_variants() {
         assert_eq!(canonical_team("Catar"), canonical_team("Qatar"));
         assert_eq!(canonical_team("Holanda"), canonical_team("Países Baixos"));
         assert_eq!(
