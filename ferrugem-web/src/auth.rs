@@ -15,6 +15,14 @@ pub struct AuthSession {
 }
 
 #[cfg(feature = "server")]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AuthCleanupSummary {
+    pub expired_sessions_deleted: u64,
+    pub expired_pending_registrations_deleted: u64,
+    pub expired_password_reset_codes_deleted: u64,
+}
+
+#[cfg(feature = "server")]
 fn sqlite_utc_now() -> String {
     chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
@@ -668,7 +676,10 @@ pub async fn delete_account(token: String, csrf_token: String) -> Result<(), Ser
         "user",
         Some(&session.user_id),
         Some(&crate::security::client_ip(&headers)),
-        serde_json::json!({ "email": email, "self_service": true }),
+        serde_json::json!({
+            "email_hash": crate::security::sensitive_value_hash(&email),
+            "self_service": true
+        }),
     )
     .await?;
 
@@ -865,7 +876,10 @@ pub async fn request_registration(
 
     crate::security::log_event(
         "register_code_sent",
-        serde_json::json!({ "email": email, "ip": ip }),
+        serde_json::json!({
+            "email_hash": crate::security::sensitive_value_hash(&email),
+            "ip": ip
+        }),
     );
 
     Ok(())
@@ -964,7 +978,9 @@ pub async fn confirm_registration(
         "user",
         Some(&user_id),
         Some(&ip),
-        serde_json::json!({ "email": email }),
+        serde_json::json!({
+            "email_hash": crate::security::sensitive_value_hash(&email)
+        }),
     )
     .await?;
 
@@ -1018,7 +1034,10 @@ pub async fn request_password_reset(email: String) -> Result<(), ServerFnError> 
     let Some((user_id,)) = user else {
         crate::security::log_event(
             "password_reset_unknown_email",
-            serde_json::json!({ "email": email, "ip": ip }),
+            serde_json::json!({
+                "email_hash": crate::security::sensitive_value_hash(&email),
+                "ip": ip
+            }),
         );
         return Ok(());
     };
@@ -1148,7 +1167,9 @@ pub async fn confirm_password_reset(
         "user",
         Some(&user_id),
         Some(&ip),
-        serde_json::json!({ "email": email }),
+        serde_json::json!({
+            "email_hash": crate::security::sensitive_value_hash(&email)
+        }),
     )
     .await?;
 
@@ -1181,6 +1202,50 @@ async fn register_email_code_attempt(
         .await
         .map_err(|e| crate::security::internal_error("register_email_code_attempt", e))?;
     Ok(())
+}
+
+#[cfg(feature = "server")]
+pub async fn cleanup_expired_auth_data(
+    db: &sqlx::SqlitePool,
+) -> Result<AuthCleanupSummary, ServerFnError> {
+    let expired_sessions_deleted = sqlx::query(
+        "DELETE FROM sessions
+         WHERE datetime(expires_at) <= datetime('now')",
+    )
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("cleanup_expired_sessions", e))?
+    .rows_affected();
+
+    let expired_pending_registrations_deleted = sqlx::query(
+        "DELETE FROM pending_registrations
+         WHERE attempts >= ?1
+            OR datetime(expires_at) <= datetime('now')
+            OR datetime(created_at) <= datetime('now', '-1 day')",
+    )
+    .bind(EMAIL_CODE_MAX_ATTEMPTS)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("cleanup_expired_pending_registrations", e))?
+    .rows_affected();
+
+    let expired_password_reset_codes_deleted = sqlx::query(
+        "DELETE FROM password_reset_codes
+         WHERE attempts >= ?1
+            OR datetime(expires_at) <= datetime('now')
+            OR datetime(created_at) <= datetime('now', '-1 day')",
+    )
+    .bind(EMAIL_CODE_MAX_ATTEMPTS)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("cleanup_expired_password_reset_codes", e))?
+    .rows_affected();
+
+    Ok(AuthCleanupSummary {
+        expired_sessions_deleted,
+        expired_pending_registrations_deleted,
+        expired_password_reset_codes_deleted,
+    })
 }
 
 #[cfg(feature = "server")]
@@ -1287,7 +1352,7 @@ pub async fn login(username: String, password: String) -> Result<AuthResult, Ser
             "login_failed",
             serde_json::json!({
                 "reason": "missing_user",
-                "login_identifier": login_identifier,
+                "login_identifier_hash": crate::security::sensitive_value_hash(&login_identifier),
                 "ip": ip,
             }),
         );
@@ -1528,9 +1593,9 @@ pub async fn current_user(token: String) -> Result<SessionState, ServerFnError> 
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use super::{
-        admin_reauth_is_fresh, argon2_policy, can_bootstrap_admin, count_admins,
-        create_bootstrap_admin_account, create_public_user_account, hash_password, needs_rehash,
-        sqlite_utc_after_hours, sqlite_utc_now, validate_registration_input,
+        admin_reauth_is_fresh, argon2_policy, can_bootstrap_admin, cleanup_expired_auth_data,
+        count_admins, create_bootstrap_admin_account, create_public_user_account, hash_password,
+        needs_rehash, sqlite_utc_after_hours, sqlite_utc_now, validate_registration_input,
     };
     use sqlx::SqlitePool;
 
@@ -1583,6 +1648,36 @@ mod tests {
         .execute(&db)
         .await
         .expect("audit_logs table");
+
+        sqlx::query(
+            "CREATE TABLE pending_registrations (
+                email TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                username_lookup TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                code_hash TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&db)
+        .await
+        .expect("pending_registrations table");
+
+        sqlx::query(
+            "CREATE TABLE password_reset_codes (
+                email TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                code_hash TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&db)
+        .await
+        .expect("password_reset_codes table");
 
         db
     }
@@ -1802,5 +1897,74 @@ mod tests {
         let current_hash = hash_password("senha-teste").expect("hash with current policy");
         let parsed_current = PasswordHash::new(&current_hash).expect("parse current hash");
         assert!(!needs_rehash(&parsed_current));
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired_auth_data_removes_only_stale_records() {
+        seed_security_env();
+        let db = test_db().await;
+
+        sqlx::query(
+            "INSERT INTO sessions (token, user_id, expires_at, csrf_token, last_seen_at)
+             VALUES
+                ('expired-session', 'user-a', datetime('now', '-2 hours'), 'csrf-a', datetime('now')),
+                ('active-session', 'user-b', datetime('now', '+2 hours'), 'csrf-b', datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .expect("seed sessions");
+
+        sqlx::query(
+            "INSERT INTO pending_registrations
+                (email, username, username_lookup, password_hash, code_hash, attempts, expires_at, created_at)
+             VALUES
+                ('old@teste.com', 'Old', 'old', 'hash', 'code', 0, datetime('now', '-2 hours'), datetime('now', '-2 days')),
+                ('fresh@teste.com', 'Fresh', 'fresh', 'hash', 'code', 0, datetime('now', '+2 hours'), datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .expect("seed pending registrations");
+
+        sqlx::query(
+            "INSERT INTO password_reset_codes
+                (email, user_id, code_hash, attempts, expires_at, created_at)
+             VALUES
+                ('reset-old@teste.com', 'user-a', 'code', 0, datetime('now', '-2 hours'), datetime('now', '-2 days')),
+                ('reset-fresh@teste.com', 'user-b', 'code', 0, datetime('now', '+2 hours'), datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .expect("seed password reset codes");
+
+        let summary = cleanup_expired_auth_data(&db)
+            .await
+            .expect("cleanup should succeed");
+
+        assert_eq!(summary.expired_sessions_deleted, 1);
+        assert_eq!(summary.expired_pending_registrations_deleted, 1);
+        assert_eq!(summary.expired_password_reset_codes_deleted, 1);
+
+        let remaining_sessions: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE token = 'active-session'")
+                .fetch_one(&db)
+                .await
+                .expect("count active sessions");
+        assert_eq!(remaining_sessions.0, 1);
+
+        let remaining_pending: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM pending_registrations WHERE email = 'fresh@teste.com'",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("count fresh pending");
+        assert_eq!(remaining_pending.0, 1);
+
+        let remaining_reset: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM password_reset_codes WHERE email = 'reset-fresh@teste.com'",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("count fresh reset");
+        assert_eq!(remaining_reset.0, 1);
     }
 }

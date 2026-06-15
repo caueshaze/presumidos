@@ -82,9 +82,9 @@ where
                 let pair = args
                     .next()
                     .ok_or_else(|| "--fixture exige jogo-XXX=ID".to_string())?;
-                let (match_id, fixture_id) = pair
-                    .split_once('=')
-                    .ok_or_else(|| format!("formato inválido para --fixture: {pair} (use jogo-XXX=ID)"))?;
+                let (match_id, fixture_id) = pair.split_once('=').ok_or_else(|| {
+                    format!("formato inválido para --fixture: {pair} (use jogo-XXX=ID)")
+                })?;
                 let fixture_id = fixture_id
                     .parse::<i64>()
                     .map_err(|_| format!("ID de fixture inválido: {fixture_id}"))?;
@@ -132,11 +132,49 @@ where
     }
 }
 
+async fn run_housekeeping() -> Result<(), error::ServerFnError> {
+    let db = db::pool();
+    let auth_summary = auth::cleanup_expired_auth_data(db).await?;
+    let push_summary = push::cleanup_stale_push_data(db).await?;
+
+    security::log_event(
+        "startup_housekeeping_completed",
+        serde_json::json!({
+            "expired_sessions_deleted": auth_summary.expired_sessions_deleted,
+            "expired_pending_registrations_deleted": auth_summary.expired_pending_registrations_deleted,
+            "expired_password_reset_codes_deleted": auth_summary.expired_password_reset_codes_deleted,
+            "inactive_push_subscriptions_deleted": push_summary.inactive_subscriptions_deleted,
+            "old_push_deliveries_deleted": push_summary.old_deliveries_deleted,
+        }),
+    );
+
+    Ok(())
+}
+
+fn run_cleanup_expired_command() -> i32 {
+    let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+    let result = runtime.block_on(async {
+        db::init().await;
+        run_housekeeping().await
+    });
+
+    match result {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("falha no cleanup-expired: {error}");
+            1
+        }
+    }
+}
+
 fn try_handle_server_command() -> Option<i32> {
     let mut args = std::env::args().skip(1);
     let command = args.next()?;
     if command == "sync-fixtures" {
         return Some(run_sync_fixtures_command(args));
+    }
+    if command == "cleanup-expired" {
+        return Some(run_cleanup_expired_command());
     }
     if command != "bootstrap-admin" {
         return None;
@@ -203,6 +241,14 @@ async fn serve_application() {
     use tower_http::services::{ServeDir, ServeFile};
 
     db::init().await;
+    if let Err(error) = run_housekeeping().await {
+        security::log_event(
+            "startup_housekeeping_failed",
+            serde_json::json!({
+                "error": error.to_string(),
+            }),
+        );
+    }
 
     // Poller de resultados ao vivo (API-Football). Sobe apenas se a integração e
     // o poller estiverem habilitados — mantenha o poller ligado em uma única
@@ -232,7 +278,10 @@ async fn serve_application() {
     let app = Router::new()
         .nest("/api", api::router())
         .nest_service("/assets", ServeDir::new(format!("{dir}/assets")))
-        .route_service("/favicon.ico", get_service(ServeFile::new(format!("{dir}/favicon.ico"))))
+        .route_service(
+            "/favicon.ico",
+            get_service(ServeFile::new(format!("{dir}/favicon.ico"))),
+        )
         .route_service(
             "/favicon-16x16.png",
             get_service(ServeFile::new(format!("{dir}/favicon-16x16.png"))),
@@ -257,7 +306,10 @@ async fn serve_application() {
             "/site.webmanifest",
             get_service(ServeFile::new(format!("{dir}/site.webmanifest"))),
         )
-        .route_service("/sw.js", get_service(ServeFile::new(format!("{dir}/sw.js"))))
+        .route_service(
+            "/sw.js",
+            get_service(ServeFile::new(format!("{dir}/sw.js"))),
+        )
         .fallback(spa_fallback)
         .layer(axum::middleware::from_fn(api::context_middleware));
 

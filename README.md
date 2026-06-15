@@ -265,6 +265,14 @@ docker compose exec ferrugem-web \
   /app/ferrugem-web sync-fixtures --apply
 ```
 
+O servidor também executa uma limpeza conservadora ao iniciar, removendo apenas
+sessões expiradas, cadastros pendentes vencidos, códigos de reset vencidos e
+dados antigos/inativos de web push. Para rodar isso manualmente:
+
+```bash
+docker compose exec ferrugem-web /app/ferrugem-web cleanup-expired
+```
+
 O proxy reconstrói `X-Forwarded-For`, `X-Real-IP` e `Forwarded` em vez de
 encaminhar o que veio do cliente, e remove `CF-Connecting-IP`.
 

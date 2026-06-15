@@ -1,11 +1,11 @@
 use crate::error::ServerFnError;
 
 #[cfg(feature = "server")]
-use std::net::IpAddr;
-#[cfg(feature = "server")]
 use sha2::Digest;
 #[cfg(feature = "server")]
 use std::collections::{HashMap, VecDeque};
+#[cfg(feature = "server")]
+use std::net::IpAddr;
 #[cfg(feature = "server")]
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(feature = "server")]
@@ -105,22 +105,35 @@ pub fn internal_error(context: &str, error: impl std::fmt::Display) -> ServerFnE
 pub fn rate_limit_identity_hash(value: &str) -> String {
     use hmac::{Hmac, Mac};
 
-    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(settings().rate_limit_identity_secret.as_bytes())
-        .expect("HMAC aceita chaves de qualquer tamanho");
+    let mut mac =
+        Hmac::<sha2::Sha256>::new_from_slice(settings().rate_limit_identity_secret.as_bytes())
+            .expect("HMAC aceita chaves de qualquer tamanho");
     mac.update(value.trim().to_lowercase().as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }
 
 #[cfg(feature = "server")]
+pub fn sensitive_value_hash(value: &str) -> String {
+    rate_limit_identity_hash(value)
+}
+
+#[cfg(feature = "server")]
 fn parse_ip_token(raw: &str) -> Option<IpAddr> {
-    let trimmed = raw.trim().trim_matches('"').trim_matches('[').trim_matches(']');
+    let trimmed = raw
+        .trim()
+        .trim_matches('"')
+        .trim_matches('[')
+        .trim_matches(']');
     let candidate = trimmed
         .split(':')
         .next()
         .filter(|_| trimmed.matches(':').count() < 2)
         .unwrap_or(trimmed);
 
-    candidate.parse::<IpAddr>().ok().or_else(|| trimmed.parse::<IpAddr>().ok())
+    candidate
+        .parse::<IpAddr>()
+        .ok()
+        .or_else(|| trimmed.parse::<IpAddr>().ok())
 }
 
 #[cfg(feature = "server")]
@@ -153,7 +166,12 @@ fn forwarded_chain(headers: &HeaderMap) -> Vec<IpAddr> {
     headers
         .get("forwarded")
         .and_then(|value| value.to_str().ok())
-        .map(|value| value.split(',').filter_map(parse_forwarded_for_ip).collect())
+        .map(|value| {
+            value
+                .split(',')
+                .filter_map(parse_forwarded_for_ip)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -345,7 +363,10 @@ fn enrich_rate_limit_fields(
 ) -> serde_json::Value {
     let mut fields = fields.clone();
     if let Some(object) = fields.as_object_mut() {
-        object.insert("key".to_string(), serde_json::Value::String(key.to_string()));
+        object.insert(
+            "key".to_string(),
+            serde_json::Value::String(key.to_string()),
+        );
         object.insert(
             "window_secs".to_string(),
             serde_json::Value::Number(rule.window.as_secs().into()),
@@ -470,7 +491,10 @@ async fn redis_enforce_rate_limit(
     if count > rule.max_attempts as i64 {
         let mut fields = enrich_rate_limit_fields(audit_fields, key, rule);
         if let Some(object) = fields.as_object_mut() {
-            object.insert("attempts".to_string(), serde_json::Value::Number(count.into()));
+            object.insert(
+                "attempts".to_string(),
+                serde_json::Value::Number(count.into()),
+            );
         }
         log_event(blocked_event, fields);
         return Err(public_error(
@@ -623,7 +647,9 @@ pub fn hash_code(code: &str) -> String {
 #[cfg(feature = "server")]
 pub fn require_csrf(expected: &str, provided: &str) -> Result<(), ServerFnError> {
     if expected.is_empty() || provided.trim().is_empty() || expected != provided.trim() {
-        return Err(public_error("Falha de seguranca da sessao. Atualize a pagina e tente novamente."));
+        return Err(public_error(
+            "Falha de seguranca da sessao. Atualize a pagina e tente novamente.",
+        ));
     }
     Ok(())
 }
@@ -666,9 +692,9 @@ mod tests {
         RateLimiter,
     };
     use axum::http::HeaderMap;
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
-    use std::net::{IpAddr, Ipv4Addr};
 
     fn trusted_cidrs() -> Vec<ipnet::IpNet> {
         vec![
@@ -742,10 +768,7 @@ mod tests {
     #[test]
     fn resolves_client_from_rightmost_non_trusted_forwarded_ip() {
         let peer = Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10)));
-        let headers = headers(&[(
-            "x-forwarded-for",
-            "1.2.3.4, 203.0.113.77, 10.0.0.10",
-        )]);
+        let headers = headers(&[("x-forwarded-for", "1.2.3.4, 203.0.113.77, 10.0.0.10")]);
 
         let client_ip =
             resolve_client_ip_from_peer_and_headers(peer, &headers, &trusted_cidrs()).unwrap();
@@ -782,7 +805,10 @@ mod tests {
 
     fn rate_limit_fields(extra: serde_json::Value) -> serde_json::Value {
         let mut fields = serde_json::Map::new();
-        fields.insert("scope".to_string(), serde_json::Value::String("test".to_string()));
+        fields.insert(
+            "scope".to_string(),
+            serde_json::Value::String("test".to_string()),
+        );
         if let Some(object) = extra.as_object() {
             for (key, value) in object {
                 fields.insert(key.clone(), value.clone());
