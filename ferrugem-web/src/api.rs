@@ -22,7 +22,7 @@ use serde_json::json;
 
 use crate::context::{take_response_headers, RequestContext, REQUEST};
 use crate::error::ServerFnError;
-use crate::models::KnockoutEntry;
+use crate::models::{AdminSettings, KnockoutEntry};
 
 // ---------------------------------------------------------------------------
 // Erro -> resposta HTTP
@@ -212,6 +212,61 @@ struct AdjustmentBody {
 #[serde(rename_all = "camelCase")]
 struct RemoveAdjustmentBody {
     adjustment_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminMatchListQuery {
+    phase: Option<String>,
+    group_name: Option<String>,
+    date: Option<String>,
+    status: Option<String>,
+    origin: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminPredictionsQuery {
+    match_id: Option<String>,
+    user_id: Option<String>,
+    pool_id: Option<String>,
+    missing_only: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminAuditQuery {
+    action: Option<String>,
+    actor_user_id: Option<String>,
+    target_type: Option<String>,
+    target_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReopenPredictionBody {
+    match_id: String,
+    user_id: String,
+    reason: String,
+    expires_at: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RevokePredictionOverrideBody {
+    override_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecalculateMatchBody {
+    match_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockUserBody {
+    reason: String,
 }
 
 #[derive(Deserialize)]
@@ -445,7 +500,7 @@ async fn admin_list_pools() -> ApiResult<impl IntoResponse> {
 }
 
 async fn admin_list_users() -> ApiResult<impl IntoResponse> {
-    Ok(Json(crate::auth::list_all_users(String::new()).await?))
+    Ok(Json(crate::admin::list_admin_users(String::new()).await?))
 }
 
 async fn admin_list_pool_members(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
@@ -503,6 +558,10 @@ async fn my_predictions() -> ApiResult<impl IntoResponse> {
     ))
 }
 
+async fn my_match_points() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::scoring::list_my_match_points().await?))
+}
+
 async fn submit_prediction(
     headers: HeaderMap,
     Json(body): Json<PredictionBody>,
@@ -527,8 +586,8 @@ async fn set_match_result(
     Path(match_id): Path<String>,
     headers: HeaderMap,
     Json(body): Json<MatchResultBody>,
-) -> ApiResult<StatusCode> {
-    crate::matches::set_match_result(
+) -> ApiResult<impl IntoResponse> {
+    let updated = crate::matches::set_match_result(
         String::new(),
         match_id,
         body.home_score,
@@ -537,7 +596,7 @@ async fn set_match_result(
         csrf_header(&headers),
     )
     .await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(updated))
 }
 
 async fn set_knockout_released(
@@ -580,6 +639,175 @@ async fn update_match_teams(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn admin_overview() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::admin::admin_overview(String::new()).await?))
+}
+
+async fn admin_matches(Query(query): Query<AdminMatchListQuery>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::list_admin_matches(
+            String::new(),
+            query.phase,
+            query.group_name,
+            query.date,
+            query.status,
+            query.origin,
+        )
+        .await?,
+    ))
+}
+
+async fn admin_match_audit(Path(match_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::list_match_audit(String::new(), match_id).await?,
+    ))
+}
+
+async fn admin_sync_status() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::admin::latest_sync_status().await?))
+}
+
+async fn admin_sync_run_now(headers: HeaderMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::run_sync_now(String::new(), csrf_header(&headers)).await?,
+    ))
+}
+
+async fn admin_predictions(Query(query): Query<AdminPredictionsQuery>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::list_admin_predictions(
+            String::new(),
+            query.match_id,
+            query.user_id,
+            query.pool_id,
+            query.missing_only.unwrap_or(false),
+        )
+        .await?,
+    ))
+}
+
+async fn admin_prediction_reopen(
+    headers: HeaderMap,
+    Json(body): Json<ReopenPredictionBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::reopen_prediction(
+            String::new(),
+            body.match_id,
+            body.user_id,
+            body.reason,
+            body.expires_at,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
+}
+
+async fn admin_prediction_reopen_revoke(
+    headers: HeaderMap,
+    Json(body): Json<RevokePredictionOverrideBody>,
+) -> ApiResult<StatusCode> {
+    crate::admin::revoke_prediction_reopen(String::new(), body.override_id, csrf_header(&headers))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_recalculate_match(
+    headers: HeaderMap,
+    Json(body): Json<RecalculateMatchBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::admin_recalculate_match(String::new(), body.match_id, csrf_header(&headers))
+            .await?,
+    ))
+}
+
+async fn admin_recalculate_all(headers: HeaderMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::admin_recalculate_all(String::new(), csrf_header(&headers)).await?,
+    ))
+}
+
+async fn admin_user_breakdown(
+    Path(user_id): Path<String>,
+    Query(query): Query<PoolIdQuery>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::scoring::list_user_breakdowns(&user_id, &query.pool_id).await?,
+    ))
+}
+
+async fn admin_user_pools(Path(user_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::list_user_pools(String::new(), user_id).await?,
+    ))
+}
+
+async fn admin_block_user(
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<BlockUserBody>,
+) -> ApiResult<StatusCode> {
+    crate::admin::block_user(String::new(), user_id, body.reason, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_unblock_user(
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::admin::unblock_user(String::new(), user_id, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_invalidate_user_sessions(
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::admin::invalidate_user_sessions_admin(String::new(), user_id, csrf_header(&headers))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_trigger_user_password_reset(
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::admin::trigger_user_password_reset(String::new(), user_id, csrf_header(&headers))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_audit(Query(query): Query<AdminAuditQuery>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::list_audit(
+            String::new(),
+            query.action,
+            query.actor_user_id,
+            query.target_type,
+            query.target_id,
+        )
+        .await?,
+    ))
+}
+
+async fn admin_get_settings() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::admin::load_admin_settings().await?))
+}
+
+async fn public_settings() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::admin::load_admin_settings().await?))
+}
+
+async fn admin_save_settings(
+    headers: HeaderMap,
+    Json(body): Json<AdminSettings>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::save_admin_settings(String::new(), body, csrf_header(&headers)).await?,
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Handlers — leaderboard
 // ---------------------------------------------------------------------------
@@ -598,6 +826,7 @@ pub fn router() -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/contact", get(contact_info))
+        .route("/settings/public", get(public_settings))
         .route("/auth/register", post(register))
         .route("/auth/register/confirm", post(register_confirm))
         .route("/auth/password-reset", post(password_reset))
@@ -640,12 +869,38 @@ pub fn router() -> Router {
         .route("/matches", get(list_matches))
         .route("/matches/knockout-released", get(knockout_released))
         .route("/predictions", get(my_predictions).post(submit_prediction))
+        .route("/scoring/my-points", get(my_match_points))
+        .route("/admin/overview", get(admin_overview))
+        .route("/admin/matches", get(admin_matches))
+        .route("/admin/matches/{id}/audit", get(admin_match_audit))
         .route("/admin/matches/{id}/result", post(set_match_result))
         .route("/admin/matches/{id}/finished", post(set_match_finished))
         .route("/admin/knockout-released", post(set_knockout_released))
         .route("/admin/matches/{id}/teams", post(update_match_teams))
+        .route("/admin/sync/status", get(admin_sync_status))
+        .route("/admin/sync/run-now", post(admin_sync_run_now))
+        .route("/admin/predictions", get(admin_predictions))
+        .route("/admin/predictions/reopen", post(admin_prediction_reopen))
+        .route(
+            "/admin/predictions/reopen/revoke",
+            post(admin_prediction_reopen_revoke),
+        )
+        .route("/admin/scoring/recalculate-match", post(admin_recalculate_match))
+        .route("/admin/scoring/recalculate-all", post(admin_recalculate_all))
+        .route("/admin/scoring/users/{id}/breakdown", get(admin_user_breakdown))
         .route("/admin/pools", get(admin_list_pools))
         .route("/admin/users", get(admin_list_users))
+        .route("/admin/users/{id}/pools", get(admin_user_pools))
+        .route("/admin/users/{id}/block", post(admin_block_user))
+        .route("/admin/users/{id}/unblock", post(admin_unblock_user))
+        .route(
+            "/admin/users/{id}/invalidate-sessions",
+            post(admin_invalidate_user_sessions),
+        )
+        .route(
+            "/admin/users/{id}/password-reset",
+            post(admin_trigger_user_password_reset),
+        )
         .route(
             "/admin/pools/{pool_id}/members",
             get(admin_list_pool_members).post(admin_add_pool_member),
@@ -654,6 +909,8 @@ pub fn router() -> Router {
             "/admin/pools/{pool_id}/members/remove",
             post(admin_remove_pool_member),
         )
+        .route("/admin/audit", get(admin_audit))
+        .route("/admin/settings", get(admin_get_settings).post(admin_save_settings))
         .route("/leaderboard", get(leaderboard))
         .fallback(api_not_found)
 }

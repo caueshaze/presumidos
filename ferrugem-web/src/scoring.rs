@@ -1,6 +1,6 @@
 use crate::error::ServerFnError;
 
-use crate::models::LeaderboardEntry;
+use crate::models::{LeaderboardEntry, MatchPointsSummary, PredictionScoreBreakdown, ScoringJob};
 
 /// Resultado oficial (ou palpite) de uma partida, no formato usado pela
 /// pontuação. Os campos de mata-mata só são considerados em jogos de mata-mata.
@@ -21,6 +21,7 @@ pub struct Outcome {
 /// - resultado correto → 3
 /// - resultado correto + gols de um time que fez ≥1 → 4
 /// - resultado errado → 0
+#[cfg_attr(not(test), allow(dead_code))]
 #[cfg(any(feature = "server", test))]
 pub fn base_points(guess_home: i64, guess_away: i64, real_home: i64, real_away: i64) -> i64 {
     if guess_home == real_home && guess_away == real_away {
@@ -47,6 +48,7 @@ pub fn base_points(guess_home: i64, guess_away: i64, real_home: i64, real_away: 
 }
 
 /// Bônus extra do mata-mata, somado à pontuação base.
+#[cfg_attr(not(test), allow(dead_code))]
 #[cfg(any(feature = "server", test))]
 pub fn knockout_bonus(official: &Outcome, guess: &Outcome) -> i64 {
     let mut bonus = 0;
@@ -82,6 +84,7 @@ pub fn knockout_bonus(official: &Outcome, guess: &Outcome) -> i64 {
 }
 
 /// Pontuação total de um palpite contra o resultado oficial de uma partida.
+#[cfg_attr(not(test), allow(dead_code))]
 #[cfg(any(feature = "server", test))]
 pub fn match_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> i64 {
     let base = base_points(
@@ -98,6 +101,487 @@ pub fn match_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> i
     }
 }
 
+#[cfg(feature = "server")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BreakdownPoints {
+    exact_score_points: i64,
+    outcome_points: i64,
+    goal_bonus_points: i64,
+    qualifier_points: i64,
+    penalties_points: i64,
+    total_points: i64,
+}
+
+#[cfg(feature = "server")]
+#[derive(Debug, sqlx::FromRow)]
+struct BreakdownRow {
+    pool_id: String,
+    user_id: String,
+    match_id: String,
+    joined_at: String,
+    phase: Option<String>,
+    kickoff: String,
+    official_home_score: Option<i64>,
+    official_away_score: Option<i64>,
+    official_qualifier: Option<String>,
+    official_went_to_penalties: bool,
+    official_penalty_home_score: Option<i64>,
+    official_penalty_away_score: Option<i64>,
+    result_source: Option<String>,
+    prediction_home_score: i64,
+    prediction_away_score: i64,
+    prediction_qualifier: Option<String>,
+    prediction_went_to_penalties: bool,
+    prediction_penalty_home_score: Option<i64>,
+    prediction_penalty_away_score: Option<i64>,
+}
+
+#[cfg(feature = "server")]
+#[derive(Debug, sqlx::FromRow)]
+struct LiveOverlayRow {
+    user_id: String,
+    phase: Option<String>,
+    kickoff: String,
+    joined_at: String,
+    live_home_score: i64,
+    live_away_score: i64,
+    p_home: i64,
+    p_away: i64,
+    p_qualifier: Option<String>,
+    p_penalties: bool,
+    p_pen_home: Option<i64>,
+    p_pen_away: Option<i64>,
+}
+
+#[cfg(feature = "server")]
+fn breakdown_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> BreakdownPoints {
+    let exact_score_points = if guess.home_score == official.home_score && guess.away_score == official.away_score {
+        7
+    } else {
+        0
+    };
+
+    let correct_outcome = (guess.home_score > guess.away_score && official.home_score > official.away_score)
+        || (guess.home_score < guess.away_score && official.home_score < official.away_score)
+        || (guess.home_score == guess.away_score && official.home_score == official.away_score);
+
+    let outcome_points = if exact_score_points > 0 {
+        0
+    } else if correct_outcome {
+        3
+    } else {
+        0
+    };
+
+    let goal_bonus_points = if exact_score_points > 0 {
+        0
+    } else if correct_outcome
+        && ((guess.home_score == official.home_score && official.home_score > 0)
+            || (guess.away_score == official.away_score && official.away_score > 0))
+    {
+        1
+    } else {
+        0
+    };
+
+    let qualifier_ok = official.qualifier.is_some() && official.qualifier == guess.qualifier;
+    let qualifier_points = if is_knockout && qualifier_ok { 2 } else { 0 };
+
+    let penalties_points = if is_knockout && official.went_to_penalties && guess.went_to_penalties {
+        let exact_penalties = matches!(
+            (
+                guess.penalty_home,
+                guess.penalty_away,
+                official.penalty_home,
+                official.penalty_away,
+            ),
+            (Some(gh), Some(ga), Some(oh), Some(oa)) if gh == oh && ga == oa
+        );
+
+        1 + if qualifier_ok { 1 } else { 0 } + if exact_penalties { 1 } else { 0 }
+    } else {
+        0
+    };
+
+    BreakdownPoints {
+        exact_score_points,
+        outcome_points,
+        goal_bonus_points,
+        qualifier_points,
+        penalties_points,
+        total_points: exact_score_points
+            + outcome_points
+            + goal_bonus_points
+            + qualifier_points
+            + penalties_points,
+    }
+}
+
+#[cfg(feature = "server")]
+fn build_eligibility(row: &BreakdownRow) -> (bool, String) {
+    let joined_at = chrono::NaiveDateTime::parse_from_str(&row.joined_at, "%Y-%m-%d %H:%M:%S").ok();
+    let kickoff = chrono::DateTime::parse_from_rfc3339(&row.kickoff).ok();
+    match (joined_at, kickoff) {
+        (Some(joined), Some(kickoff)) => {
+            let joined = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(joined, chrono::Utc);
+            let kickoff = kickoff.with_timezone(&chrono::Utc);
+            if kickoff >= joined {
+                (true, "eligible".to_string())
+            } else {
+                (false, "joined_after_kickoff".to_string())
+            }
+        }
+        _ => (false, "invalid_dates".to_string()),
+    }
+}
+
+#[cfg(feature = "server")]
+async fn create_scoring_job(
+    db: &sqlx::SqlitePool,
+    scope_type: &str,
+    scope_id: Option<&str>,
+    triggered_by: Option<&str>,
+) -> Result<String, ServerFnError> {
+    let job_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO scoring_jobs (id, scope_type, scope_id, triggered_by, status, summary_json)
+         VALUES (?1, ?2, ?3, ?4, 'running', '{}')",
+    )
+    .bind(&job_id)
+    .bind(scope_type)
+    .bind(scope_id)
+    .bind(triggered_by)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("create_scoring_job", e))?;
+    Ok(job_id)
+}
+
+#[cfg(feature = "server")]
+async fn finish_scoring_job(
+    db: &sqlx::SqlitePool,
+    job_id: &str,
+    status: &str,
+    summary_json: serde_json::Value,
+) -> Result<(), ServerFnError> {
+    sqlx::query(
+        "UPDATE scoring_jobs
+         SET status = ?1, finished_at = datetime('now'), summary_json = ?2
+         WHERE id = ?3",
+    )
+    .bind(status)
+    .bind(summary_json.to_string())
+    .bind(job_id)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("finish_scoring_job", e))?;
+    Ok(())
+}
+
+#[cfg(feature = "server")]
+async fn recompute_breakdowns(
+    db: &sqlx::SqlitePool,
+    where_sql: &str,
+    binds: &[String],
+    scope_type: &str,
+    scope_id: Option<&str>,
+    triggered_by: Option<&str>,
+) -> Result<ScoringJob, ServerFnError> {
+    use crate::models::is_knockout;
+
+    let job_id = create_scoring_job(db, scope_type, scope_id, triggered_by).await?;
+    let delete_sql = format!(
+        "DELETE FROM prediction_score_breakdowns
+         WHERE EXISTS (
+            SELECT 1
+            FROM pool_members pm
+            JOIN predictions pr ON pr.user_id = pm.user_id
+            JOIN matches m ON m.id = pr.match_id
+            WHERE prediction_score_breakdowns.pool_id = pm.pool_id
+              AND prediction_score_breakdowns.user_id = pm.user_id
+              AND prediction_score_breakdowns.match_id = m.id
+              {where_sql}
+         )"
+    );
+    let mut delete_query = sqlx::query(&delete_sql);
+    for value in binds {
+        delete_query = delete_query.bind(value);
+    }
+    delete_query
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("recompute_breakdowns_delete", e))?;
+
+    let select_sql = format!(
+        "SELECT pm.pool_id,
+                pm.user_id,
+                pr.match_id,
+                pm.joined_at,
+                m.phase,
+                m.kickoff,
+                m.home_score AS official_home_score,
+                m.away_score AS official_away_score,
+                m.qualifier AS official_qualifier,
+                m.went_to_penalties AS official_went_to_penalties,
+                m.penalty_home_score AS official_penalty_home_score,
+                m.penalty_away_score AS official_penalty_away_score,
+                m.result_source,
+                pr.home_score AS prediction_home_score,
+                pr.away_score AS prediction_away_score,
+                pr.qualifier AS prediction_qualifier,
+                pr.went_to_penalties AS prediction_went_to_penalties,
+                pr.penalty_home_score AS prediction_penalty_home_score,
+                pr.penalty_away_score AS prediction_penalty_away_score
+         FROM pool_members pm
+         JOIN predictions pr ON pr.user_id = pm.user_id
+         JOIN matches m ON m.id = pr.match_id
+         WHERE 1 = 1
+           {where_sql}"
+    );
+    let mut select_query = sqlx::query_as::<_, BreakdownRow>(&select_sql);
+    for value in binds {
+        select_query = select_query.bind(value);
+    }
+    let rows = select_query
+        .fetch_all(db)
+        .await
+        .map_err(|e| crate::security::internal_error("recompute_breakdowns_select", e))?;
+
+    let mut inserted = 0_i64;
+    for row in rows {
+        let (eligible, eligibility_reason) = build_eligibility(&row);
+        let (points, official_source) = if let (Some(home), Some(away)) = (row.official_home_score, row.official_away_score) {
+            let official = Outcome {
+                home_score: home,
+                away_score: away,
+                qualifier: row.official_qualifier.clone(),
+                went_to_penalties: row.official_went_to_penalties,
+                penalty_home: row.official_penalty_home_score,
+                penalty_away: row.official_penalty_away_score,
+            };
+            let guess = Outcome {
+                home_score: row.prediction_home_score,
+                away_score: row.prediction_away_score,
+                qualifier: row.prediction_qualifier.clone(),
+                went_to_penalties: row.prediction_went_to_penalties,
+                penalty_home: row.prediction_penalty_home_score,
+                penalty_away: row.prediction_penalty_away_score,
+            };
+            (
+                breakdown_points(is_knockout(row.phase.as_deref()), &official, &guess),
+                row.result_source.clone(),
+            )
+        } else {
+            (
+                BreakdownPoints {
+                    exact_score_points: 0,
+                    outcome_points: 0,
+                    goal_bonus_points: 0,
+                    qualifier_points: 0,
+                    penalties_points: 0,
+                    total_points: 0,
+                },
+                row.result_source.clone(),
+            )
+        };
+
+        sqlx::query(
+            "INSERT INTO prediction_score_breakdowns
+                (id, pool_id, user_id, match_id, exact_score_points, outcome_points, goal_bonus_points,
+                 qualifier_points, penalties_points, total_points, eligible, eligibility_reason,
+                 official_source, computed_at, job_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, datetime('now'), ?14)
+             ON CONFLICT(pool_id, user_id, match_id) DO UPDATE SET
+                exact_score_points = excluded.exact_score_points,
+                outcome_points = excluded.outcome_points,
+                goal_bonus_points = excluded.goal_bonus_points,
+                qualifier_points = excluded.qualifier_points,
+                penalties_points = excluded.penalties_points,
+                total_points = excluded.total_points,
+                eligible = excluded.eligible,
+                eligibility_reason = excluded.eligibility_reason,
+                official_source = excluded.official_source,
+                computed_at = excluded.computed_at,
+                job_id = excluded.job_id",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&row.pool_id)
+        .bind(&row.user_id)
+        .bind(&row.match_id)
+        .bind(points.exact_score_points)
+        .bind(points.outcome_points)
+        .bind(points.goal_bonus_points)
+        .bind(points.qualifier_points)
+        .bind(points.penalties_points)
+        .bind(points.total_points)
+        .bind(eligible)
+        .bind(&eligibility_reason)
+        .bind(official_source)
+        .bind(&job_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("recompute_breakdowns_upsert", e))?;
+        inserted += 1;
+    }
+
+    let summary = serde_json::json!({
+        "rows_upserted": inserted,
+        "scope_type": scope_type,
+        "scope_id": scope_id,
+    });
+    finish_scoring_job(db, &job_id, "completed", summary).await?;
+
+    Ok(ScoringJob {
+        id: job_id,
+        scope_type: scope_type.to_string(),
+        scope_id: scope_id.map(ToOwned::to_owned),
+        triggered_by: triggered_by.map(ToOwned::to_owned),
+        status: "completed".to_string(),
+        started_at: String::new(),
+        finished_at: None,
+        summary_json: serde_json::json!({
+            "rows_upserted": inserted,
+        })
+        .to_string(),
+    })
+}
+
+#[cfg(feature = "server")]
+async fn ensure_breakdowns_seeded(db: &sqlx::SqlitePool) -> Result<(), ServerFnError> {
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM prediction_score_breakdowns")
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::security::internal_error("ensure_breakdowns_seeded_count", e))?;
+    if count.0 == 0 {
+        let has_predictions: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM predictions")
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("ensure_breakdowns_seeded_predictions", e))?;
+        if has_predictions.0 > 0 {
+            let _ = recompute_breakdowns(db, "", &[], "all", None, None).await?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "server")]
+pub async fn recalculate_match_breakdowns(
+    match_id: &str,
+    triggered_by: Option<&str>,
+) -> Result<ScoringJob, ServerFnError> {
+    let db = crate::db::pool();
+    recompute_breakdowns(
+        db,
+        " AND pr.match_id = ?1",
+        &[match_id.to_string()],
+        "match",
+        Some(match_id),
+        triggered_by,
+    )
+    .await
+}
+
+#[cfg(feature = "server")]
+pub async fn recalculate_all_breakdowns(triggered_by: Option<&str>) -> Result<ScoringJob, ServerFnError> {
+    let db = crate::db::pool();
+    sqlx::query("DELETE FROM prediction_score_breakdowns")
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("recalculate_all_breakdowns_clear", e))?;
+    recompute_breakdowns(db, "", &[], "all", None, triggered_by).await
+}
+
+#[cfg(feature = "server")]
+pub async fn recalculate_pool_user_breakdowns(
+    pool_id: &str,
+    user_id: &str,
+    triggered_by: Option<&str>,
+) -> Result<ScoringJob, ServerFnError> {
+    let db = crate::db::pool();
+    recompute_breakdowns(
+        db,
+        " AND pm.pool_id = ?1 AND pm.user_id = ?2",
+        &[pool_id.to_string(), user_id.to_string()],
+        "pool_user",
+        Some(pool_id),
+        triggered_by,
+    )
+    .await
+}
+
+#[cfg(feature = "server")]
+pub async fn list_user_breakdowns(
+    user_id: &str,
+    pool_id: &str,
+) -> Result<Vec<PredictionScoreBreakdown>, ServerFnError> {
+    let db = crate::db::pool();
+    ensure_breakdowns_seeded(db).await?;
+    let rows = sqlx::query_as::<_, PredictionScoreBreakdown>(
+        "SELECT b.pool_id AS pool_id,
+                p.name AS pool_name,
+                b.user_id AS user_id,
+                u.username AS username,
+                b.match_id AS match_id,
+                m.home_team AS home_team,
+                m.away_team AS away_team,
+                b.exact_score_points AS exact_score_points,
+                b.outcome_points AS outcome_points,
+                b.goal_bonus_points AS goal_bonus_points,
+                b.qualifier_points AS qualifier_points,
+                b.penalties_points AS penalties_points,
+                b.total_points AS total_points,
+                b.eligible AS eligible,
+                b.eligibility_reason AS eligibility_reason,
+                b.official_source AS official_source,
+                b.computed_at AS computed_at
+         FROM prediction_score_breakdowns b
+         JOIN pools p ON p.id = b.pool_id
+         JOIN users u ON u.id = b.user_id
+         JOIN matches m ON m.id = b.match_id
+         WHERE b.user_id = ?1 AND b.pool_id = ?2
+         ORDER BY datetime(m.kickoff) ASC",
+    )
+    .bind(user_id)
+    .bind(pool_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("list_user_breakdowns", e))?;
+    Ok(rows)
+}
+
+/// Pontos que o usuário logado fez em cada jogo, para exibir no card de palpite.
+/// Escopado à sessão (ignora qualquer id do cliente) e colapsado por jogo: como
+/// os componentes só dependem do palpite vs resultado, são idênticos entre os
+/// bolões do usuário — `MAX` colapsa as linhas e `MAX(eligible)` indica se conta
+/// em ao menos um bolão.
+#[cfg(feature = "server")]
+pub async fn list_my_match_points() -> Result<Vec<MatchPointsSummary>, ServerFnError> {
+    use crate::auth::require_user;
+
+    crate::security::apply_security_headers();
+    let session = require_user("").await?;
+    let db = crate::db::pool();
+    ensure_breakdowns_seeded(db).await?;
+    let rows = sqlx::query_as::<_, MatchPointsSummary>(
+        "SELECT b.match_id AS match_id,
+                MAX(b.exact_score_points) AS exact_score_points,
+                MAX(b.outcome_points) AS outcome_points,
+                MAX(b.goal_bonus_points) AS goal_bonus_points,
+                MAX(b.qualifier_points) AS qualifier_points,
+                MAX(b.penalties_points) AS penalties_points,
+                MAX(b.total_points) AS total_points,
+                MAX(b.eligible) AS eligible
+         FROM prediction_score_breakdowns b
+         WHERE b.user_id = ?1
+         GROUP BY b.match_id",
+    )
+    .bind(&session.user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("list_my_match_points", e))?;
+    Ok(rows)
+}
+
 /// Calcula o ranking de um bolão somando a pontuação de cada palpite contra os
 /// resultados oficiais já lançados.
 #[cfg(feature = "server")]
@@ -107,7 +591,6 @@ pub async fn get_leaderboard(
 ) -> Result<Vec<LeaderboardEntry>, ServerFnError> {
     use crate::auth::require_user;
     use crate::db::pool;
-    use crate::models::is_knockout;
     use std::collections::HashMap;
 
     crate::security::apply_security_headers();
@@ -140,39 +623,38 @@ pub async fn get_leaderboard(
     .await
     .map_err(|e| crate::security::internal_error("get_leaderboard_members", e))?;
 
-    // Palpites dos membros com o respectivo resultado oficial já lançado.
-    #[derive(sqlx::FromRow)]
-    struct ScoredRow {
-        user_id: String,
-        phase: Option<String>,
-        m_home: i64,
-        m_away: i64,
-        m_qualifier: Option<String>,
-        m_penalties: bool,
-        m_pen_home: Option<i64>,
-        m_pen_away: Option<i64>,
-        p_home: i64,
-        p_away: i64,
-        p_qualifier: Option<String>,
-        p_penalties: bool,
-        p_pen_home: Option<i64>,
-        p_pen_away: Option<i64>,
+    ensure_breakdowns_seeded(db).await?;
+
+    let mut points: HashMap<String, i64> = members
+        .iter()
+        .map(|(id, _)| (id.clone(), 0))
+        .collect();
+
+    let materialized: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT user_id, COALESCE(SUM(total_points), 0)
+         FROM prediction_score_breakdowns
+         WHERE pool_id = ?1 AND eligible = 1
+         GROUP BY user_id",
+    )
+    .bind(&pool_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("get_leaderboard_materialized", e))?;
+
+    for (user_id, total) in materialized {
+        *points.entry(user_id).or_insert(0) += total;
     }
 
-    // Pontuação provisória ao vivo: além do resultado oficial, conta também o
-    // placar parcial dos jogos em andamento (`live_*`). Para esses, usamos o
-    // placar ao vivo como resultado corrente — os campos de mata-mata ficam
-    // nulos, então o jogo ao vivo soma só a pontuação base (sem bônus de KO até
-    // o resultado oficial). O total "trava" quando a partida encerra.
-    let rows = sqlx::query_as::<_, ScoredRow>(
+    // Overlay provisório: jogos ao vivo sem resultado oficial ainda não entram
+    // na materialização, então somamos sob demanda para preservar o feedback do
+    // ranking durante a partida.
+    let live_rows = sqlx::query_as::<_, LiveOverlayRow>(
         "SELECT pm.user_id AS user_id,
                 m.phase AS phase,
-                COALESCE(m.home_score, m.live_home_score) AS m_home,
-                COALESCE(m.away_score, m.live_away_score) AS m_away,
-                m.qualifier AS m_qualifier,
-                m.went_to_penalties AS m_penalties,
-                m.penalty_home_score AS m_pen_home,
-                m.penalty_away_score AS m_pen_away,
+                m.kickoff AS kickoff,
+                pm.joined_at AS joined_at,
+                m.live_home_score AS live_home_score,
+                m.live_away_score AS live_away_score,
                 pr.home_score AS p_home,
                 pr.away_score AS p_away,
                 pr.qualifier AS p_qualifier,
@@ -182,47 +664,47 @@ pub async fn get_leaderboard(
          FROM pool_members pm
          JOIN predictions pr ON pr.user_id = pm.user_id
          JOIN matches m ON m.id = pr.match_id
-                       AND (
-                            (m.home_score IS NOT NULL AND m.away_score IS NOT NULL)
-                            OR (m.finished = 0
-                                AND m.live_home_score IS NOT NULL
-                                AND m.live_away_score IS NOT NULL)
-                       )
-                       -- Só conta se o usuário já era membro quando a partida
-                       -- começou: bloqueia pontuar palpites de jogos que
-                       -- terminaram antes de ele entrar no bolão.
-                       AND datetime(m.kickoff) >= datetime(pm.joined_at)
-         WHERE pm.pool_id = ?1",
+         WHERE pm.pool_id = ?1
+           AND m.home_score IS NULL
+           AND m.away_score IS NULL
+           AND m.finished = 0
+           AND m.live_home_score IS NOT NULL
+           AND m.live_away_score IS NOT NULL",
     )
     .bind(&pool_id)
     .fetch_all(db)
     .await
-    .map_err(|e| crate::security::internal_error("get_leaderboard_scores", e))?;
+    .map_err(|e| crate::security::internal_error("get_leaderboard_live_overlay", e))?;
 
-    let mut points: HashMap<String, i64> = members
-        .iter()
-        .map(|(id, _)| (id.clone(), 0))
-        .collect();
+    for row in live_rows {
+        let joined = chrono::NaiveDateTime::parse_from_str(&row.joined_at, "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc));
+        let kickoff = chrono::DateTime::parse_from_rfc3339(&row.kickoff)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc));
+        if matches!((joined, kickoff), (Some(joined), Some(kickoff)) if kickoff < joined) {
+            continue;
+        }
 
-    for row in &rows {
         let official = Outcome {
-            home_score: row.m_home,
-            away_score: row.m_away,
-            qualifier: row.m_qualifier.clone(),
-            went_to_penalties: row.m_penalties,
-            penalty_home: row.m_pen_home,
-            penalty_away: row.m_pen_away,
+            home_score: row.live_home_score,
+            away_score: row.live_away_score,
+            qualifier: None,
+            went_to_penalties: false,
+            penalty_home: None,
+            penalty_away: None,
         };
         let guess = Outcome {
             home_score: row.p_home,
             away_score: row.p_away,
-            qualifier: row.p_qualifier.clone(),
+            qualifier: row.p_qualifier,
             went_to_penalties: row.p_penalties,
             penalty_home: row.p_pen_home,
             penalty_away: row.p_pen_away,
         };
-        let pts = match_points(is_knockout(row.phase.as_deref()), &official, &guess);
-        *points.entry(row.user_id.clone()).or_insert(0) += pts;
+        let overlay = breakdown_points(crate::models::is_knockout(row.phase.as_deref()), &official, &guess);
+        *points.entry(row.user_id).or_insert(0) += overlay.total_points;
     }
 
     // Ajustes manuais de pontos lançados pelo organizador (ou admin) somam ao total.

@@ -22,6 +22,10 @@ struct MatchRow {
     live_away_score: Option<i64>,
     live_status: Option<String>,
     live_elapsed: Option<i64>,
+    result_source: Option<String>,
+    result_synced_at: Option<String>,
+    result_external_raw_status: Option<String>,
+    live_updated_at: Option<String>,
 }
 
 #[cfg(feature = "server")]
@@ -80,7 +84,8 @@ pub async fn list_matches(
             "SELECT id, home_team, away_team, kickoff, group_name, phase,
                     home_score, away_score, qualifier, went_to_penalties,
                     penalty_home_score, penalty_away_score, finished,
-                    live_home_score, live_away_score, live_status, live_elapsed
+                    live_home_score, live_away_score, live_status, live_elapsed,
+                    result_source, result_synced_at, result_external_raw_status, live_updated_at
              FROM matches
              ORDER BY kickoff ASC",
         )
@@ -91,7 +96,8 @@ pub async fn list_matches(
             "SELECT id, home_team, away_team, kickoff, group_name, phase,
                     home_score, away_score, qualifier, went_to_penalties,
                     penalty_home_score, penalty_away_score, finished,
-                    live_home_score, live_away_score, live_status, live_elapsed
+                    live_home_score, live_away_score, live_status, live_elapsed,
+                    result_source, result_synced_at, result_external_raw_status, live_updated_at
              FROM matches
              WHERE phase = 'Fase de grupos'
              ORDER BY kickoff ASC",
@@ -121,6 +127,10 @@ pub async fn list_matches(
             live_away_score: row.live_away_score,
             live_status: row.live_status,
             live_elapsed: row.live_elapsed,
+            result_source: row.result_source,
+            result_synced_at: row.result_synced_at,
+            result_external_raw_status: row.result_external_raw_status,
+            live_updated_at: row.live_updated_at,
         })
         .collect())
 }
@@ -282,9 +292,16 @@ pub async fn submit_prediction(
     let kickoff_time = chrono::DateTime::parse_from_rfc3339(&kickoff)
         .map_err(|e| crate::security::internal_error("submit_prediction_parse_kickoff", e))?;
 
-    if Utc::now() >= kickoff_time {
+    let lock_minutes = crate::admin::prediction_lock_minutes().await?;
+    let locked_at = kickoff_time.with_timezone(&Utc) - chrono::Duration::minutes(lock_minutes);
+    let active_override = if Utc::now() >= locked_at {
+        crate::admin::active_prediction_override(&match_id, &session.user_id).await?
+    } else {
+        None
+    };
+    if Utc::now() >= locked_at && active_override.is_none() {
         return Err(crate::security::public_error(
-            "Essa partida ja comecou; nao e mais possivel enviar palpites.",
+            "Essa partida esta travada para palpite; use uma reabertura administrativa se necessario.",
         ));
     }
 
@@ -323,6 +340,11 @@ pub async fn submit_prediction(
     .await
     .map_err(|e| crate::security::internal_error("submit_prediction_upsert", e))?;
 
+    if let Some(override_info) = active_override {
+        crate::admin::mark_prediction_override_used(&override_info.id).await?;
+    }
+    let _ = crate::scoring::recalculate_match_breakdowns(&match_id, Some(&session.user_id)).await?;
+
     Ok(())
 }
 
@@ -334,7 +356,7 @@ pub async fn set_match_result(
     away_score: i64,
     knockout: KnockoutEntry,
     csrf_token: String,
-) -> Result<(), ServerFnError> {
+) -> Result<MatchRecord, ServerFnError> {
     use crate::auth::require_recent_admin;
     use crate::db::pool;
     use crate::models::is_knockout;
@@ -424,7 +446,44 @@ pub async fn set_match_result(
     )
     .await?;
 
-    Ok(())
+    let _ = crate::scoring::recalculate_match_breakdowns(&match_id, Some(&session.user_id)).await?;
+
+    let updated = sqlx::query_as::<_, MatchRow>(
+        "SELECT id, home_team, away_team, kickoff, group_name, phase,
+                home_score, away_score, qualifier, went_to_penalties,
+                penalty_home_score, penalty_away_score, finished,
+                live_home_score, live_away_score, live_status, live_elapsed,
+                result_source, result_synced_at, result_external_raw_status, live_updated_at
+         FROM matches WHERE id = ?1",
+    )
+    .bind(&match_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| crate::security::internal_error("set_match_result_reload", e))?;
+
+    Ok(MatchRecord {
+        id: updated.id,
+        home_team: updated.home_team,
+        away_team: updated.away_team,
+        kickoff: updated.kickoff,
+        group_name: updated.group_name,
+        phase: updated.phase,
+        home_score: updated.home_score,
+        away_score: updated.away_score,
+        qualifier: updated.qualifier,
+        went_to_penalties: updated.went_to_penalties,
+        penalty_home_score: updated.penalty_home_score,
+        penalty_away_score: updated.penalty_away_score,
+        finished: updated.finished,
+        live_home_score: updated.live_home_score,
+        live_away_score: updated.live_away_score,
+        live_status: updated.live_status,
+        live_elapsed: updated.live_elapsed,
+        result_source: updated.result_source,
+        result_synced_at: updated.result_synced_at,
+        result_external_raw_status: updated.result_external_raw_status,
+        live_updated_at: updated.live_updated_at,
+    })
 }
 
 #[cfg(feature = "server")]

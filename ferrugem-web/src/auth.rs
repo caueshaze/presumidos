@@ -50,6 +50,20 @@ const EMAIL_CODE_TTL_MINUTES: i64 = 15;
 const EMAIL_CODE_MAX_ATTEMPTS: i64 = 5;
 
 #[cfg(feature = "server")]
+type UserPublicRow = (String, String, String, bool, Option<String>, Option<String>);
+
+#[cfg(feature = "server")]
+type LoginRow = (
+    String,
+    String,
+    String,
+    String,
+    bool,
+    Option<String>,
+    Option<String>,
+);
+
+#[cfg(feature = "server")]
 fn parsed_sqlite_utc(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
         .ok()
@@ -253,8 +267,8 @@ async fn load_user_public(
     db: &sqlx::SqlitePool,
     user_id: &str,
 ) -> Result<UserPublic, ServerFnError> {
-    let row: (String, String, String, bool) =
-        sqlx::query_as("SELECT id, username, email, is_admin FROM users WHERE id = ?1")
+    let row: UserPublicRow =
+        sqlx::query_as("SELECT id, username, email, is_admin, blocked_at, blocked_reason FROM users WHERE id = ?1")
             .bind(user_id)
             .fetch_one(db)
             .await
@@ -265,6 +279,8 @@ async fn load_user_public(
         username: row.1,
         email: row.2,
         is_admin: row.3,
+        blocked_at: row.4,
+        blocked_reason: row.5,
     })
 }
 
@@ -621,6 +637,8 @@ pub async fn change_username(
         username: row.1,
         email: row.2,
         is_admin: row.3,
+        blocked_at: None,
+        blocked_reason: None,
     })
 }
 
@@ -761,6 +779,7 @@ pub async fn delete_account(token: String, csrf_token: String) -> Result<(), Ser
 }
 
 /// Lista todos os usuários cadastrados (visão de admin), para gestão de bolões.
+#[allow(dead_code)]
 #[cfg(feature = "server")]
 pub async fn list_all_users(
     token: String,
@@ -770,8 +789,8 @@ pub async fn list_all_users(
     crate::security::apply_security_headers();
     require_admin(&token).await?;
 
-    let rows: Vec<(String, String, String, bool)> = sqlx::query_as(
-        "SELECT id, username, email, is_admin FROM users ORDER BY username COLLATE NOCASE",
+    let rows: Vec<UserPublicRow> = sqlx::query_as(
+        "SELECT id, username, email, is_admin, blocked_at, blocked_reason FROM users ORDER BY username COLLATE NOCASE",
     )
     .fetch_all(pool())
     .await
@@ -780,11 +799,13 @@ pub async fn list_all_users(
     Ok(rows
         .into_iter()
         .map(
-            |(id, username, email, is_admin)| crate::models::UserPublic {
+            |(id, username, email, is_admin, blocked_at, blocked_reason)| crate::models::UserPublic {
                 id,
                 username,
                 email,
                 is_admin,
+                blocked_at,
+                blocked_reason,
             },
         )
         .collect())
@@ -990,6 +1011,8 @@ pub async fn confirm_registration(
             username,
             email,
             is_admin: false,
+            blocked_at: None,
+            blocked_reason: None,
         },
         token: String::new(),
         csrf_token: session.csrf_token,
@@ -1286,6 +1309,8 @@ pub async fn run_bootstrap_admin(
         username,
         email,
         is_admin: true,
+        blocked_at: None,
+        blocked_reason: None,
     })
 }
 
@@ -1337,8 +1362,8 @@ pub async fn login(username: String, password: String) -> Result<AuthResult, Ser
 
     let db = pool();
 
-    let row: Option<(String, String, String, String, bool)> = sqlx::query_as(
-        "SELECT id, username, email, password_hash, is_admin
+    let row: Option<LoginRow> = sqlx::query_as(
+        "SELECT id, username, email, password_hash, is_admin, blocked_at, blocked_reason
          FROM users
          WHERE lower(username) = ?1 OR lower(email) = ?1",
     )
@@ -1347,7 +1372,7 @@ pub async fn login(username: String, password: String) -> Result<AuthResult, Ser
     .await
     .map_err(|e| crate::security::internal_error("login_lookup_user", e))?;
 
-    let Some((id, username, email, password_hash, is_admin)) = row else {
+    let Some((id, username, email, password_hash, is_admin, blocked_at, blocked_reason)) = row else {
         crate::security::log_event(
             "login_failed",
             serde_json::json!({
@@ -1375,6 +1400,12 @@ pub async fn login(username: String, password: String) -> Result<AuthResult, Ser
             }),
         );
         return Err(crate::security::public_error("Usuario ou senha invalidos."));
+    }
+
+    if blocked_at.is_some() {
+        return Err(crate::security::public_error(
+            blocked_reason.unwrap_or_else(|| "Sua conta esta bloqueada.".to_string()),
+        ));
     }
 
     if needs_rehash(&parsed_hash) {
@@ -1424,6 +1455,8 @@ pub async fn login(username: String, password: String) -> Result<AuthResult, Ser
             username,
             email,
             is_admin,
+            blocked_at,
+            blocked_reason,
         },
         token: String::new(),
         csrf_token: session.csrf_token,

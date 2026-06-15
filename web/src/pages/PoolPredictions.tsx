@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronLeft } from "lucide-react";
 import { usePools, usePoolMemberPredictions, useMatches } from "@/hooks/queries";
@@ -65,14 +66,20 @@ function PredictionDetail({
 
 export function PoolPredictionsPage() {
   const pools = usePools();
+  const [searchParams] = useSearchParams();
+  const poolIdParam = searchParams.get("poolId");
   const [selectedPool, setSelectedPool] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
 
+  // Seleciona o bolão indicado na URL (?poolId=) quando existir; senão, o primeiro.
   useEffect(() => {
-    if (!selectedPool && pools.data && pools.data.length > 0) {
-      setSelectedPool(pools.data[0].id);
-    }
-  }, [pools.data, selectedPool]);
+    if (selectedPool || !pools.data || pools.data.length === 0) return;
+    const wanted =
+      poolIdParam && pools.data.some((p) => p.id === poolIdParam)
+        ? poolIdParam
+        : pools.data[0].id;
+    setSelectedPool(wanted);
+  }, [pools.data, selectedPool, poolIdParam]);
 
   // Trocar de bolão fecha o perfil aberto.
   useEffect(() => {

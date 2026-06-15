@@ -26,6 +26,22 @@ export function isMatchLive(kickoff: string, finished: boolean): boolean {
   return !finished && isMatchLocked(kickoff);
 }
 
+/** Rótulo amigável do status ao vivo. O status vem como texto livre da API
+ *  (ex.: "45'", "HT", "90+2'"); mapeamos os códigos conhecidos e exibimos o resto. */
+export function formatLiveStatus(status: string | null, elapsed: number | null): string {
+  const known: Record<string, string> = {
+    HT: "Intervalo",
+    P: "Pênaltis",
+    ET: "Prorrogação",
+    SUSP: "Suspenso",
+    INT: "Interrompido",
+  };
+  if (status && known[status]) return known[status];
+  if (status && status.trim() !== "") return status;
+  if (elapsed) return `${elapsed}'`;
+  return "Ao vivo";
+}
+
 /** Lado vencedor do tempo normal ("home"/"away") ou null em empate. */
 export function winnerSide(home: number, away: number): "home" | "away" | null {
   if (home > away) return "home";

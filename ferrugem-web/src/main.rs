@@ -4,6 +4,7 @@
 //! Qualquer outra rota serve o build da SPA (`index.html` como fallback de client-side routing).
 
 mod api;
+mod admin;
 mod auth;
 mod context;
 mod error;

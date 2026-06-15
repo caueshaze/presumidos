@@ -17,7 +17,7 @@ export function LoginPage() {
   const [error, setError] = useState("");
 
   if (loading) return <AuthPendingCard message="Verificando sua sessão no Presumidos..." />;
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={user.isAdmin ? "/admin" : "/"} replace />;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -25,7 +25,7 @@ export function LoginPage() {
     try {
       const result = await login.mutateAsync({ username, password });
       await applySession(result);
-      navigate("/");
+      navigate(result.user.isAdmin ? "/admin" : "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao entrar.");
     }

@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { useMatches, useMyPredictions, useKnockoutReleased } from "@/hooks/queries";
+import {
+  useMatches,
+  useMyPredictions,
+  useMyMatchPoints,
+  useKnockoutReleased,
+} from "@/hooks/queries";
 import { isMatchLocked } from "@/lib/utils";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
@@ -9,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/field";
 import { KnockoutControl } from "@/components/KnockoutControl";
 import { MatchCard } from "@/components/MatchCard";
+import type { MatchPointsSummary } from "@/types";
 
 export function PredictionsPage() {
   const { isAdmin } = useAuth();
@@ -16,7 +22,14 @@ export function PredictionsPage() {
   const [hideFinished, setHideFinished] = useState(true);
   const matches = useMatches();
   const predictions = useMyPredictions();
+  const matchPoints = useMyMatchPoints();
   const knockout = useKnockoutReleased();
+
+  const pointsByMatch = useMemo(() => {
+    const map = new Map<string, MatchPointsSummary>();
+    for (const p of matchPoints.data ?? []) map.set(p.matchId, p);
+    return map;
+  }, [matchPoints.data]);
 
   const isLoading = matches.isLoading || predictions.isLoading || knockout.isLoading;
   const error = matches.error || predictions.error || knockout.error;
@@ -112,6 +125,7 @@ export function PredictionsPage() {
                   isAdmin={isAdmin}
                   cardId={`match-card-${game.id}`}
                   highlighted={game.id === targetMatchId}
+                  points={pointsByMatch.get(game.id)}
                 />
               ))}
             </div>

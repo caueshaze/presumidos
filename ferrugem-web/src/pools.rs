@@ -3,6 +3,21 @@ use crate::error::ServerFnError;
 use crate::models::{MemberPredictions, PointAdjustment, PoolSummary, PredictionRecord, UserPublic};
 
 #[cfg(feature = "server")]
+type PoolSummaryRow = (
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+
+#[cfg(feature = "server")]
+type PoolMemberUserRow = (String, String, String, bool, Option<String>, Option<String>);
+
+#[cfg(feature = "server")]
 async fn generate_invite_code(pool: &sqlx::SqlitePool) -> Result<String, ServerFnError> {
     use uuid::Uuid;
 
@@ -33,10 +48,13 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
     crate::security::apply_security_headers();
     let session = require_user(&token).await?;
 
-    let rows: Vec<(String, String, String, i64, String)> = sqlx::query_as(
+    let rows: Vec<PoolSummaryRow> = sqlx::query_as(
         "SELECT p.id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id) AS member_count,
-                p.created_by
+                p.created_by,
+                p.description,
+                p.visible_rules,
+                p.join_closed_at
          FROM pools p
          JOIN pool_members pm ON pm.pool_id = p.id
          WHERE pm.user_id = ?1
@@ -49,12 +67,15 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, invite_code, member_count, created_by)| PoolSummary {
+        .map(|(id, name, invite_code, member_count, created_by, description, visible_rules, join_closed_at)| PoolSummary {
             id,
             name,
             invite_code,
             member_count,
             created_by,
+            description,
+            visible_rules,
+            join_closed_at,
         })
         .collect())
 }
@@ -109,6 +130,9 @@ pub async fn create_pool(
         invite_code,
         member_count: 1,
         created_by: session.user_id,
+        description: String::new(),
+        visible_rules: String::new(),
+        join_closed_at: None,
     })
 }
 
@@ -146,16 +170,22 @@ pub async fn join_pool(
 
     let db = pool();
 
-    let row: Option<(String, String, String)> =
-        sqlx::query_as("SELECT id, name, created_by FROM pools WHERE invite_code = ?1")
+    let row: Option<(String, String, String, String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, name, created_by, description, visible_rules, join_closed_at FROM pools WHERE invite_code = ?1")
             .bind(&invite_code)
             .fetch_optional(db)
             .await
             .map_err(|e| crate::security::internal_error("join_pool_lookup", e))?;
 
-    let Some((pool_id, name, created_by)) = row else {
+    let Some((pool_id, name, created_by, description, visible_rules, join_closed_at)) = row else {
         return Err(crate::security::public_error("Codigo de convite invalido."));
     };
+
+    if join_closed_at.is_some() {
+        return Err(crate::security::public_error(
+            "Este bolao esta fechado para novos participantes.",
+        ));
+    }
 
     sqlx::query("INSERT OR IGNORE INTO pool_members (pool_id, user_id) VALUES (?1, ?2)")
         .bind(&pool_id)
@@ -163,6 +193,8 @@ pub async fn join_pool(
         .execute(db)
         .await
         .map_err(|e| crate::security::internal_error("join_pool_insert_member", e))?;
+
+    let _ = crate::scoring::recalculate_pool_user_breakdowns(&pool_id, &session.user_id, Some(&session.user_id)).await?;
 
     let member_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id = ?1")
         .bind(&pool_id)
@@ -176,6 +208,9 @@ pub async fn join_pool(
         invite_code,
         member_count: member_count.0,
         created_by,
+        description,
+        visible_rules,
+        join_closed_at,
     })
 }
 
@@ -306,10 +341,13 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
     crate::security::apply_security_headers();
     require_admin(&token).await?;
 
-    let rows: Vec<(String, String, String, i64, String)> = sqlx::query_as(
+    let rows: Vec<PoolSummaryRow> = sqlx::query_as(
         "SELECT p.id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm WHERE pm.pool_id = p.id) AS member_count,
-                p.created_by
+                p.created_by,
+                p.description,
+                p.visible_rules,
+                p.join_closed_at
          FROM pools p
          ORDER BY p.name COLLATE NOCASE",
     )
@@ -319,12 +357,15 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, invite_code, member_count, created_by)| PoolSummary {
+        .map(|(id, name, invite_code, member_count, created_by, description, visible_rules, join_closed_at)| PoolSummary {
             id,
             name,
             invite_code,
             member_count,
             created_by,
+            description,
+            visible_rules,
+            join_closed_at,
         })
         .collect())
 }
@@ -343,8 +384,8 @@ pub async fn list_pool_members_admin(
     crate::security::validate_uuid("Bolao", &pool_id)?;
     require_admin(&token).await?;
 
-    let rows: Vec<(String, String, String, bool)> = sqlx::query_as(
-        "SELECT u.id, u.username, u.email, u.is_admin
+    let rows: Vec<PoolMemberUserRow> = sqlx::query_as(
+        "SELECT u.id, u.username, u.email, u.is_admin, u.blocked_at, u.blocked_reason
          FROM pool_members pm
          JOIN users u ON u.id = pm.user_id
          WHERE pm.pool_id = ?1
@@ -357,11 +398,13 @@ pub async fn list_pool_members_admin(
 
     Ok(rows
         .into_iter()
-        .map(|(id, username, email, is_admin)| UserPublic {
+        .map(|(id, username, email, is_admin, blocked_at, blocked_reason)| UserPublic {
             id,
             username,
             email,
             is_admin,
+            blocked_at,
+            blocked_reason,
         })
         .collect())
 }
@@ -411,6 +454,8 @@ pub async fn add_pool_member_admin(
         .await
         .map_err(|e| crate::security::internal_error("add_pool_member_admin_insert", e))?;
 
+    let _ = crate::scoring::recalculate_pool_user_breakdowns(&pool_id, &user_id, Some(&session.user_id)).await?;
+
     crate::security::append_audit_log(
         db,
         Some(&session.user_id),
@@ -451,6 +496,12 @@ pub async fn remove_pool_member_admin(
         .execute(db)
         .await
         .map_err(|e| crate::security::internal_error("remove_pool_member_admin_delete", e))?;
+    sqlx::query("DELETE FROM prediction_score_breakdowns WHERE pool_id = ?1 AND user_id = ?2")
+        .bind(&pool_id)
+        .bind(&user_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("remove_pool_member_admin_breakdowns", e))?;
 
     crate::security::append_audit_log(
         db,

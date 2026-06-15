@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Bell, CheckCircle2, Circle, Smartphone, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -9,6 +9,7 @@ import { formatSelectionLabel } from "@/lib/selections";
 import { formatKickoff } from "@/lib/utils";
 import type { UserPublic } from "@/types";
 import { PageShell } from "@/components/PageShell";
+import { HomeLiveHighlight } from "@/components/HomeLiveHighlight";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
@@ -32,6 +33,7 @@ const benefits = [
 
 export function HomePage() {
   const { user } = useAuth();
+  if (user?.isAdmin) return <Navigate to="/admin" replace />;
   return user ? <LoggedInHome user={user} /> : <MarketingHome />;
 }
 
@@ -105,6 +107,8 @@ function LoggedInHome({ user }: { user: UserPublic }) {
         </Button>
       </div>
 
+      <HomeLiveHighlight matches={matches.data} predictions={predictions.data} />
+
       {showReminderBanner && (
         <motion.section {...section} transition={{ duration: 0.3 }} className="mt-8">
           <Card className="border border-sky/20 bg-white/70 p-4">
@@ -118,7 +122,6 @@ function LoggedInHome({ user }: { user: UserPublic }) {
                   <h2 className="mt-1 text-lg">Receba aviso antes do jogo começar</h2>
                   <p className="mt-1 text-sm text-ink-muted">
                     Ative notificações neste navegador para não esquecer jogo aberto sem palpite.
-                    Você pode ajustar isso depois em Conta.
                   </p>
                 </div>
                 <button
@@ -162,9 +165,6 @@ function LoggedInHome({ user }: { user: UserPublic }) {
                 </Button>
                 <Button variant="outline" size="sm" onClick={dismissReminderBanner}>
                   Agora não
-                </Button>
-                <Button variant="secondary" size="sm" onClick={() => navigate("/conta")}>
-                  Ajustar em Conta
                 </Button>
               </div>
             </div>

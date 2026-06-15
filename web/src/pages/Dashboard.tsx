@@ -162,7 +162,7 @@ export function DashboardPage() {
                 </span>
                 <p className="mt-2 text-sm text-ink-muted">{p.memberCount} membro(s)</p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => navigate("/predictions")}>
+                  <Button size="sm" onClick={() => navigate(`/palpites-do-bolao?poolId=${p.id}`)}>
                     Palpites
                   </Button>
                   <Button size="sm" variant="secondary" onClick={() => navigate("/leaderboard")}>

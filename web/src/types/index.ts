@@ -5,6 +5,8 @@ export interface UserPublic {
   username: string;
   email: string;
   isAdmin: boolean;
+  blockedAt: string | null;
+  blockedReason: string | null;
 }
 
 export interface AuthResult {
@@ -24,6 +26,9 @@ export interface PoolSummary {
   inviteCode: string;
   memberCount: number;
   createdBy: string;
+  description: string;
+  visibleRules: string;
+  joinClosedAt: string | null;
 }
 
 export interface MatchRecord {
@@ -45,6 +50,10 @@ export interface MatchRecord {
   liveAwayScore: number | null;
   liveStatus: string | null;
   liveElapsed: number | null;
+  resultSource: string | null;
+  resultSyncedAt: string | null;
+  resultExternalRawStatus: string | null;
+  liveUpdatedAt: string | null;
 }
 
 export interface PredictionRecord {
@@ -108,4 +117,138 @@ export interface NotificationStatus {
   vapidPublicKey: string | null;
   preference: NotificationPreference;
   activeSubscriptionCount: number;
+}
+
+export interface AdminActivityItem {
+  action: string;
+  label: string;
+  at: string;
+  targetId: string | null;
+}
+
+export interface SyncStatus {
+  id: string;
+  status: string;
+  triggerSource: string;
+  startedAt: string;
+  finishedAt: string | null;
+  summaryJson: string;
+}
+
+export interface AdminOverview {
+  scheduledMatches: number;
+  liveMatches: number;
+  finalizedMatches: number;
+  manuallyCorrectedMatches: number;
+  overdueMatches: number;
+  apiConflicts: number;
+  usersWithoutPredictionsSoon: number;
+  poolCount: number;
+  userCount: number;
+  blockedUserCount: number;
+  lastSync: SyncStatus | null;
+  syncEnabled: boolean;
+  activityFeed: AdminActivityItem[];
+}
+
+export interface AdminMatchRecord {
+  matchRecord: MatchRecord;
+  adminStatus: string;
+  lastAuditAt: string | null;
+}
+
+export interface PredictionReopenOverride {
+  id: string;
+  matchId: string;
+  userId: string;
+  reason: string;
+  reopenedBy: string;
+  expiresAt: string;
+  usedAt: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+export interface AdminPredictionRow {
+  userId: string;
+  username: string;
+  poolId: string | null;
+  poolName: string | null;
+  matchId: string;
+  homeTeam: string;
+  awayTeam: string;
+  kickoff: string;
+  phase: string | null;
+  prediction: PredictionRecord | null;
+  locked: boolean;
+  missing: boolean;
+  overrideInfo: PredictionReopenOverride | null;
+}
+
+export interface PredictionScoreBreakdown {
+  poolId: string;
+  poolName: string;
+  userId: string;
+  username: string;
+  matchId: string;
+  homeTeam: string;
+  awayTeam: string;
+  exactScorePoints: number;
+  outcomePoints: number;
+  goalBonusPoints: number;
+  qualifierPoints: number;
+  penaltiesPoints: number;
+  totalPoints: number;
+  eligible: boolean;
+  eligibilityReason: string;
+  officialSource: string | null;
+  computedAt: string;
+}
+
+export interface MatchPointsSummary {
+  matchId: string;
+  exactScorePoints: number;
+  outcomePoints: number;
+  goalBonusPoints: number;
+  qualifierPoints: number;
+  penaltiesPoints: number;
+  totalPoints: number;
+  eligible: boolean;
+}
+
+export interface ScoringJob {
+  id: string;
+  scopeType: string;
+  scopeId: string | null;
+  triggeredBy: string | null;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  summaryJson: string;
+}
+
+export interface AdminUserRecord {
+  user: UserPublic;
+  poolCount: number;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actorUserId: string | null;
+  actorUsername: string | null;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  ipAddress: string | null;
+  detailsJson: string;
+  createdAt: string;
+}
+
+export interface AdminSettings {
+  knockoutReleased: boolean;
+  autoSyncEnabled: boolean;
+  syncIntervalMinutes: number;
+  predictionLockMinutes: number;
+  globalBannerEnabled: boolean;
+  globalBannerText: string;
 }

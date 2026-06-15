@@ -22,6 +22,7 @@ export function Navbar() {
   const { user, isAdmin, loading, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const homeTarget = user && isAdmin ? "/admin" : "/";
 
   // Esconde ao rolar para baixo, reaparece ao rolar para cima (e sempre no topo).
   const { scrollY } = useScroll();
@@ -51,7 +52,10 @@ export function Navbar() {
       className="sticky top-0 z-30 mx-auto w-full max-w-[1100px] rounded-b-[28px] bg-bg/80 px-4 py-3 shadow-[0_14px_36px_rgba(63,77,68,0.08)] backdrop-blur-md sm:flex sm:items-center sm:px-5 sm:py-4"
     >
       <div className="flex w-full items-center justify-between gap-3">
-        <NavLink to="/" className="min-w-0 font-heading text-lg font-bold text-mint-dark sm:mr-2 sm:text-xl">
+        <NavLink
+          to={homeTarget}
+          className="min-w-0 font-heading text-lg font-bold text-mint-dark sm:mr-2 sm:text-xl"
+        >
           <span className="block truncate">Presumidos</span>
         </NavLink>
 
@@ -68,22 +72,25 @@ export function Navbar() {
         <div className="hidden min-w-0 items-center gap-2 sm:flex sm:flex-1">
           {user ? (
             <>
-              <NavLink to="/dashboard" className={linkClass}>
-                Dashboard
-              </NavLink>
-              <NavLink to="/predictions" className={linkClass}>
-                Previsões
-              </NavLink>
-              <NavLink to="/palpites-do-bolao" className={linkClass}>
-                Palpites do Bolão
-              </NavLink>
-              <NavLink to="/leaderboard" className={linkClass}>
-                Ranking
-              </NavLink>
-              {isAdmin && (
+              {isAdmin ? (
                 <NavLink to="/admin" className={linkClass}>
                   Admin
                 </NavLink>
+              ) : (
+                <>
+                  <NavLink to="/dashboard" className={linkClass}>
+                    Meus Bolões
+                  </NavLink>
+                  <NavLink to="/predictions" className={linkClass}>
+                    Meus Palpites
+                  </NavLink>
+                  <NavLink to="/palpites-do-bolao" className={linkClass}>
+                    Palpites do Bolão
+                  </NavLink>
+                  <NavLink to="/leaderboard" className={linkClass}>
+                    Ranking
+                  </NavLink>
+                </>
               )}
               <div className="flex-1" />
               <NavLink
@@ -130,22 +137,25 @@ export function Navbar() {
                     Conta
                   </NavLink>
                   <div className="grid grid-cols-1 gap-1">
-                    <NavLink to="/dashboard" className={mobileLinkClass}>
-                      Dashboard
-                    </NavLink>
-                    <NavLink to="/predictions" className={mobileLinkClass}>
-                      Previsões
-                    </NavLink>
-                    <NavLink to="/palpites-do-bolao" className={mobileLinkClass}>
-                      Palpites do Bolão
-                    </NavLink>
-                    <NavLink to="/leaderboard" className={mobileLinkClass}>
-                      Ranking
-                    </NavLink>
-                    {isAdmin && (
+                    {isAdmin ? (
                       <NavLink to="/admin" className={mobileLinkClass}>
                         Admin
                       </NavLink>
+                    ) : (
+                      <>
+                        <NavLink to="/dashboard" className={mobileLinkClass}>
+                          Meus Bolões
+                        </NavLink>
+                        <NavLink to="/predictions" className={mobileLinkClass}>
+                          Meus Palpites
+                        </NavLink>
+                        <NavLink to="/palpites-do-bolao" className={mobileLinkClass}>
+                          Palpites do Bolão
+                        </NavLink>
+                        <NavLink to="/leaderboard" className={mobileLinkClass}>
+                          Ranking
+                        </NavLink>
+                      </>
                     )}
                   </div>
                   <Button variant="outline" onClick={handleLogout} className="w-full justify-center">

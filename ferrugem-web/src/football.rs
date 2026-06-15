@@ -416,6 +416,7 @@ async fn apply_event(
                     json!({ "home_score": home, "away_score": away }),
                 )
                 .await?;
+                let _ = crate::scoring::recalculate_match_breakdowns(&candidate.id, None).await?;
             }
             Ok(if already {
                 ApplyOutcome::Noop
@@ -453,13 +454,21 @@ fn distinct_et_dates(kickoffs: impl Iterator<Item = String>) -> Vec<String> {
 pub fn spawn_poller() {
     use rand_core::{OsRng, RngCore};
 
-    let base_secs = settings().football.poll_interval_secs;
     let live_secs = settings().football.live_poll_interval_secs;
     tokio::spawn(async move {
-        eprintln!(
-            "[football] poller iniciado (intervalo {base_secs}s, {live_secs}s com jogo na janela, + jitter 0–60s, fonte externa)"
-        );
+        eprintln!("[football] poller iniciado (cadencia base dinamica pelo admin, + jitter 0–60s, fonte externa)");
         loop {
+            let auto_sync_enabled = crate::admin::auto_sync_enabled().await.unwrap_or(true);
+            let base_secs = crate::admin::sync_interval_minutes()
+                .await
+                .ok()
+                .and_then(|minutes| u64::try_from(minutes).ok())
+                .map(|minutes| minutes.saturating_mul(60))
+                .unwrap_or(settings().football.poll_interval_secs);
+            if !auto_sync_enabled {
+                tokio::time::sleep(std::time::Duration::from_secs(base_secs)).await;
+                continue;
+            }
             // `active` indica que havia jogo na janela: enquanto rola jogo, o
             // poller acelera (live_secs) para a pontuação ao vivo andar mais
             // rápido; ocioso, volta ao intervalo base.
@@ -493,7 +502,7 @@ async fn load_candidates(db: &sqlx::SqlitePool) -> Result<Vec<PollCandidate>, Se
 
 /// Roda um ciclo. Retorna `true` se havia jogo na janela (sinal para o poller
 /// acelerar a cadência enquanto há jogo).
-async fn run_poll_cycle() -> Result<bool, ServerFnError> {
+pub async fn run_poll_cycle() -> Result<bool, ServerFnError> {
     let db = crate::db::pool();
     let candidates = load_candidates(db).await?;
     if candidates.is_empty() {

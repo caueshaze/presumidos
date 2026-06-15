@@ -14,27 +14,22 @@ import {
   getSelectionGroups,
   isKnownSelection,
 } from "@/lib/selections";
-import { cn, formatKickoff, isKnockout, winnerSide } from "@/lib/utils";
-import type { KnockoutEntry, MatchRecord, PredictionRecord } from "@/types";
+import { cn, formatKickoff, formatLiveStatus, isKnockout, winnerSide } from "@/lib/utils";
+import type { KnockoutEntry, MatchPointsSummary, MatchRecord, PredictionRecord } from "@/types";
 import { MotionCard } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label, Select, ErrorBanner } from "./ui/field";
 
-// Rótulo amigável do status ao vivo. O status vem como texto livre da API
-// (ex.: "45'", "HT", "90+2'"); mapeamos os códigos conhecidos e exibimos o resto.
-function formatLiveStatus(status: string | null, elapsed: number | null): string {
-  const known: Record<string, string> = {
-    HT: "Intervalo",
-    P: "Pênaltis",
-    ET: "Prorrogação",
-    SUSP: "Suspenso",
-    INT: "Interrompido",
-  };
-  if (status && known[status]) return known[status];
-  if (status && status.trim() !== "") return status;
-  if (elapsed) return `${elapsed}'`;
-  return "Ao vivo";
+// Monta o detalhamento de pontos com os componentes que pontuaram (> 0).
+function pointsBreakdown(points: MatchPointsSummary): string {
+  const parts: string[] = [];
+  if (points.exactScorePoints > 0) parts.push(`Placar exato ${points.exactScorePoints}`);
+  if (points.outcomePoints > 0) parts.push(`Resultado ${points.outcomePoints}`);
+  if (points.goalBonusPoints > 0) parts.push(`Bônus de gols ${points.goalBonusPoints}`);
+  if (points.qualifierPoints > 0) parts.push(`Classificado ${points.qualifierPoints}`);
+  if (points.penaltiesPoints > 0) parts.push(`Pênaltis ${points.penaltiesPoints}`);
+  return parts.join(" · ");
 }
 
 function ScoreInputs({ children }: { children: React.ReactNode }) {
@@ -146,6 +141,7 @@ interface Props {
   index: number;
   cardId?: string;
   highlighted?: boolean;
+  points?: MatchPointsSummary;
 }
 
 export function MatchCard({
@@ -156,6 +152,7 @@ export function MatchCard({
   index,
   cardId,
   highlighted = false,
+  points,
 }: Props) {
   const knockout = isKnockout(game.phase);
   const selectionGroups = getSelectionGroups();
@@ -328,6 +325,7 @@ export function MatchCard({
       : "Decidido nos pênaltis";
   const showInlineOfficialSummary = locked && !isAdmin && !!prediction;
   const showLockedMessage = locked && !game.finished;
+  const showAdminControls = false;
   const exactScoreHit =
     hasOfficial &&
     prediction &&
@@ -470,6 +468,25 @@ export function MatchCard({
                       </span>
                     )}
                   </div>
+                  {points && (
+                    <div className="rounded-md bg-mint/10 px-3 py-2">
+                      {points.totalPoints > 0 ? (
+                        <>
+                          <p className="font-heading font-semibold text-mint-dark">
+                            Você fez {points.totalPoints}{" "}
+                            {points.totalPoints === 1 ? "ponto" : "pontos"}
+                          </p>
+                          {pointsBreakdown(points) && (
+                            <p className="mt-0.5 text-xs text-ink-muted">{pointsBreakdown(points)}</p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm font-semibold text-ink-muted">
+                          Nenhum ponto neste jogo
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {knockout && game.wentToPenalties && (
                     <p className="text-sm text-ink-muted">{penaltyLabel}</p>
                   )}
@@ -593,7 +610,7 @@ export function MatchCard({
         </form>
         ))}
 
-      {isAdmin && (
+      {isAdmin && showAdminControls && (
         <div className="mt-5 space-y-5 border-t border-mint/30 pt-4">
           <form onSubmit={onSaveTeams} className="flex flex-col gap-2">
             <h4 className="font-heading font-semibold">Admin: montar confronto</h4>
