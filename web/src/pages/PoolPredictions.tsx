@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, SmilePlus } from "lucide-react";
 import {
   useMarkPredictionReactionsSeen,
   useMatches,
@@ -49,6 +49,8 @@ function ReactionBar({
     emoji: string;
   }) => void;
 }) {
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
       {prediction.reactions.map((reaction) => (
@@ -64,34 +66,64 @@ function ReactionBar({
         </span>
       ))}
 
-      <div className="flex flex-wrap gap-1.5">
-        {REACTION_EMOJIS.map((emoji) => {
-          const active = prediction.viewerReaction === emoji;
-          return (
-            <button
-              key={emoji}
-              type="button"
-              disabled={disabled || isPending}
-              onClick={() =>
-                onReact({
-                  poolId,
-                  targetUserId,
-                  matchId: prediction.matchId,
-                  emoji,
-                })
-              }
-              className={
-                active
-                  ? "rounded-full bg-mint/30 px-2.5 py-1 text-sm ring-1 ring-mint/50"
-                  : "rounded-full bg-white px-2.5 py-1 text-sm ring-1 ring-mint/20 transition hover:bg-mint/10"
-              }
-              aria-label={`Reagir com ${emoji}`}
-            >
-              {emoji}
-            </button>
-          );
-        })}
-      </div>
+      {!disabled && (
+        <div className="relative">
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => setIsPickerOpen((current) => !current)}
+            className={
+              prediction.viewerReaction
+                ? "inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-mint/20 px-2 text-base text-mint-dark ring-1 ring-mint/35 transition hover:bg-mint/25"
+                : "inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-ink-muted ring-1 ring-mint/20 transition hover:bg-mint/10"
+            }
+            aria-expanded={isPickerOpen}
+            aria-label={
+              prediction.viewerReaction
+                ? `Trocar reacao ${prediction.viewerReaction}`
+                : "Abrir menu de reacoes"
+            }
+          >
+            {prediction.viewerReaction ? (
+              <span aria-hidden="true">{prediction.viewerReaction}</span>
+            ) : (
+              <SmilePlus className="h-4 w-4" />
+            )}
+          </button>
+
+          {isPickerOpen && (
+            <div className="absolute left-0 top-full z-10 mt-2 flex min-w-max flex-wrap gap-1.5 rounded-2xl border border-mint/20 bg-white p-2 shadow-card">
+              {REACTION_EMOJIS.map((emoji) => {
+                const active = prediction.viewerReaction === emoji;
+                return (
+                  <button
+                    key={emoji}
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => {
+                      onReact({
+                        poolId,
+                        targetUserId,
+                        matchId: prediction.matchId,
+                        emoji,
+                      });
+                      setIsPickerOpen(false);
+                    }}
+                    className={
+                      active
+                        ? "rounded-full bg-mint/30 px-2.5 py-1 text-sm ring-1 ring-mint/50"
+                        : "rounded-full bg-card px-2.5 py-1 text-sm ring-1 ring-mint/20 transition hover:bg-mint/10"
+                    }
+                    aria-label={`Reagir com ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
