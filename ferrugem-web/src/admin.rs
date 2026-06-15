@@ -703,6 +703,49 @@ pub async fn active_prediction_override(
     }))
 }
 
+/// Reaberturas ativas do usuario autenticado (usado pela tela de palpites para
+/// liberar o formulario mesmo apos o travamento padrao por horario).
+#[cfg(feature = "server")]
+pub async fn list_my_prediction_overrides(
+    token: String,
+) -> Result<Vec<PredictionReopenOverride>, ServerFnError> {
+    use crate::auth::require_user;
+
+    crate::security::apply_security_headers();
+    let session = require_user(&token).await?;
+    let db = crate::db::pool();
+
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String, Option<String>)>(
+        "SELECT id, reason, reopened_by, expires_at, created_at, used_at, match_id, revoked_at
+         FROM prediction_admin_overrides
+         WHERE user_id = ?1
+           AND revoked_at IS NULL
+           AND datetime(expires_at) > datetime('now')
+         ORDER BY datetime(created_at) DESC",
+    )
+    .bind(&session.user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("list_my_prediction_overrides", e))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, reason, reopened_by, expires_at, created_at, used_at, match_id, revoked_at)| {
+            PredictionReopenOverride {
+                id,
+                match_id,
+                user_id: session.user_id.clone(),
+                reason,
+                reopened_by,
+                expires_at,
+                used_at,
+                created_at,
+                revoked_at,
+            }
+        })
+        .collect())
+}
+
 #[cfg(feature = "server")]
 pub async fn mark_prediction_override_used(override_id: &str) -> Result<(), ServerFnError> {
     let db = crate::db::pool();

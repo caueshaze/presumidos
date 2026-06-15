@@ -562,6 +562,12 @@ async fn my_predictions() -> ApiResult<impl IntoResponse> {
     ))
 }
 
+async fn my_prediction_overrides() -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::list_my_prediction_overrides(String::new()).await?,
+    ))
+}
+
 async fn my_match_points() -> ApiResult<impl IntoResponse> {
     Ok(Json(crate::scoring::list_my_match_points().await?))
 }
@@ -874,6 +880,7 @@ pub fn router() -> Router {
         .route("/matches", get(list_matches))
         .route("/matches/knockout-released", get(knockout_released))
         .route("/predictions", get(my_predictions).post(submit_prediction))
+        .route("/predictions/reopened", get(my_prediction_overrides))
         .route("/scoring/my-points", get(my_match_points))
         .route("/admin/overview", get(admin_overview))
         .route("/admin/matches", get(admin_matches))

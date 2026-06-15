@@ -133,6 +133,15 @@ export function useMyPredictions() {
   });
 }
 
+/** Reaberturas administrativas ativas para o usuário logado (libera palpite mesmo travado). */
+export function useMyPredictionOverrides() {
+  return useQuery({
+    queryKey: ["predictions", "reopened"],
+    queryFn: () => api.get<PredictionReopenOverride[]>("/predictions/reopened"),
+    refetchInterval: 60_000,
+  });
+}
+
 export function useMyMatchPoints() {
   return useQuery({
     queryKey: ["my-match-points"],
