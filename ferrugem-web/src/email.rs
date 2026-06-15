@@ -24,7 +24,15 @@ fn from_address(from: &str) -> &str {
 }
 
 async fn send(to: &str, subject: &str, html: String) -> Result<(), ServerFnError> {
-    let from = crate::config::settings().resend_from_email.as_str();
+    let settings = crate::config::settings();
+    if settings.disable_auth_emails {
+        eprintln!(
+            "[dev-auth-email] to={to} subject={subject} (emails desativados neste ambiente)"
+        );
+        return Ok(());
+    }
+
+    let from = settings.resend_from_email.as_str();
     let email = CreateEmailBaseOptions::new(from, [to], subject)
         .with_html(&html)
         // Reforca que a caixa nao monitora respostas.
@@ -63,6 +71,9 @@ fn code_card(intro: &str, code: &str, footer: &str) -> String {
 
 /// Envia o codigo de verificacao para confirmar a criacao da conta.
 pub async fn send_verification_code(to: &str, code: &str) -> Result<(), ServerFnError> {
+    if crate::config::settings().disable_auth_emails {
+        eprintln!("[dev-auth-email] verification code for {to}: {code}");
+    }
     let html = code_card(
         "Use o codigo abaixo para confirmar a criacao da sua conta no Presumidos:",
         code,
@@ -73,6 +84,9 @@ pub async fn send_verification_code(to: &str, code: &str) -> Result<(), ServerFn
 
 /// Envia o codigo para redefinicao de senha.
 pub async fn send_password_reset_code(to: &str, code: &str) -> Result<(), ServerFnError> {
+    if crate::config::settings().disable_auth_emails {
+        eprintln!("[dev-auth-email] password reset code for {to}: {code}");
+    }
     let html = code_card(
         "Use o codigo abaixo para redefinir a senha da sua conta no Presumidos:",
         code,

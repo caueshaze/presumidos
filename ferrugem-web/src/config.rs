@@ -23,6 +23,7 @@ pub struct AppConfig {
     pub require_trusted_proxy: bool,
     pub resend_api_key: String,
     pub resend_from_email: String,
+    pub disable_auth_emails: bool,
     pub rate_limit_backend: RateLimitBackendKind,
     pub redis_url: Option<String>,
     pub rate_limit_identity_secret: String,
@@ -211,6 +212,40 @@ fn validate_rate_limit_config(
 }
 
 #[cfg(feature = "server")]
+fn validate_auth_email_config(
+    app_env: &str,
+    disable_auth_emails: bool,
+    resend_api_key: Option<&str>,
+    resend_from_email: Option<&str>,
+) {
+    if disable_auth_emails {
+        assert!(
+            app_env == "development" || app_env == "test",
+            "DEV_DISABLE_AUTH_EMAILS so pode ser habilitado em development ou test"
+        );
+        return;
+    }
+
+    let resend_api_key = match resend_api_key {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => panic!("RESEND_API_KEY precisa ser configurado quando emails estao ativos"),
+    };
+    assert!(
+        !resend_api_key.trim().is_empty(),
+        "RESEND_API_KEY nao pode ser vazio"
+    );
+
+    let resend_from_email = match resend_from_email {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => panic!("RESEND_FROM_EMAIL precisa ser configurado quando emails estao ativos"),
+    };
+    assert!(
+        resend_from_email.contains('@'),
+        "RESEND_FROM_EMAIL precisa ser um remetente valido"
+    );
+}
+
+#[cfg(feature = "server")]
 pub fn settings() -> &'static AppConfig {
     CONFIG.get_or_init(|| {
         let _ = dotenvy::dotenv();
@@ -227,8 +262,9 @@ pub fn settings() -> &'static AppConfig {
         let admin_reauth_ttl_minutes = parse_i64_var("ADMIN_REAUTH_TTL_MINUTES");
         let trusted_proxy_cidrs = parse_cidr_list_var("TRUSTED_PROXY_CIDRS");
         let require_trusted_proxy = parse_bool_var("REQUIRE_TRUSTED_PROXY");
-        let resend_api_key = required_var("RESEND_API_KEY");
-        let resend_from_email = required_var("RESEND_FROM_EMAIL");
+        let disable_auth_emails = optional_bool_var("DEV_DISABLE_AUTH_EMAILS", false);
+        let resend_api_key = optional_var("RESEND_API_KEY");
+        let resend_from_email = optional_var("RESEND_FROM_EMAIL");
         let rate_limit_backend = parse_rate_limit_backend_var("RATE_LIMIT_BACKEND");
         let redis_url = optional_var("REDIS_URL");
         let rate_limit_identity_secret_var = optional_var("RATE_LIMIT_IDENTITY_SECRET");
@@ -301,14 +337,6 @@ pub fn settings() -> &'static AppConfig {
         }
 
         assert!(
-            !resend_api_key.trim().is_empty(),
-            "RESEND_API_KEY nao pode ser vazio"
-        );
-        assert!(
-            resend_from_email.contains('@'),
-            "RESEND_FROM_EMAIL precisa ser um remetente valido"
-        );
-        assert!(
             session_secret.trim().len() >= 32,
             "SESSION_SECRET precisa ter pelo menos 32 caracteres"
         );
@@ -337,6 +365,12 @@ pub fn settings() -> &'static AppConfig {
                 "COOKIE_SECURE precisa estar habilitado em producao"
             );
         }
+        validate_auth_email_config(
+            &app_env,
+            disable_auth_emails,
+            resend_api_key.as_deref(),
+            resend_from_email.as_deref(),
+        );
         validate_proxy_config(&app_env, &trusted_proxy_cidrs, require_trusted_proxy);
         validate_rate_limit_config(
             &app_env,
@@ -356,8 +390,9 @@ pub fn settings() -> &'static AppConfig {
             admin_reauth_ttl_minutes,
             trusted_proxy_cidrs,
             require_trusted_proxy,
-            resend_api_key,
-            resend_from_email,
+            resend_api_key: resend_api_key.unwrap_or_default(),
+            resend_from_email: resend_from_email.unwrap_or_default(),
+            disable_auth_emails,
             rate_limit_backend,
             redis_url,
             rate_limit_identity_secret,
@@ -373,7 +408,10 @@ pub fn settings() -> &'static AppConfig {
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
-    use super::{has_global_cidr, validate_proxy_config, validate_rate_limit_config, RateLimitBackendKind};
+    use super::{
+        has_global_cidr, validate_auth_email_config, validate_proxy_config,
+        validate_rate_limit_config, RateLimitBackendKind,
+    };
 
     #[test]
     fn detects_global_proxy_cidrs() {
@@ -425,6 +463,29 @@ mod tests {
             );
         });
         assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn development_can_disable_auth_emails_without_resend_creds() {
+        validate_auth_email_config("development", true, None, None);
+    }
+
+    #[test]
+    fn production_requires_resend_credentials_when_auth_emails_are_enabled() {
+        let result = std::panic::catch_unwind(|| {
+            validate_auth_email_config(
+                "production",
+                false,
+                Some("re_test"),
+                Some("Presumidos <no-reply@example.com>"),
+            );
+        });
+        assert!(result.is_ok());
+
+        let missing = std::panic::catch_unwind(|| {
+            validate_auth_email_config("production", false, None, None);
+        });
+        assert!(missing.is_err());
     }
 
     #[test]

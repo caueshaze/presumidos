@@ -86,6 +86,29 @@ pub struct PredictionRecord {
     pub penalty_away_score: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PredictionReactionGroup {
+    pub emoji: String,
+    pub count: i64,
+    pub reacted_by_viewer: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolPredictionRecord {
+    pub match_id: String,
+    pub home_score: i64,
+    pub away_score: i64,
+    pub qualifier: Option<String>,
+    pub went_to_penalties: bool,
+    pub penalty_home_score: Option<i64>,
+    pub penalty_away_score: Option<i64>,
+    pub reactions: Vec<PredictionReactionGroup>,
+    pub viewer_reaction: Option<String>,
+    pub unread_reaction_count: i64,
+}
+
 /// Campos de mata-mata de um palpite ou resultado oficial, transportados juntos.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
@@ -301,7 +324,8 @@ pub struct PointAdjustment {
 pub struct MemberPredictions {
     pub user_id: String,
     pub username: String,
-    pub predictions: Vec<PredictionRecord>,
+    pub unread_reaction_count: i64,
+    pub predictions: Vec<PoolPredictionRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -309,6 +333,7 @@ pub struct MemberPredictions {
 pub struct NotificationPreference {
     pub enabled: bool,
     pub lead_time_minutes: i64,
+    pub reaction_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

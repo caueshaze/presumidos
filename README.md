@@ -82,6 +82,11 @@ cp .env.example .env
 Em dev, o `.env` já vem com `APP_ENV=development` e `RATE_LIMIT_BACKEND=memory`
 (dispensa Redis). O backend valida o `.env` no boot, cria o SQLite em
 `DATABASE_PATH` se necessário e aplica as migrations automaticamente.
+O suporte a web push ficou como feature opcional para não travar o `cargo run`
+local no Windows com dependências TLS nativas; a imagem de produção continua
+habilitando isso explicitamente no build.
+Também existe `DEV_DISABLE_AUTH_EMAILS=true` para pular o envio de email de
+cadastro/reset em desenvolvimento; os códigos aparecem no terminal.
 
 **Terminal 1 — backend (API em `:8080`):**
 

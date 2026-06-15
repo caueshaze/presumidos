@@ -66,6 +66,25 @@ export interface PredictionRecord {
   penaltyAwayScore: number | null;
 }
 
+export interface PredictionReactionGroup {
+  emoji: string;
+  count: number;
+  reactedByViewer: boolean;
+}
+
+export interface PoolPredictionRecord {
+  matchId: string;
+  homeScore: number;
+  awayScore: number;
+  qualifier: string | null;
+  wentToPenalties: boolean;
+  penaltyHomeScore: number | null;
+  penaltyAwayScore: number | null;
+  reactions: PredictionReactionGroup[];
+  viewerReaction: string | null;
+  unreadReactionCount: number;
+}
+
 export interface KnockoutEntry {
   qualifier: string | null;
   wentToPenalties: boolean;
@@ -91,12 +110,14 @@ export interface PointAdjustment {
 export interface MemberPredictions {
   userId: string;
   username: string;
-  predictions: PredictionRecord[];
+  unreadReactionCount: number;
+  predictions: PoolPredictionRecord[];
 }
 
 export interface NotificationPreference {
   enabled: boolean;
   leadTimeMinutes: 10 | 20 | 30;
+  reactionEnabled: boolean;
 }
 
 export interface WebPushSubscriptionKeys {

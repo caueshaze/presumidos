@@ -30,6 +30,7 @@ const ALLOWED_LEAD_TIMES: [i64; 3] = [10, 20, 30];
 struct PreferenceRow {
     enabled: bool,
     lead_time_minutes: i64,
+    reaction_enabled: bool,
 }
 
 #[cfg(feature = "server")]
@@ -92,6 +93,7 @@ fn current_preference() -> NotificationPreference {
     NotificationPreference {
         enabled: false,
         lead_time_minutes: DEFAULT_LEAD_TIME_MINUTES,
+        reaction_enabled: true,
     }
 }
 
@@ -182,7 +184,7 @@ async fn load_preference(
     user_id: &str,
 ) -> Result<NotificationPreference, ServerFnError> {
     let row: Option<PreferenceRow> = sqlx::query_as(
-        "SELECT enabled, lead_time_minutes
+        "SELECT enabled, lead_time_minutes, reaction_enabled
          FROM notification_preferences
          WHERE user_id = ?1",
     )
@@ -195,6 +197,7 @@ async fn load_preference(
         .map(|row| NotificationPreference {
             enabled: row.enabled,
             lead_time_minutes: row.lead_time_minutes,
+            reaction_enabled: row.reaction_enabled,
         })
         .unwrap_or_else(current_preference))
 }
@@ -240,6 +243,7 @@ pub async fn update_notification_preference(
     token: String,
     enabled: bool,
     lead_time_minutes: i64,
+    reaction_enabled: bool,
     csrf_token: String,
 ) -> Result<NotificationPreference, ServerFnError> {
     use crate::auth::require_user;
@@ -252,16 +256,19 @@ pub async fn update_notification_preference(
     let lead_time_minutes = validate_lead_time(lead_time_minutes)?;
 
     sqlx::query(
-        "INSERT INTO notification_preferences (user_id, enabled, lead_time_minutes, updated_at)
-         VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO notification_preferences
+            (user_id, enabled, lead_time_minutes, reaction_enabled, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(user_id) DO UPDATE SET
             enabled = excluded.enabled,
             lead_time_minutes = excluded.lead_time_minutes,
+            reaction_enabled = excluded.reaction_enabled,
             updated_at = excluded.updated_at",
     )
     .bind(&session.user_id)
     .bind(enabled)
     .bind(lead_time_minutes)
+    .bind(reaction_enabled)
     .bind(sqlite_now())
     .execute(pool())
     .await
@@ -277,6 +284,7 @@ pub async fn update_notification_preference(
         serde_json::json!({
             "enabled": enabled,
             "lead_time_minutes": lead_time_minutes,
+            "reaction_enabled": reaction_enabled,
         }),
     )
     .await?;
@@ -284,6 +292,7 @@ pub async fn update_notification_preference(
     Ok(NotificationPreference {
         enabled,
         lead_time_minutes,
+        reaction_enabled,
     })
 }
 
@@ -621,6 +630,49 @@ async fn send_payload_to_user_subscriptions(
 }
 
 #[cfg(feature = "server")]
+pub async fn send_reaction_notification(
+    db: &sqlx::SqlitePool,
+    user_id: &str,
+    title: &str,
+    body: &str,
+    url: &str,
+    tag: &str,
+) -> Result<bool, ServerFnError> {
+    if !crate::config::settings().web_push.enabled {
+        return Ok(false);
+    }
+
+    let subscriptions: Vec<SubscriptionRow> = sqlx::query_as(
+        "SELECT ps.user_id, ps.endpoint, ps.p256dh, ps.auth, ps.user_agent
+         FROM push_subscriptions ps
+         INNER JOIN notification_preferences np ON np.user_id = ps.user_id
+         WHERE ps.user_id = ?1
+           AND ps.active = 1
+           AND np.enabled = 1
+           AND np.reaction_enabled = 1",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("send_reaction_notification_load", e))?;
+
+    if subscriptions.is_empty() {
+        return Ok(false);
+    }
+
+    let payload = serde_json::json!({
+        "title": title,
+        "body": body,
+        "url": url,
+        "tag": tag,
+    });
+    let payload = serde_json::to_string(&payload)
+        .map_err(|e| crate::security::internal_error("send_reaction_notification_payload", e))?;
+
+    send_payload_to_user_subscriptions(db, &subscriptions, &payload).await
+}
+
+#[cfg(feature = "server")]
 async fn knockout_released() -> Result<bool, ServerFnError> {
     crate::matches::is_knockout_released().await
 }
@@ -629,8 +681,9 @@ async fn knockout_released() -> Result<bool, ServerFnError> {
 async fn load_active_subscriptions(
     db: &sqlx::SqlitePool,
 ) -> Result<HashMap<String, (NotificationPreference, Vec<SubscriptionRow>)>, ServerFnError> {
-    let rows: Vec<(String, i64, String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT ps.user_id, np.lead_time_minutes, ps.endpoint, ps.p256dh, ps.auth, ps.user_agent
+    let rows: Vec<(String, i64, bool, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT ps.user_id, np.lead_time_minutes, np.reaction_enabled,
+                ps.endpoint, ps.p256dh, ps.auth, ps.user_agent
          FROM push_subscriptions ps
          INNER JOIN notification_preferences np ON np.user_id = ps.user_id
          WHERE ps.active = 1
@@ -641,12 +694,13 @@ async fn load_active_subscriptions(
     .map_err(|e| crate::security::internal_error("load_active_subscriptions", e))?;
 
     let mut grouped = HashMap::<String, (NotificationPreference, Vec<SubscriptionRow>)>::new();
-    for (user_id, lead_time_minutes, endpoint, p256dh, auth, user_agent) in rows {
+    for (user_id, lead_time_minutes, reaction_enabled, endpoint, p256dh, auth, user_agent) in rows {
         let entry = grouped.entry(user_id.clone()).or_insert_with(|| {
             (
                 NotificationPreference {
                     enabled: true,
                     lead_time_minutes,
+                    reaction_enabled,
                 },
                 Vec::new(),
             )

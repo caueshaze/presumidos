@@ -273,6 +273,37 @@ export function useUpdateNotificationPreference() {
   });
 }
 
+export function useReactToPrediction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      poolId: string;
+      targetUserId: string;
+      matchId: string;
+      emoji: string;
+    }) =>
+      api.post<void>(`/pools/${vars.poolId}/prediction-reactions`, {
+        targetUserId: vars.targetUserId,
+        matchId: vars.matchId,
+        emoji: vars.emoji,
+      }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["pool-member-predictions", vars.poolId] });
+    },
+  });
+}
+
+export function useMarkPredictionReactionsSeen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string) =>
+      api.post<void>(`/pools/${encodeURIComponent(poolId)}/prediction-reactions/mark-seen`),
+    onSuccess: (_data, poolId) => {
+      qc.invalidateQueries({ queryKey: ["pool-member-predictions", poolId] });
+    },
+  });
+}
+
 // ---- Leaderboard ----------------------------------------------------------
 
 export function useLeaderboard(poolId: string | null) {

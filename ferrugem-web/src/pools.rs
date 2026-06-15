@@ -1,6 +1,9 @@
 use crate::error::ServerFnError;
 
-use crate::models::{MemberPredictions, PointAdjustment, PoolSummary, PredictionRecord, UserPublic};
+use crate::models::{
+    MemberPredictions, PointAdjustment, PoolPredictionRecord, PoolSummary, PredictionReactionGroup,
+    UserPublic,
+};
 
 #[cfg(feature = "server")]
 type PoolSummaryRow = (
@@ -16,6 +19,46 @@ type PoolSummaryRow = (
 
 #[cfg(feature = "server")]
 type PoolMemberUserRow = (String, String, String, bool, Option<String>, Option<String>);
+
+#[cfg(feature = "server")]
+const ALLOWED_REACTION_EMOJIS: [&str; 6] = ["🔥", "👏", "😂", "😮", "😅", "😭"];
+
+#[cfg(feature = "server")]
+fn sqlite_now() -> String {
+    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+#[cfg(feature = "server")]
+fn normalize_reaction_emoji(emoji: String) -> Result<String, ServerFnError> {
+    let emoji = crate::security::normalize_required_text("Emoji", emoji, 1, 8)?;
+    if ALLOWED_REACTION_EMOJIS.contains(&emoji.as_str()) {
+        Ok(emoji)
+    } else {
+        Err(crate::security::public_error("Emoji de reacao invalido."))
+    }
+}
+
+#[cfg(feature = "server")]
+async fn ensure_pool_membership(
+    db: &sqlx::SqlitePool,
+    pool_id: &str,
+    user_id: &str,
+    error_context: &str,
+) -> Result<(), ServerFnError> {
+    let membership: Option<(String,)> =
+        sqlx::query_as("SELECT pool_id FROM pool_members WHERE pool_id = ?1 AND user_id = ?2")
+            .bind(pool_id)
+            .bind(user_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error(error_context, e))?;
+
+    if membership.is_none() {
+        Err(crate::security::public_error("Voce nao e membro deste bolao."))
+    } else {
+        Ok(())
+    }
+}
 
 #[cfg(feature = "server")]
 async fn generate_invite_code(pool: &sqlx::SqlitePool) -> Result<String, ServerFnError> {
@@ -231,23 +274,26 @@ pub async fn get_pool_member_predictions(
     use chrono::Utc;
     use std::collections::HashMap;
 
+    #[derive(sqlx::FromRow)]
+    struct ReactionRow {
+        target_user_id: String,
+        match_id: String,
+        emoji: String,
+        reactor_user_id: String,
+        updated_at: String,
+    }
+
     crate::security::apply_security_headers();
     crate::security::validate_uuid("Bolao", &pool_id)?;
     let session = require_user(&token).await?;
     let db = pool();
-
-    let membership: Option<(String,)> = sqlx::query_as(
-        "SELECT pool_id FROM pool_members WHERE pool_id = ?1 AND user_id = ?2",
+    ensure_pool_membership(
+        db,
+        &pool_id,
+        &session.user_id,
+        "get_pool_member_predictions_membership",
     )
-    .bind(&pool_id)
-    .bind(&session.user_id)
-    .fetch_optional(db)
-    .await
-    .map_err(|e| crate::security::internal_error("get_pool_member_predictions_membership", e))?;
-
-    if membership.is_none() {
-        return Err(crate::security::public_error("Voce nao e membro deste bolao."));
-    }
+    .await?;
 
     // Todos os membros, ordenados por nome (inclui quem ainda não tem palpite visível).
     let members: Vec<(String, String)> = sqlx::query_as(
@@ -301,30 +347,307 @@ pub async fn get_pool_member_predictions(
     .await
     .map_err(|e| crate::security::internal_error("get_pool_member_predictions_preds", e))?;
 
-    let mut by_user: HashMap<String, Vec<PredictionRecord>> = HashMap::new();
+    let seen_at: Option<(String,)> = sqlx::query_as(
+        "SELECT seen_at
+         FROM prediction_reaction_views
+         WHERE pool_id = ?1 AND user_id = ?2",
+    )
+    .bind(&pool_id)
+    .bind(&session.user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("get_pool_member_predictions_seen_at", e))?;
+
+    let reaction_rows = sqlx::query_as::<_, ReactionRow>(
+        "SELECT pr.target_user_id AS target_user_id,
+                pr.match_id AS match_id,
+                pr.emoji AS emoji,
+                pr.reactor_user_id AS reactor_user_id,
+                pr.updated_at AS updated_at
+         FROM prediction_reactions pr
+         JOIN matches m ON m.id = pr.match_id
+         JOIN pool_members pm ON pm.pool_id = pr.pool_id AND pm.user_id = pr.target_user_id
+         WHERE pr.pool_id = ?1
+           AND datetime(m.kickoff) <= datetime(?2)
+           AND datetime(m.kickoff) >= datetime(pm.joined_at)
+         ORDER BY pr.updated_at ASC",
+    )
+    .bind(&pool_id)
+    .bind(&now)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("get_pool_member_predictions_reactions", e))?;
+
+    let mut by_user: HashMap<String, Vec<PoolPredictionRecord>> = HashMap::new();
+    let mut by_key: HashMap<(String, String), usize> = HashMap::new();
     for row in rows {
-        by_user.entry(row.user_id).or_default().push(PredictionRecord {
-            match_id: row.match_id,
+        let predictions = by_user.entry(row.user_id.clone()).or_default();
+        let index = predictions.len();
+        predictions.push(PoolPredictionRecord {
+            match_id: row.match_id.clone(),
             home_score: row.home_score,
             away_score: row.away_score,
             qualifier: row.qualifier,
             went_to_penalties: row.went_to_penalties,
             penalty_home_score: row.penalty_home_score,
             penalty_away_score: row.penalty_away_score,
+            reactions: Vec::new(),
+            viewer_reaction: None,
+            unread_reaction_count: 0,
         });
+        by_key.insert((row.user_id, row.match_id), index);
+    }
+
+    let seen_at = seen_at.map(|row| row.0);
+    let mut unread_by_user: HashMap<String, i64> = HashMap::new();
+    for row in reaction_rows {
+        let key = (row.target_user_id.clone(), row.match_id.clone());
+        let Some(index) = by_key.get(&key).copied() else {
+            continue;
+        };
+        let Some(predictions) = by_user.get_mut(&row.target_user_id) else {
+            continue;
+        };
+        let Some(prediction) = predictions.get_mut(index) else {
+            continue;
+        };
+
+        if let Some(group) = prediction
+            .reactions
+            .iter_mut()
+            .find(|group| group.emoji == row.emoji)
+        {
+            group.count += 1;
+            if row.reactor_user_id == session.user_id {
+                group.reacted_by_viewer = true;
+            }
+        } else {
+            prediction.reactions.push(PredictionReactionGroup {
+                emoji: row.emoji.clone(),
+                count: 1,
+                reacted_by_viewer: row.reactor_user_id == session.user_id,
+            });
+        }
+
+        if row.reactor_user_id == session.user_id {
+            prediction.viewer_reaction = Some(row.emoji.clone());
+        }
+
+        let unseen = row.target_user_id == session.user_id
+            && seen_at
+                .as_deref()
+                .map(|seen| row.updated_at.as_str() > seen)
+                .unwrap_or(true);
+        if unseen {
+            prediction.unread_reaction_count += 1;
+            *unread_by_user.entry(row.target_user_id.clone()).or_default() += 1;
+        }
     }
 
     Ok(members
         .into_iter()
-        .map(|(user_id, username)| {
-            let predictions = by_user.remove(&user_id).unwrap_or_default();
-            MemberPredictions {
-                user_id,
-                username,
-                predictions,
-            }
+        .map(|(user_id, username)| MemberPredictions {
+            unread_reaction_count: unread_by_user.remove(&user_id).unwrap_or(0),
+            user_id: user_id.clone(),
+            username,
+            predictions: by_user.remove(&user_id).unwrap_or_default(),
         })
         .collect())
+}
+
+#[cfg(feature = "server")]
+pub async fn react_to_prediction(
+    token: String,
+    pool_id: String,
+    target_user_id: String,
+    match_id: String,
+    emoji: String,
+    csrf_token: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::require_user;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    crate::security::validate_uuid("Bolao", &pool_id)?;
+    crate::security::validate_uuid("Usuario", &target_user_id)?;
+    crate::security::validate_match_id(&match_id)?;
+    let emoji = normalize_reaction_emoji(emoji)?;
+    let session = require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    if target_user_id == session.user_id {
+        return Err(crate::security::public_error(
+            "Voce nao pode reagir ao proprio palpite.",
+        ));
+    }
+
+    let db = pool();
+    ensure_pool_membership(db, &pool_id, &session.user_id, "react_to_prediction_membership")
+        .await?;
+
+    let target_prediction: Option<(String, String)> = sqlx::query_as(
+        "SELECT m.home_team, m.away_team
+         FROM pool_members pm
+         JOIN predictions p ON p.user_id = pm.user_id AND p.match_id = ?2
+         JOIN matches m ON m.id = p.match_id
+         WHERE pm.pool_id = ?1
+           AND pm.user_id = ?3
+           AND datetime(m.kickoff) <= datetime(?4)
+           AND datetime(m.kickoff) >= datetime(pm.joined_at)",
+    )
+    .bind(&pool_id)
+    .bind(&match_id)
+    .bind(&target_user_id)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("react_to_prediction_target", e))?;
+
+    let Some((home_team, away_team)) = target_prediction else {
+        return Err(crate::security::public_error(
+            "Esse palpite nao esta disponivel para reacao.",
+        ));
+    };
+
+    let reactor_username: (String,) = sqlx::query_as("SELECT username FROM users WHERE id = ?1")
+        .bind(&session.user_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::security::internal_error("react_to_prediction_reactor", e))?;
+
+    let existing: Option<(String, String)> = sqlx::query_as(
+        "SELECT id, emoji
+         FROM prediction_reactions
+         WHERE pool_id = ?1 AND match_id = ?2 AND target_user_id = ?3 AND reactor_user_id = ?4",
+    )
+    .bind(&pool_id)
+    .bind(&match_id)
+    .bind(&target_user_id)
+    .bind(&session.user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("react_to_prediction_existing", e))?;
+
+    let now = sqlite_now();
+    let action = match existing {
+        None => {
+            sqlx::query(
+                "INSERT INTO prediction_reactions
+                    (id, pool_id, match_id, target_user_id, reactor_user_id, emoji, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&pool_id)
+            .bind(&match_id)
+            .bind(&target_user_id)
+            .bind(&session.user_id)
+            .bind(&emoji)
+            .bind(&now)
+            .execute(db)
+            .await
+            .map_err(|e| crate::security::internal_error("react_to_prediction_insert", e))?;
+            "prediction_reaction_created"
+        }
+        Some((reaction_id, existing_emoji)) if existing_emoji == emoji => {
+            sqlx::query("DELETE FROM prediction_reactions WHERE id = ?1")
+                .bind(&reaction_id)
+                .execute(db)
+                .await
+                .map_err(|e| crate::security::internal_error("react_to_prediction_delete", e))?;
+            "prediction_reaction_removed"
+        }
+        Some((reaction_id, _)) => {
+            sqlx::query(
+                "UPDATE prediction_reactions
+                 SET emoji = ?1, updated_at = ?2
+                 WHERE id = ?3",
+            )
+            .bind(&emoji)
+            .bind(&now)
+            .bind(&reaction_id)
+            .execute(db)
+            .await
+            .map_err(|e| crate::security::internal_error("react_to_prediction_update", e))?;
+            "prediction_reaction_changed"
+        }
+    };
+
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        action,
+        "prediction_reaction",
+        Some(&pool_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({
+            "pool_id": pool_id,
+            "match_id": match_id,
+            "target_user_id": target_user_id,
+            "emoji": emoji,
+        }),
+    )
+    .await?;
+
+    if action != "prediction_reaction_removed" {
+        let url = format!(
+            "/palpites-do-bolao?poolId={pool_id}&memberId={target_user_id}&matchId={match_id}"
+        );
+        let title = format!("{} reagiu ao seu palpite", reactor_username.0);
+        let body = format!(
+            "{} reagiu com {} em {} x {}.",
+            reactor_username.0, emoji, home_team, away_team
+        );
+        let tag = format!("prediction-reaction-{pool_id}-{match_id}-{target_user_id}");
+        let _ = crate::push::send_reaction_notification(
+            db,
+            &target_user_id,
+            &title,
+            &body,
+            &url,
+            &tag,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "server")]
+pub async fn mark_prediction_reactions_seen(
+    token: String,
+    pool_id: String,
+    csrf_token: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::require_user;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    crate::security::validate_uuid("Bolao", &pool_id)?;
+    let session = require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+    let db = pool();
+    ensure_pool_membership(
+        db,
+        &pool_id,
+        &session.user_id,
+        "mark_prediction_reactions_seen_membership",
+    )
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO prediction_reaction_views (pool_id, user_id, seen_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(pool_id, user_id) DO UPDATE SET seen_at = excluded.seen_at",
+    )
+    .bind(&pool_id)
+    .bind(&session.user_id)
+    .bind(sqlite_now())
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("mark_prediction_reactions_seen", e))?;
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

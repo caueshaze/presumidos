@@ -43,5 +43,5 @@ server = [
     "dep:resend-rs",
     "dep:redis",
     "dep:reqwest",
-    "dep:web-push",
 ]
+web-push = ["dep:web-push"]
