@@ -331,6 +331,19 @@ export function usePoolMemberPredictions(poolId: string | null) {
   });
 }
 
+export function usePoolBreakdowns(poolId: string | null) {
+  return useQuery({
+    queryKey: ["pool-breakdowns", poolId],
+    queryFn: () =>
+      api.get<PredictionScoreBreakdown[]>(
+        `/pools/${encodeURIComponent(poolId ?? "")}/breakdowns`,
+      ),
+    enabled: !!poolId,
+    // Acompanha resultados recém-lançados durante os jogos.
+    refetchInterval: 60_000,
+  });
+}
+
 // ---- Admin: gestão de membros de bolões -----------------------------------
 
 export function useAdminPools() {

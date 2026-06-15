@@ -2,13 +2,23 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronLeft } from "lucide-react";
-import { usePools, usePoolMemberPredictions, useMatches } from "@/hooks/queries";
+import {
+  usePools,
+  usePoolMemberPredictions,
+  usePoolBreakdowns,
+  useMatches,
+} from "@/hooks/queries";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
 import { Label, Select, ErrorBanner } from "@/components/ui/field";
 import { formatSelectionLabel } from "@/lib/selections";
 import { formatKickoff } from "@/lib/utils";
-import type { MatchRecord, MemberPredictions, PredictionRecord } from "@/types";
+import type {
+  MatchRecord,
+  MemberPredictions,
+  PredictionRecord,
+  PredictionScoreBreakdown,
+} from "@/types";
 
 function initials(name: string): string {
   return name.trim().slice(0, 2).toUpperCase();
@@ -18,9 +28,11 @@ function initials(name: string): string {
 function PredictionDetail({
   prediction,
   game,
+  breakdown,
 }: {
   prediction: PredictionRecord;
   game: MatchRecord | undefined;
+  breakdown: PredictionScoreBreakdown | undefined;
 }) {
   if (!game) return null;
 
@@ -30,6 +42,10 @@ function PredictionDetail({
       : prediction.qualifier === "away"
         ? game.awayTeam
         : null;
+
+  const hasOfficial = game.homeScore !== null && game.awayScore !== null;
+  // Pontuação que conta neste bolão: 0 quando inelegível (entrou após o kickoff).
+  const earned = breakdown && breakdown.eligible ? breakdown.totalPoints : 0;
 
   return (
     <div className="flex flex-col gap-1 border-t border-mint/20 py-3 first:border-t-0">
@@ -41,8 +57,35 @@ function PredictionDetail({
           </span>
           <span className="truncate">{formatSelectionLabel(game.awayTeam)}</span>
         </div>
-        <span className="shrink-0 text-xs text-ink-muted">{formatKickoff(game.kickoff)}</span>
+        <div className="flex shrink-0 items-center gap-2">
+          {hasOfficial && breakdown && (
+            <span
+              className={
+                earned > 0
+                  ? "rounded-pill bg-success/15 px-2.5 py-0.5 text-xs font-semibold text-mint-dark ring-1 ring-success/35"
+                  : "rounded-pill bg-card px-2.5 py-0.5 text-xs font-semibold text-ink-muted ring-1 ring-mint/25"
+              }
+              title={
+                breakdown.eligible
+                  ? "Pontos que este palpite somou no bolão"
+                  : "Não conta: entrou no bolão após o jogo começar"
+              }
+            >
+              {earned > 0 ? `+${earned} pts` : breakdown.eligible ? "0 pts" : "não conta"}
+            </span>
+          )}
+          <span className="text-xs text-ink-muted">{formatKickoff(game.kickoff)}</span>
+        </div>
       </div>
+
+      {hasOfficial && (
+        <div className="text-xs text-ink-muted">
+          Resultado oficial:{" "}
+          <span className="font-semibold text-ink">
+            {game.homeScore} x {game.awayScore}
+          </span>
+        </div>
+      )}
 
       {qualifierName && (
         <div className="text-xs text-mint-dark">
@@ -88,12 +131,20 @@ export function PoolPredictionsPage() {
 
   const members = usePoolMemberPredictions(selectedPool || null);
   const matches = useMatches();
+  const breakdowns = usePoolBreakdowns(selectedPool || null);
 
   const matchById = useMemo(() => {
     const map = new Map<string, MatchRecord>();
     for (const m of matches.data ?? []) map.set(m.id, m);
     return map;
   }, [matches.data]);
+
+  // Chave userId:matchId → breakdown, para achar os pontos de cada palpite.
+  const breakdownByKey = useMemo(() => {
+    const map = new Map<string, PredictionScoreBreakdown>();
+    for (const b of breakdowns.data ?? []) map.set(`${b.userId}:${b.matchId}`, b);
+    return map;
+  }, [breakdowns.data]);
 
   const entries: MemberPredictions[] = members.data ?? [];
   const selectedMember = entries.find((m) => m.userId === selectedMemberId) ?? null;
@@ -181,7 +232,12 @@ export function PoolPredictionsPage() {
                       </p>
                     ) : (
                       selectedMember.predictions.map((p) => (
-                        <PredictionDetail key={p.matchId} prediction={p} game={matchById.get(p.matchId)} />
+                        <PredictionDetail
+                          key={p.matchId}
+                          prediction={p}
+                          game={matchById.get(p.matchId)}
+                          breakdown={breakdownByKey.get(`${selectedMember.userId}:${p.matchId}`)}
+                        />
                       ))
                     )}
                   </div>

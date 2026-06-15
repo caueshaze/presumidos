@@ -13,6 +13,14 @@ import { HomeLiveHighlight } from "@/components/HomeLiveHighlight";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
+type GreetingPeriod = "morning" | "afternoon" | "night";
+
+type GreetingModel = {
+  period: GreetingPeriod;
+  label: string;
+  emoji: string;
+};
+
 const benefits = [
   {
     icon: "⚔️",
@@ -46,9 +54,54 @@ const section = {
   animate: { opacity: 1, y: 0 },
 };
 
+const DEFAULT_GREETING: GreetingModel = {
+  period: "morning",
+  label: "Bom dia",
+  emoji: "☀️",
+};
+
+function getGreetingForDate(date: Date): GreetingModel {
+  const hour = date.getHours();
+
+  if (hour >= 5 && hour < 12) {
+    return { period: "morning", label: "Bom dia", emoji: "☀️" };
+  }
+
+  if (hour >= 12 && hour < 18) {
+    return { period: "afternoon", label: "Boa tarde", emoji: "🌤️" };
+  }
+
+  return { period: "night", label: "Boa noite", emoji: "🌙" };
+}
+
+function getNextGreetingBoundary(now: Date): Date {
+  const next = new Date(now);
+  const hour = now.getHours();
+
+  if (hour < 5) {
+    next.setHours(5, 0, 0, 0);
+    return next;
+  }
+
+  if (hour < 12) {
+    next.setHours(12, 0, 0, 0);
+    return next;
+  }
+
+  if (hour < 18) {
+    next.setHours(18, 0, 0, 0);
+    return next;
+  }
+
+  next.setDate(next.getDate() + 1);
+  next.setHours(5, 0, 0, 0);
+  return next;
+}
+
 function LoggedInHome({ user }: { user: UserPublic }) {
   const navigate = useNavigate();
   const [reminderBannerDismissed, setReminderBannerDismissed] = useState(false);
+  const [greeting, setGreeting] = useState<GreetingModel>(DEFAULT_GREETING);
   const pools = usePools();
   const matches = useMatches();
   const predictions = useMyPredictions();
@@ -75,6 +128,19 @@ function LoggedInHome({ user }: { user: UserPublic }) {
     setReminderBannerDismissed(window.localStorage.getItem(reminderBannerKey) === "1");
   }, [reminderBannerKey]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const syncGreeting = () => setGreeting(getGreetingForDate(new Date()));
+    syncGreeting();
+
+    const nextBoundary = getNextGreetingBoundary(new Date()).getTime();
+    const timeoutMs = Math.max(1000, nextBoundary - Date.now() + 1000);
+    const timeoutId = window.setTimeout(syncGreeting, timeoutMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [greeting.period]);
+
   const showReminderBanner =
     !reminderBannerDismissed &&
     !pushReminders.status.isLoading &&
@@ -95,14 +161,57 @@ function LoggedInHome({ user }: { user: UserPublic }) {
 
   return (
     <PageShell>
-      <h1 className="text-3xl sm:text-4xl">Olá, {user.username} 👋</h1>
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+        <motion.h1
+          key={greeting.period}
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+          className="text-3xl sm:text-4xl"
+        >
+          {greeting.label}, {user.username}
+        </motion.h1>
+        <motion.span
+          key={`${greeting.period}-${greeting.emoji}`}
+          initial={{ opacity: 0, scale: 0.82, rotate: -8 }}
+          animate={{
+            opacity: 1,
+            scale: [1, 1.04, 1],
+            rotate: [0, 8, -6, 0],
+            y: [1, -4, 1],
+          }}
+          transition={{
+            opacity: { duration: 0.35 },
+            scale: { duration: 3.2, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" },
+            rotate: { duration: 3.2, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" },
+            y: { duration: 3.2, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" },
+          }}
+          className="mb-1 inline-flex text-3xl sm:text-4xl"
+          aria-hidden="true"
+        >
+          {greeting.emoji}
+        </motion.span>
+      </div>
 
-      <div className="mt-5 flex flex-wrap gap-3">
-        <Button onClick={() => navigate("/dashboard")}>Ver meus bolões</Button>
-        <Button variant="secondary" onClick={() => navigate("/predictions")}>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <Button
+          onClick={() => navigate("/predictions")}
+          className="min-h-12 px-7 text-base shadow-[0_16px_34px_rgba(91,196,166,0.26)]"
+        >
           Palpitar próximos jogos
         </Button>
-        <Button variant="outline" onClick={() => navigate("/leaderboard")}>
+        <Button
+          variant="outline"
+          onClick={() => navigate("/dashboard")}
+          className="min-h-12 border border-mint-dark/14 bg-white/72 px-7 text-base text-ink shadow-[0_12px_28px_rgba(63,77,68,0.08)] backdrop-blur-sm hover:border-mint-dark/22 hover:bg-white hover:text-ink"
+        >
+          Ver meus bolões
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => navigate("/leaderboard")}
+          className="min-h-12 border border-mint-dark/14 bg-white/72 px-7 text-base text-ink shadow-[0_12px_28px_rgba(63,77,68,0.08)] backdrop-blur-sm hover:border-mint-dark/22 hover:bg-white hover:text-ink"
+        >
           Ver ranking
         </Button>
       </div>

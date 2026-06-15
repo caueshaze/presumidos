@@ -446,6 +446,10 @@ async fn pool_member_predictions(Path(pool_id): Path<String>) -> ApiResult<impl 
     ))
 }
 
+async fn pool_breakdowns(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::scoring::list_pool_breakdowns(&pool_id).await?))
+}
+
 async fn list_pool_adjustments(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
     Ok(Json(
         crate::pools::list_pool_adjustments(String::new(), pool_id).await?,
@@ -857,6 +861,7 @@ pub fn router() -> Router {
             "/pools/{pool_id}/member-predictions",
             get(pool_member_predictions),
         )
+        .route("/pools/{pool_id}/breakdowns", get(pool_breakdowns))
         .route(
             "/pools/{pool_id}/adjustments",
             get(list_pool_adjustments).post(add_point_adjustment),
