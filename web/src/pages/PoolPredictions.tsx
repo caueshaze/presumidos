@@ -153,8 +153,7 @@ export function PoolPredictionsPage() {
     <PageShell>
       <h1 className="text-3xl">Palpites do Bolão</h1>
       <p className="mt-2 max-w-3xl text-sm text-ink-muted">
-        Veja os palpites dos outros participantes. Por justiça, o palpite de cada partida só aparece
-        depois que o jogo começa.
+        Veja os palpites dos outros participantes do bolão e compare com os seus. Os palpites aparecem aqui assim que os jogos começam, e mostram os pontos que cada um está somando no bolão.
       </p>
 
       {pools.isLoading ? (

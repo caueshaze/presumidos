@@ -217,7 +217,7 @@ export function LeaderboardPage() {
           {/* Painel do organizador: lançar ajustes manuais */}
           {isOrganizer && entries.length > 0 && (
             <Card className="mt-6 border-l-4 border-yellow-dark">
-              <h2 className="text-xl">Ajustar pontos (organizador)</h2>
+              <h2 className="text-xl">Ajustar pontos</h2>
               <p className="mt-1 text-sm text-ink-muted">
                 Lance pontos manualmente para corrigir erros. Valores negativos descontam. O ajuste
                 e o motivo ficam visíveis para todos os participantes.
