@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, SmilePlus } from "lucide-react";
 import {
   useMarkPredictionReactionsSeen,
@@ -54,8 +54,12 @@ function ReactionBar({
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
       {prediction.reactions.map((reaction) => (
-        <span
+        <motion.span
           key={reaction.emoji}
+          layout
+          initial={{ opacity: 0, y: 4, scale: 0.92 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
           className={
             reaction.reactedByViewer
               ? "rounded-pill bg-mint/25 px-2.5 py-1 text-xs font-semibold text-mint-dark ring-1 ring-mint/40"
@@ -63,18 +67,24 @@ function ReactionBar({
           }
         >
           {reaction.emoji} {reaction.count}
-        </span>
+        </motion.span>
       ))}
 
       {!disabled && (
         <div className="relative">
-          <button
+          <motion.button
             type="button"
             disabled={isPending}
             onClick={() => setIsPickerOpen((current) => !current)}
+            whileTap={{ scale: 0.94 }}
+            animate={{
+              scale: isPickerOpen ? 1.04 : 1,
+              rotate: isPickerOpen ? 6 : 0,
+            }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             className={
               prediction.viewerReaction
-                ? "inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-mint/20 px-2 text-base text-mint-dark ring-1 ring-mint/35 transition hover:bg-mint/25"
+                ? "inline-flex h-8 w-8 items-center justify-center rounded-full bg-mint/20 text-mint-dark ring-1 ring-mint/35 transition hover:bg-mint/25"
                 : "inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-ink-muted ring-1 ring-mint/20 transition hover:bg-mint/10"
             }
             aria-expanded={isPickerOpen}
@@ -84,44 +94,58 @@ function ReactionBar({
                 : "Abrir menu de reacoes"
             }
           >
-            {prediction.viewerReaction ? (
-              <span aria-hidden="true">{prediction.viewerReaction}</span>
-            ) : (
-              <SmilePlus className="h-4 w-4" />
-            )}
-          </button>
+            <SmilePlus className="h-4 w-4" />
+          </motion.button>
 
-          {isPickerOpen && (
-            <div className="absolute left-0 top-full z-10 mt-2 flex min-w-max flex-wrap gap-1.5 rounded-2xl border border-mint/20 bg-white p-2 shadow-card">
-              {REACTION_EMOJIS.map((emoji) => {
-                const active = prediction.viewerReaction === emoji;
-                return (
-                  <button
-                    key={emoji}
-                    type="button"
-                    disabled={isPending}
-                    onClick={() => {
-                      onReact({
-                        poolId,
-                        targetUserId,
-                        matchId: prediction.matchId,
-                        emoji,
-                      });
-                      setIsPickerOpen(false);
-                    }}
-                    className={
-                      active
-                        ? "rounded-full bg-mint/30 px-2.5 py-1 text-sm ring-1 ring-mint/50"
-                        : "rounded-full bg-card px-2.5 py-1 text-sm ring-1 ring-mint/20 transition hover:bg-mint/10"
-                    }
-                    aria-label={`Reagir com ${emoji}`}
-                  >
-                    {emoji}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <AnimatePresence>
+            {isPickerOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                className="absolute left-0 top-full z-10 mt-2 flex min-w-max flex-wrap gap-1.5 rounded-2xl border border-mint/20 bg-white p-2 shadow-card"
+              >
+                {REACTION_EMOJIS.map((emoji, index) => {
+                  const active = prediction.viewerReaction === emoji;
+                  return (
+                    <motion.button
+                      key={emoji}
+                      type="button"
+                      disabled={isPending}
+                      initial={{ opacity: 0, y: 6, scale: 0.92 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 4, scale: 0.92 }}
+                      transition={{
+                        delay: index * 0.02,
+                        duration: 0.16,
+                        ease: [0.22, 1, 0.36, 1],
+                      }}
+                      whileHover={{ y: -1, scale: 1.04 }}
+                      whileTap={{ scale: 0.92 }}
+                      onClick={() => {
+                        onReact({
+                          poolId,
+                          targetUserId,
+                          matchId: prediction.matchId,
+                          emoji,
+                        });
+                        setIsPickerOpen(false);
+                      }}
+                      className={
+                        active
+                          ? "rounded-full bg-mint/30 px-2.5 py-1 text-sm ring-1 ring-mint/50"
+                          : "rounded-full bg-card px-2.5 py-1 text-sm ring-1 ring-mint/20 transition hover:bg-mint/10"
+                      }
+                      aria-label={`Reagir com ${emoji}`}
+                    >
+                      {emoji}
+                    </motion.button>
+                  );
+                })}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
     </div>
