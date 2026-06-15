@@ -35,6 +35,8 @@ function ReactionBar({
   prediction,
   disabled,
   isPending,
+  isPickerOpen,
+  onTogglePicker,
   onReact,
 }: {
   poolId: string;
@@ -42,6 +44,8 @@ function ReactionBar({
   prediction: PoolPredictionRecord;
   disabled: boolean;
   isPending: boolean;
+  isPickerOpen: boolean;
+  onTogglePicker: (matchId: string) => void;
   onReact: (vars: {
     poolId: string;
     targetUserId: string;
@@ -49,8 +53,6 @@ function ReactionBar({
     emoji: string;
   }) => void;
 }) {
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
-
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
       {prediction.reactions.map((reaction) => (
@@ -75,7 +77,7 @@ function ReactionBar({
           <motion.button
             type="button"
             disabled={isPending}
-            onClick={() => setIsPickerOpen((current) => !current)}
+            onClick={() => onTogglePicker(prediction.matchId)}
             whileTap={{ scale: 0.94 }}
             animate={{
               scale: isPickerOpen ? 1.04 : 1,
@@ -130,7 +132,7 @@ function ReactionBar({
                           matchId: prediction.matchId,
                           emoji,
                         });
-                        setIsPickerOpen(false);
+                        onTogglePicker(prediction.matchId);
                       }}
                       className={
                         active
@@ -161,6 +163,8 @@ function PredictionDetail({
   highlight,
   canReact,
   reactPending,
+  isPickerOpen,
+  onTogglePicker,
   onReact,
 }: {
   poolId: string;
@@ -171,6 +175,8 @@ function PredictionDetail({
   highlight: boolean;
   canReact: boolean;
   reactPending: boolean;
+  isPickerOpen: boolean;
+  onTogglePicker: (matchId: string) => void;
   onReact: (vars: {
     poolId: string;
     targetUserId: string;
@@ -265,6 +271,8 @@ function PredictionDetail({
         prediction={prediction}
         disabled={!canReact}
         isPending={reactPending}
+        isPickerOpen={isPickerOpen}
+        onTogglePicker={onTogglePicker}
         onReact={onReact}
       />
     </div>
@@ -280,6 +288,7 @@ export function PoolPredictionsPage() {
   const matchIdParam = searchParams.get("matchId");
   const [selectedPool, setSelectedPool] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [openReactionMatchId, setOpenReactionMatchId] = useState<string | null>(null);
   const [lastSeenKey, setLastSeenKey] = useState("");
 
   useEffect(() => {
@@ -291,6 +300,7 @@ export function PoolPredictionsPage() {
 
   useEffect(() => {
     setSelectedMemberId(null);
+    setOpenReactionMatchId(null);
     setLastSeenKey("");
   }, [selectedPool]);
 
@@ -320,6 +330,10 @@ export function PoolPredictionsPage() {
       setSelectedMemberId(memberIdParam);
     }
   }, [entries, memberIdParam, selectedMemberId]);
+
+  useEffect(() => {
+    setOpenReactionMatchId(null);
+  }, [selectedMemberId]);
 
   const selectedMember = entries.find((m) => m.userId === selectedMemberId) ?? null;
 
@@ -437,6 +451,12 @@ export function PoolPredictionsPage() {
                           highlight={matchIdParam === prediction.matchId}
                           canReact={selectedMember.userId !== user?.id}
                           reactPending={reactToPrediction.isPending}
+                          isPickerOpen={openReactionMatchId === prediction.matchId}
+                          onTogglePicker={(matchId) =>
+                            setOpenReactionMatchId((current) =>
+                              current === matchId ? null : matchId,
+                            )
+                          }
                           onReact={(vars) => reactToPrediction.mutate(vars)}
                         />
                       ))
