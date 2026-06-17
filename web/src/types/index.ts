@@ -96,6 +96,10 @@ export interface LeaderboardEntry {
   userId: string;
   username: string;
   points: number;
+  /** Critérios de desempate (não incluem ajustes manuais). */
+  exactScores: number;
+  correctResults: number;
+  bonusPoints: number;
 }
 
 export interface PointAdjustment {
