@@ -204,7 +204,10 @@ export function LeaderboardPage() {
                           <th className="px-5 py-3">Posição</th>
                           <th className="px-5 py-3">Usuário</th>
                           <th className="px-5 py-3">Pontos</th>
-                          <th className="px-5 py-3" title="Placares exatos (1º critério de desempate)">
+                          <th
+                            className="whitespace-nowrap px-3 py-3"
+                            title="Placares exatos (1º critério de desempate)"
+                          >
                             🎯 Exatos
                           </th>
                         </tr>
@@ -215,7 +218,7 @@ export function LeaderboardPage() {
                             <td className="px-5 py-3">{i + 4}</td>
                             <td className="px-5 py-3">{entry.username}</td>
                             <td className="px-5 py-3">{entry.points}</td>
-                            <td className="px-5 py-3 text-ink-muted">{entry.exactScores}</td>
+                            <td className="whitespace-nowrap px-3 py-3 text-ink-muted">{entry.exactScores}</td>
                           </tr>
                         ))}
                       </tbody>
