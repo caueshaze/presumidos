@@ -641,8 +641,23 @@ pub async fn list_my_match_points() -> Result<Vec<MatchPointsSummary>, ServerFnE
     Ok(rows)
 }
 
+/// Acumulador por usuário no ranking: total de pontos e os critérios de
+/// desempate (placares exatos, acertos de resultado e bônus de precisão).
+#[cfg(feature = "server")]
+#[derive(Debug, Default, Clone, Copy)]
+struct LeaderboardTally {
+    points: i64,
+    exact_scores: i64,
+    correct_results: i64,
+    bonus_points: i64,
+}
+
 /// Calcula o ranking de um bolão somando a pontuação de cada palpite contra os
 /// resultados oficiais já lançados.
+///
+/// Empates em pontos são resolvidos, nesta ordem, por: mais placares exatos,
+/// mais acertos de resultado, mais bônus de precisão e, por fim, ordem
+/// alfabética do nome (apenas para manter o ranking determinístico).
 #[cfg(feature = "server")]
 pub async fn get_leaderboard(
     token: String,
@@ -684,13 +699,17 @@ pub async fn get_leaderboard(
 
     ensure_breakdowns_seeded(db).await?;
 
-    let mut points: HashMap<String, i64> = members
+    let mut tallies: HashMap<String, LeaderboardTally> = members
         .iter()
-        .map(|(id, _)| (id.clone(), 0))
+        .map(|(id, _)| (id.clone(), LeaderboardTally::default()))
         .collect();
 
-    let materialized: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT user_id, COALESCE(SUM(total_points), 0)
+    let materialized: Vec<(String, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT user_id,
+                COALESCE(SUM(total_points), 0),
+                COALESCE(SUM(CASE WHEN exact_score_points > 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN exact_score_points > 0 OR outcome_points > 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(goal_bonus_points + qualifier_points + penalties_points), 0)
          FROM prediction_score_breakdowns
          WHERE pool_id = ?1 AND eligible = 1
          GROUP BY user_id",
@@ -700,8 +719,12 @@ pub async fn get_leaderboard(
     .await
     .map_err(|e| crate::security::internal_error("get_leaderboard_materialized", e))?;
 
-    for (user_id, total) in materialized {
-        *points.entry(user_id).or_insert(0) += total;
+    for (user_id, total, exact_scores, correct_results, bonus_points) in materialized {
+        let t = tallies.entry(user_id).or_default();
+        t.points += total;
+        t.exact_scores += exact_scores;
+        t.correct_results += correct_results;
+        t.bonus_points += bonus_points;
     }
 
     // Overlay provisório: jogos ao vivo sem resultado oficial ainda não entram
@@ -763,7 +786,15 @@ pub async fn get_leaderboard(
             penalty_away: row.p_pen_away,
         };
         let overlay = breakdown_points(crate::models::is_knockout(row.phase.as_deref()), &official, &guess);
-        *points.entry(row.user_id).or_insert(0) += overlay.total_points;
+        let t = tallies.entry(row.user_id).or_default();
+        t.points += overlay.total_points;
+        if overlay.exact_score_points > 0 {
+            t.exact_scores += 1;
+        }
+        if overlay.exact_score_points > 0 || overlay.outcome_points > 0 {
+            t.correct_results += 1;
+        }
+        t.bonus_points += overlay.goal_bonus_points + overlay.qualifier_points + overlay.penalties_points;
     }
 
     // Ajustes manuais de pontos lançados pelo organizador (ou admin) somam ao total.
@@ -775,33 +806,126 @@ pub async fn get_leaderboard(
     .await
     .map_err(|e| crate::security::internal_error("get_leaderboard_adjustments", e))?;
 
+    // Ajustes manuais somam só nos pontos totais: o desempate deve refletir
+    // apenas acertos reais dos palpites, não correções do organizador.
     for (user_id, total) in adjustments {
-        if let Some(p) = points.get_mut(&user_id) {
-            *p += total;
+        if let Some(t) = tallies.get_mut(&user_id) {
+            t.points += total;
         }
     }
 
     let mut entries: Vec<LeaderboardEntry> = members
         .into_iter()
-        .map(|(id, username)| LeaderboardEntry {
-            points: points.get(&id).copied().unwrap_or(0),
-            user_id: id,
-            username,
+        .map(|(id, username)| {
+            let t = tallies.get(&id).copied().unwrap_or_default();
+            LeaderboardEntry {
+                points: t.points,
+                exact_scores: t.exact_scores,
+                correct_results: t.correct_results,
+                bonus_points: t.bonus_points,
+                user_id: id,
+                username,
+            }
         })
         .collect();
 
-    entries.sort_by(|a, b| {
-        b.points
-            .cmp(&a.points)
-            .then_with(|| a.username.cmp(&b.username))
-    });
+    rank_leaderboard(&mut entries);
 
     Ok(entries)
 }
 
+/// Ordena o ranking pelo total de pontos e, em caso de empate, pelos critérios
+/// de desempate: mais placares exatos, mais acertos de resultado, mais bônus de
+/// precisão e, por último, ordem alfabética do nome (só para ser determinístico).
+#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(any(feature = "server", test))]
+pub fn rank_leaderboard(entries: &mut [LeaderboardEntry]) {
+    entries.sort_by(|a, b| {
+        b.points
+            .cmp(&a.points)
+            .then_with(|| b.exact_scores.cmp(&a.exact_scores))
+            .then_with(|| b.correct_results.cmp(&a.correct_results))
+            .then_with(|| b.bonus_points.cmp(&a.bonus_points))
+            .then_with(|| a.username.cmp(&b.username))
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{match_points, Outcome};
+    use super::{match_points, rank_leaderboard, Outcome};
+    use crate::models::LeaderboardEntry;
+
+    fn entry(
+        username: &str,
+        points: i64,
+        exact_scores: i64,
+        correct_results: i64,
+        bonus_points: i64,
+    ) -> LeaderboardEntry {
+        LeaderboardEntry {
+            user_id: username.to_string(),
+            username: username.to_string(),
+            points,
+            exact_scores,
+            correct_results,
+            bonus_points,
+        }
+    }
+
+    fn order(entries: &mut Vec<LeaderboardEntry>) -> Vec<String> {
+        rank_leaderboard(entries);
+        entries.iter().map(|e| e.username.clone()).collect()
+    }
+
+    // Mais pontos sempre vem primeiro, independente dos critérios de desempate.
+    #[test]
+    fn ranks_by_points_first() {
+        let mut entries = vec![
+            entry("ana", 10, 0, 0, 0),
+            entry("bia", 20, 0, 0, 0),
+        ];
+        assert_eq!(order(&mut entries), vec!["bia", "ana"]);
+    }
+
+    // Empate em pontos → quem tem mais placares exatos sobe.
+    #[test]
+    fn breaks_tie_by_exact_scores() {
+        let mut entries = vec![
+            entry("ana", 30, 2, 5, 1),
+            entry("bia", 30, 3, 4, 0),
+        ];
+        assert_eq!(order(&mut entries), vec!["bia", "ana"]);
+    }
+
+    // Empate em pontos e placares exatos → mais acertos de resultado.
+    #[test]
+    fn breaks_tie_by_correct_results() {
+        let mut entries = vec![
+            entry("ana", 30, 2, 4, 5),
+            entry("bia", 30, 2, 6, 0),
+        ];
+        assert_eq!(order(&mut entries), vec!["bia", "ana"]);
+    }
+
+    // Empate em pontos, exatos e resultados → mais bônus de precisão.
+    #[test]
+    fn breaks_tie_by_bonus_points() {
+        let mut entries = vec![
+            entry("ana", 30, 2, 5, 1),
+            entry("bia", 30, 2, 5, 4),
+        ];
+        assert_eq!(order(&mut entries), vec!["bia", "ana"]);
+    }
+
+    // Empate total → ordem alfabética determinística.
+    #[test]
+    fn breaks_full_tie_by_username() {
+        let mut entries = vec![
+            entry("bia", 30, 2, 5, 1),
+            entry("ana", 30, 2, 5, 1),
+        ];
+        assert_eq!(order(&mut entries), vec!["ana", "bia"]);
+    }
 
     fn group(home: i64, away: i64) -> Outcome {
         Outcome {
