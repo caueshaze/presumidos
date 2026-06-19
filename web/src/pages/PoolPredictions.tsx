@@ -87,7 +87,7 @@ function ReactionBar({
             className={
               prediction.viewerReaction
                 ? "inline-flex h-8 w-8 items-center justify-center rounded-full bg-mint/20 text-mint-dark ring-1 ring-mint/35 transition hover:bg-mint/25"
-                : "inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-ink-muted ring-1 ring-mint/20 transition hover:bg-mint/10"
+                : "inline-flex h-8 w-8 items-center justify-center rounded-full bg-card text-ink-muted ring-1 ring-mint/20 transition hover:bg-mint/10"
             }
             aria-expanded={isPickerOpen}
             aria-label={
@@ -106,7 +106,7 @@ function ReactionBar({
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.98 }}
                 transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                className="absolute left-0 top-full z-10 mt-2 flex min-w-max flex-wrap gap-1.5 rounded-2xl border border-mint/20 bg-white p-2 shadow-card"
+                className="absolute left-0 top-full z-10 mt-2 flex min-w-max flex-wrap gap-1.5 rounded-2xl border border-mint/20 bg-card p-2 shadow-card"
               >
                 {REACTION_EMOJIS.map((emoji, index) => {
                   const active = prediction.viewerReaction === emoji;
