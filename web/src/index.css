@@ -3,6 +3,70 @@
 @tailwind utilities;
 
 @layer base {
+  /* Tema claro (padrão) — "Pastel Futebol/Copa" refinado. */
+  :root {
+    --color-bg: 244 247 240;
+    --color-card: 255 255 255;
+    --color-mint: 168 230 207;
+    --color-mint-dark: 79 191 159;
+    --color-yellow: 255 224 138;
+    --color-yellow-dark: 244 201 93;
+    --color-sky: 160 210 235;
+    --color-sky-dark: 111 182 222;
+    --color-ink: 34 48 46;
+    --color-ink-muted: 107 122 122;
+    --color-danger: 255 140 140;
+    --color-danger-bg: 255 231 231;
+    --color-success: 95 191 159;
+    --color-accent-fg: 255 255 255;
+    /* Botão secundário: pastel no claro, azul-oceano fundo no dark. */
+    --color-secondary: 160 210 235;
+    --color-secondary-hover: 111 182 222;
+
+    --grad-from: 234 246 240;
+    --grad-to: 255 248 231;
+    --blob-1: 168 230 207;
+    --blob-1-alpha: 0.32;
+    --blob-2: 160 210 235;
+    --blob-2-alpha: 0.22;
+    --shadow-card: 0 4px 20px rgba(45, 58, 58, 0.08);
+    --shadow-card-hover: 0 8px 28px rgba(45, 58, 58, 0.12);
+
+    color-scheme: light;
+  }
+
+  /* Tema escuro — "Estádio à noite": gramado verde-carvão sob refletores. */
+  .dark {
+    --color-bg: 14 22 20;
+    --color-card: 22 33 30;
+    --color-mint: 111 224 184;
+    --color-mint-dark: 79 206 159;
+    --color-yellow: 255 217 122;
+    --color-yellow-dark: 242 193 78;
+    --color-sky: 134 201 240;
+    --color-sky-dark: 95 176 230;
+    --color-ink: 230 239 233;
+    --color-ink-muted: 147 163 157;
+    --color-danger: 255 155 155;
+    --color-danger-bg: 58 30 30;
+    --color-success: 111 224 184;
+    --color-accent-fg: 14 22 20;
+    /* Azul-oceano fundo — texto claro lê com contraste AA, assenta no gramado. */
+    --color-secondary: 42 102 164;
+    --color-secondary-hover: 35 88 143;
+
+    --grad-from: 12 20 18;
+    --grad-to: 10 18 22;
+    --blob-1: 79 206 159;
+    --blob-1-alpha: 0.16;
+    --blob-2: 95 176 230;
+    --blob-2-alpha: 0.13;
+    --shadow-card: 0 6px 24px rgba(0, 0, 0, 0.45);
+    --shadow-card-hover: 0 10px 34px rgba(0, 0, 0, 0.55);
+
+    color-scheme: dark;
+  }
+
   html {
     scroll-behavior: smooth;
   }
@@ -11,10 +75,36 @@
     @apply bg-bg font-body text-ink;
     margin: 0;
     min-height: 100vh;
-    background-image: linear-gradient(180deg, #eaf6f0 0%, #fff8e7 100%);
+    background-image: linear-gradient(
+      180deg,
+      rgb(var(--grad-from)) 0%,
+      rgb(var(--grad-to)) 100%
+    );
     background-attachment: fixed;
     line-height: 1.5;
     overflow-x: hidden;
+    /* Crossfade suave ao alternar tema. */
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  /* Superfícies e bordas acompanham a troca de tema sem "pular". */
+  .card,
+  [class*="bg-card"],
+  [class*="bg-bg"] {
+    transition: background-color 0.3s ease, border-color 0.3s ease,
+      box-shadow 0.3s ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    body,
+    .card,
+    [class*="bg-card"],
+    [class*="bg-bg"] {
+      transition: none;
+    }
   }
 
   h1,
@@ -25,7 +115,7 @@
     font-weight: 600;
   }
 
-  /* Bolhas pastel flutuantes ao fundo (decorativo). */
+  /* Bolhas flutuantes ao fundo: pastel no claro, "piscinas de refletor" no dark. */
   body::before,
   body::after {
     content: "";
@@ -33,14 +123,15 @@
     pointer-events: none;
     z-index: -1;
     border-radius: 999px;
-    filter: blur(10px);
+    transition: background 0.3s ease, filter 0.3s ease;
   }
   body::before {
     top: -40px;
     right: -60px;
     width: 220px;
     height: 220px;
-    background: rgba(168, 230, 207, 0.32);
+    background: rgb(var(--blob-1) / var(--blob-1-alpha));
+    filter: blur(10px);
     @apply animate-floatBlob;
   }
   body::after {
@@ -48,8 +139,21 @@
     bottom: 40px;
     width: 260px;
     height: 260px;
-    background: rgba(160, 210, 235, 0.22);
+    background: rgb(var(--blob-2) / var(--blob-2-alpha));
+    filter: blur(10px);
     animation: floatBlob 18s ease-in-out infinite reverse;
+  }
+  /* Refletores ganham um halo mais difuso à noite. */
+  .dark body::before,
+  .dark body::after {
+    filter: blur(60px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    body::before,
+    body::after {
+      animation: none;
+    }
   }
 }
 

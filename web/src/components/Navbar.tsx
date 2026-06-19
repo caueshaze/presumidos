@@ -4,6 +4,7 @@ import { Menu, X } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "./ui/button";
+import { ThemeToggle } from "./ui/ThemeToggle";
 import { cn } from "@/lib/utils";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
@@ -59,15 +60,18 @@ export function Navbar() {
           <span className="block truncate">Presumidos</span>
         </NavLink>
 
-        <button
-          type="button"
-          aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
-          aria-expanded={mobileOpen}
-          onClick={() => setMobileOpen((open) => !open)}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-mint-dark/15 bg-white/75 text-ink shadow-sm transition-colors hover:bg-white sm:hidden"
-        >
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+        <div className="flex items-center gap-2 sm:hidden">
+          <ThemeToggle />
+          <button
+            type="button"
+            aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen((open) => !open)}
+            className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-mint-dark/15 bg-card/75 text-ink shadow-sm transition-colors hover:bg-card"
+          >
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
 
         <div className="hidden min-w-0 items-center gap-2 sm:flex sm:flex-1">
           {user ? (
@@ -93,6 +97,7 @@ export function Navbar() {
                 </>
               )}
               <div className="flex-1" />
+              <ThemeToggle className="h-9 w-9" />
               <NavLink
                 to="/conta"
                 className="truncate rounded-pill px-2 py-1 text-sm text-ink-muted transition-colors hover:text-ink"
@@ -106,6 +111,7 @@ export function Navbar() {
           ) : (
             <>
               <div className="flex-1" />
+              <ThemeToggle className="h-9 w-9" />
               {!loading && (
                 <div className="flex items-center gap-2">
                   <Button variant="secondary" size="sm" onClick={() => navigate("/login")}>
@@ -130,7 +136,7 @@ export function Navbar() {
             transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             className="overflow-hidden sm:hidden"
           >
-            <div className="mt-3 flex flex-col gap-3 rounded-[24px] border border-mint-dark/10 bg-white/80 p-3 shadow-[0_12px_28px_rgba(63,77,68,0.08)]">
+            <div className="mt-3 flex flex-col gap-3 rounded-[24px] border border-mint-dark/10 bg-card/80 p-3 shadow-[0_12px_28px_rgba(63,77,68,0.08)]">
               {user ? (
                 <>
                   <NavLink to="/conta" className={mobileLinkClass}>

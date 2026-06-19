@@ -19,7 +19,7 @@ export function Layout() {
         <Outlet />
       </div>
       <footer className="mx-auto w-full max-w-[1100px] px-5 pb-8 pt-4 text-sm text-ink-muted">
-        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 rounded-lg border border-mint-dark/10 bg-white/55 px-4 py-4 text-center shadow-sm backdrop-blur-sm">
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 rounded-lg border border-mint-dark/10 bg-card/55 px-4 py-4 text-center shadow-sm backdrop-blur-sm">
           <Link to="/terms" className="font-semibold text-mint-dark hover:underline">
             Termos de Uso
           </Link>

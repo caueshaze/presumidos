@@ -203,14 +203,14 @@ function LoggedInHome({ user }: { user: UserPublic }) {
         <Button
           variant="outline"
           onClick={() => navigate("/dashboard")}
-          className="min-h-12 border border-mint-dark/14 bg-white/72 px-7 text-base text-ink shadow-[0_12px_28px_rgba(63,77,68,0.08)] backdrop-blur-sm hover:border-mint-dark/22 hover:bg-white hover:text-ink"
+          className="min-h-12 border border-mint-dark/14 bg-card/72 px-7 text-base text-ink shadow-[0_12px_28px_rgba(63,77,68,0.08)] backdrop-blur-sm hover:border-mint-dark/22 hover:bg-card hover:text-ink"
         >
           Ver meus bolões
         </Button>
         <Button
           variant="outline"
           onClick={() => navigate("/leaderboard")}
-          className="min-h-12 border border-mint-dark/14 bg-white/72 px-7 text-base text-ink shadow-[0_12px_28px_rgba(63,77,68,0.08)] backdrop-blur-sm hover:border-mint-dark/22 hover:bg-white hover:text-ink"
+          className="min-h-12 border border-mint-dark/14 bg-card/72 px-7 text-base text-ink shadow-[0_12px_28px_rgba(63,77,68,0.08)] backdrop-blur-sm hover:border-mint-dark/22 hover:bg-card hover:text-ink"
         >
           Ver ranking
         </Button>
@@ -220,7 +220,7 @@ function LoggedInHome({ user }: { user: UserPublic }) {
 
       {showReminderBanner && (
         <motion.section {...section} transition={{ duration: 0.3 }} className="mt-8">
-          <Card className="border border-sky/20 bg-white/70 p-4">
+          <Card className="border border-sky/20 bg-card/70 p-4">
             <div className="flex flex-col gap-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="max-w-3xl">

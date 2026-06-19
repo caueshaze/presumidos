@@ -86,12 +86,12 @@ function MetricCard({
       ? "border-danger/30 bg-danger-bg"
       : tone === "highlight"
         ? "border-sky/40 bg-sky/15"
-        : "border-mint/20 bg-white/80";
+        : "border-mint/20 bg-card/80";
 
   return (
     <Card className={`border ${toneClass} p-4`}>
       <div className="flex items-center gap-3">
-        <div className="rounded-full bg-white/80 p-2 text-mint-dark">{icon}</div>
+        <div className="rounded-full bg-card/80 p-2 text-mint-dark">{icon}</div>
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-ink-muted">{label}</p>
           <p className="mt-1 font-heading text-2xl font-semibold text-ink">{value}</p>
@@ -105,7 +105,7 @@ function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
       {...props}
-      className={`min-h-28 w-full rounded-md border-2 border-mint/40 bg-white px-4 py-2.5 text-ink focus:border-mint-dark focus:outline-none focus:shadow-glow ${props.className ?? ""}`}
+      className={`min-h-28 w-full rounded-md border-2 border-mint/40 bg-card px-4 py-2.5 text-ink focus:border-mint-dark focus:outline-none focus:shadow-glow ${props.className ?? ""}`}
     />
   );
 }
@@ -381,7 +381,7 @@ export function AdminPage() {
             <h2 className="text-xl">Feed recente de jogos</h2>
             <div className="mt-3 space-y-3">
               {overview.data?.activityFeed.map((item) => (
-                <div key={`${item.action}-${item.at}-${item.targetId ?? "none"}`} className="rounded-lg border border-mint/15 bg-white/75 px-4 py-3">
+                <div key={`${item.action}-${item.at}-${item.targetId ?? "none"}`} className="rounded-lg border border-mint/15 bg-card/75 px-4 py-3">
                   <p className="font-semibold text-ink">{item.label}</p>
                   <p className="mt-1 text-xs uppercase tracking-[0.14em] text-ink-muted">
                     {item.action} · {formatKickoff(item.at)}
@@ -437,7 +437,7 @@ export function AdminPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: Math.min(index * 0.02, 0.2) }}
                   onClick={() => setSelectedMatchId(item.matchRecord.id)}
-                  className={`w-full rounded-2xl border px-4 py-4 text-left transition ${selectedMatchId === item.matchRecord.id ? "border-mint-dark bg-mint/10 shadow-glow" : "border-mint/15 bg-white/70"}`}
+                  className={`w-full rounded-2xl border px-4 py-4 text-left transition ${selectedMatchId === item.matchRecord.id ? "border-mint-dark bg-mint/10 shadow-glow" : "border-mint/15 bg-card/70"}`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -533,7 +533,7 @@ export function AdminPage() {
                   <h3 className="text-lg">Auditoria deste jogo</h3>
                   <div className="mt-3 space-y-2">
                     {selectedMatchAudit.data?.map((entry) => (
-                      <div key={entry.id} className="rounded-xl border border-mint/15 bg-white/75 px-4 py-3">
+                      <div key={entry.id} className="rounded-xl border border-mint/15 bg-card/75 px-4 py-3">
                         <p className="font-semibold text-ink">
                           {entry.action} · {entry.actorUsername ?? "Sistema"}
                         </p>
@@ -598,7 +598,7 @@ export function AdminPage() {
 
             <div className="mt-5 space-y-3">
               {adminPredictions.data?.slice(0, 80).map((row) => (
-                <div key={`${row.poolId}-${row.userId}-${row.matchId}`} className="rounded-2xl border border-mint/15 bg-white/70 px-4 py-4">
+                <div key={`${row.poolId}-${row.userId}-${row.matchId}`} className="rounded-2xl border border-mint/15 bg-card/70 px-4 py-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold text-ink">
@@ -651,14 +651,14 @@ export function AdminPage() {
               <Label>Motivo padrão</Label>
               <TextArea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="Ex.: falha de travamento indevido após o kickoff" />
             </div>
-            <div className="mt-5 rounded-2xl border border-mint/15 bg-white/70 px-4 py-4">
+            <div className="mt-5 rounded-2xl border border-mint/15 bg-card/70 px-4 py-4">
               <p className="font-semibold text-ink">Quem ainda não palpitou no filtro atual</p>
               <div className="mt-3 space-y-2">
                 {selectedMatchRows
                   .filter((row) => row.missing)
                   .slice(0, 12)
                   .map((row) => (
-                    <div key={`${row.userId}-${row.matchId}`} className="flex items-center justify-between gap-3 rounded-xl border border-mint/10 bg-white px-3 py-3">
+                    <div key={`${row.userId}-${row.matchId}`} className="flex items-center justify-between gap-3 rounded-xl border border-mint/10 bg-card px-3 py-3">
                       <div>
                         <p className="font-semibold text-ink">{row.username}</p>
                         <p className="text-xs text-ink-muted">{row.poolName}</p>
@@ -712,7 +712,7 @@ export function AdminPage() {
             </div>
 
             {selectedUser && (
-              <div className="mt-5 rounded-2xl border border-mint/15 bg-white/75 px-4 py-4">
+              <div className="mt-5 rounded-2xl border border-mint/15 bg-card/75 px-4 py-4">
                 <p className="font-semibold text-ink">{selectedUser.user.username}</p>
                 <p className="text-sm text-ink-muted">{selectedUser.user.email}</p>
                 <p className="mt-1 text-xs uppercase tracking-[0.14em] text-ink-muted">
@@ -767,7 +767,7 @@ export function AdminPage() {
                   key={item.user.id}
                   type="button"
                   onClick={() => setSelectedUserId(item.user.id)}
-                  className={`w-full rounded-2xl border px-4 py-4 text-left transition ${selectedUserId === item.user.id ? "border-mint-dark bg-mint/10" : "border-mint/15 bg-white/70"}`}
+                  className={`w-full rounded-2xl border px-4 py-4 text-left transition ${selectedUserId === item.user.id ? "border-mint-dark bg-mint/10" : "border-mint/15 bg-card/70"}`}
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -820,7 +820,7 @@ export function AdminPage() {
                   <h3 className="text-lg">Pools em que está</h3>
                   <div className="mt-3 space-y-2">
                     {selectedUserPools.data?.map((pool) => (
-                      <div key={pool.id} className="rounded-xl border border-mint/15 bg-white/75 px-4 py-3">
+                      <div key={pool.id} className="rounded-xl border border-mint/15 bg-card/75 px-4 py-3">
                         <p className="font-semibold text-ink">{pool.name}</p>
                         <p className="text-xs text-ink-muted">
                           Convite: {pool.inviteCode} · {pool.joinClosedAt ? "fechado" : "aberto"}
@@ -847,7 +847,7 @@ export function AdminPage() {
                   key={pool.id}
                   type="button"
                   onClick={() => setSelectedPoolId(pool.id)}
-                  className={`w-full rounded-2xl border px-4 py-4 text-left transition ${selectedPoolId === pool.id ? "border-mint-dark bg-mint/10" : "border-mint/15 bg-white/70"}`}
+                  className={`w-full rounded-2xl border px-4 py-4 text-left transition ${selectedPoolId === pool.id ? "border-mint-dark bg-mint/10" : "border-mint/15 bg-card/70"}`}
                 >
                   <p className="font-semibold text-ink">{pool.name}</p>
                   <p className="mt-1 text-sm text-ink-muted">
@@ -886,7 +886,7 @@ export function AdminPage() {
             </div>
             <div className="mt-5 space-y-2">
               {selectedPoolMembers.data?.map((member) => (
-                <div key={member.id} className="flex items-center justify-between gap-3 rounded-xl border border-mint/15 bg-white/75 px-4 py-3">
+                <div key={member.id} className="flex items-center justify-between gap-3 rounded-xl border border-mint/15 bg-card/75 px-4 py-3">
                   <div>
                     <p className="font-semibold text-ink">{member.username}</p>
                     <p className="text-sm text-ink-muted">{member.email}</p>
@@ -910,7 +910,7 @@ export function AdminPage() {
           <h2 className="text-2xl">Auditoria</h2>
           <div className="mt-4 space-y-3">
             {audit.data?.map((entry) => (
-              <div key={entry.id} className="rounded-2xl border border-mint/15 bg-white/75 px-4 py-4">
+              <div key={entry.id} className="rounded-2xl border border-mint/15 bg-card/75 px-4 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="font-semibold text-ink">
                     {entry.action} · {entry.actorUsername ?? "Sistema"}

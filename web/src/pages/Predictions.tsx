@@ -91,7 +91,7 @@ export function PredictionsPage() {
           <>
             {isAdmin && <KnockoutControl released={knockout.data?.released ?? false} />}
             {finishedCount > 0 && (
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-mint/20 bg-white/60 px-4 py-3">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-mint/20 bg-card/60 px-4 py-3">
                 <div className="text-sm text-ink-muted">
                   {hideFinished ? (
                     <>

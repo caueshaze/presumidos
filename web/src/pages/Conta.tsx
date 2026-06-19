@@ -227,7 +227,7 @@ export function ContaPage() {
               </Button>
             </div>
 
-            <div className="rounded-md border border-mint/25 bg-white px-4 py-4 text-sm text-ink">
+            <div className="rounded-md border border-mint/25 bg-card px-4 py-4 text-sm text-ink">
               <p className="font-semibold">
                 Status da conta: {pushReminders.preference.enabled ? "ativado" : "desativado"}
               </p>

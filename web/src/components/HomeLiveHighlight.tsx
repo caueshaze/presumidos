@@ -51,7 +51,7 @@ function LiveCard({
 }) {
   return (
     <Card
-      className="cursor-pointer border border-danger/20 bg-white/70 hover:shadow-card-hover"
+      className="cursor-pointer border border-danger/20 bg-card/70 hover:shadow-card-hover"
       onClick={onClick}
     >
       <div className="flex items-center justify-between gap-3">
@@ -105,7 +105,7 @@ function NextGameCard({ game, onClick }: { game: MatchRecord; onClick: () => voi
 
   return (
     <Card
-      className="cursor-pointer border border-sky/20 bg-white/70 hover:shadow-card-hover"
+      className="cursor-pointer border border-sky/20 bg-card/70 hover:shadow-card-hover"
       onClick={onClick}
     >
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-sky-dark">

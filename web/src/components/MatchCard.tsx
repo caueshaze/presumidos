@@ -582,25 +582,34 @@ export function MatchCard({
           )}
 
           {error && <ErrorBanner>{error}</ErrorBanner>}
-          <AnimatePresence>
+          <AnimatePresence initial={false}>
             {savedMessage && (
+              // Wrapper externo: -mt-3 cancela de forma constante o gap-3 do form
+              // (evita o "pulo" que o flex gap dá ao montar/desmontar o item).
+              // Só height + opacity animam; o espaçamento visível (mt-3 interno)
+              // vive dentro da área overflow-hidden, então colapsa junto com a altura.
               <motion.div
                 key="saved"
-                initial={{ opacity: 0, y: -6, scale: 0.96 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.96 }}
-                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-                className="flex items-center gap-2 rounded-md border border-success/40 bg-mint/30 px-4 py-2.5 font-heading font-semibold text-mint-dark"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{
+                  height: { duration: 0.32, ease: [0.22, 1, 0.36, 1] },
+                  opacity: { duration: 0.22, ease: "easeOut" },
+                }}
+                className="-mt-3 overflow-hidden"
               >
-                <motion.span
-                  initial={{ scale: 0, rotate: -30 }}
-                  animate={{ scale: 1, rotate: 0 }}
-                  transition={{ type: "spring", stiffness: 500, damping: 18, delay: 0.05 }}
-                  className="flex"
-                >
-                  <CheckCircle2 className="h-5 w-5" strokeWidth={2.5} />
-                </motion.span>
-                {savedMessage}
+                <div className="mt-3 flex items-center gap-2 rounded-md border border-success/40 bg-mint/30 px-4 py-2.5 font-heading font-semibold text-mint-dark">
+                  <motion.span
+                    initial={{ scale: 0, rotate: -30 }}
+                    animate={{ scale: 1, rotate: 0 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 18, delay: 0.08 }}
+                    className="flex"
+                  >
+                    <CheckCircle2 className="h-5 w-5" strokeWidth={2.5} />
+                  </motion.span>
+                  {savedMessage}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

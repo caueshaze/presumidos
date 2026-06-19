@@ -1,19 +1,28 @@
 import type { Config } from "tailwindcss";
 
-// Tokens espelhando o tema "Pastel Futebol/Copa" da versão Dioxus.
+// Tokens "Pastel Futebol/Copa" via CSS variables (canais RGB) — claro + dark.
+// As variáveis são definidas em src/index.css (:root e .dark).
+const withVar = (name: string) => `rgb(var(${name}) / <alpha-value>)`;
+
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        bg: "#f4f7f0",
-        mint: { DEFAULT: "#a8e6cf", dark: "#5fbf9f" },
-        yellow: { DEFAULT: "#ffe08a", dark: "#f4c95d" },
-        sky: { DEFAULT: "#a0d2eb", dark: "#6fb6de" },
-        ink: { DEFAULT: "#2d3a3a", muted: "#6b7a7a" },
-        card: "#ffffff",
-        danger: { DEFAULT: "#ff8c8c", bg: "#ffe7e7" },
-        success: "#5fbf9f",
+        bg: withVar("--color-bg"),
+        mint: { DEFAULT: withVar("--color-mint"), dark: withVar("--color-mint-dark") },
+        yellow: { DEFAULT: withVar("--color-yellow"), dark: withVar("--color-yellow-dark") },
+        sky: { DEFAULT: withVar("--color-sky"), dark: withVar("--color-sky-dark") },
+        ink: { DEFAULT: withVar("--color-ink"), muted: withVar("--color-ink-muted") },
+        card: withVar("--color-card"),
+        danger: { DEFAULT: withVar("--color-danger"), bg: withVar("--color-danger-bg") },
+        success: withVar("--color-success"),
+        "accent-fg": withVar("--color-accent-fg"),
+        secondary: {
+          DEFAULT: withVar("--color-secondary"),
+          hover: withVar("--color-secondary-hover"),
+        },
       },
       borderRadius: {
         sm: "10px",
@@ -22,9 +31,9 @@ export default {
         pill: "999px",
       },
       boxShadow: {
-        card: "0 4px 20px rgba(45, 58, 58, 0.08)",
-        "card-hover": "0 8px 28px rgba(45, 58, 58, 0.12)",
-        glow: "0 0 0 6px rgba(168, 230, 207, 0.16)",
+        card: "var(--shadow-card)",
+        "card-hover": "var(--shadow-card-hover)",
+        glow: "0 0 0 6px rgb(var(--color-mint) / 0.18)",
       },
       fontFamily: {
         heading: ['"Fredoka"', '"Segoe UI"', "sans-serif"],
