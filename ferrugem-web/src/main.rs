@@ -12,13 +12,18 @@ mod football;
 mod matches;
 mod models;
 mod pools;
-mod push;
 mod scoring;
 
 mod config;
 mod db;
 mod email;
 mod security;
+
+#[cfg(feature = "web-push")]
+mod push;
+#[cfg(not(feature = "web-push"))]
+#[path = "push_stub.rs"]
+mod push;
 
 #[cfg(all(test, feature = "server"))]
 mod http_tests;

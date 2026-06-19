@@ -119,6 +119,11 @@ export function LeaderboardPage() {
         correto vale 3; acertar os gols de um time que marcou pelo menos 1 gol dá +1 se você acertou o ganhador. No mata-mata,
         acertar o classificado dá +2, e palpites corretos sobre pênaltis podem render bônus extras.
       </p>
+      <p className="mt-2 max-w-3xl text-sm text-ink-muted">
+        <span className="font-semibold text-ink">Em caso de empate na pontuação</span>, desempata, nesta ordem: (1) mais
+        placares exatos cravados; (2) mais acertos de resultado; (3) mais bônus de precisão
+        (gols, classificado e pênaltis). Ajustes manuais não contam no desempate.
+      </p>
 
       {pools.isLoading ? (
         <Card className="mt-6">
@@ -184,6 +189,9 @@ export function LeaderboardPage() {
                       <span className="text-3xl">{medals[i]}</span>
                       <div className="mt-1 font-heading font-semibold">{entry.username}</div>
                       <div className="text-sm text-mint-dark">{entry.points} pts</div>
+                      <div className="text-xs text-ink-muted">
+                        🎯 {entry.exactScores} {entry.exactScores === 1 ? "exato" : "exatos"}
+                      </div>
                     </motion.div>
                   ))}
                 </div>
@@ -196,6 +204,12 @@ export function LeaderboardPage() {
                           <th className="px-5 py-3">Posição</th>
                           <th className="px-5 py-3">Usuário</th>
                           <th className="px-5 py-3">Pontos</th>
+                          <th
+                            className="whitespace-nowrap px-3 py-3"
+                            title="Placares exatos (1º critério de desempate)"
+                          >
+                            🎯 Exatos
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -204,6 +218,7 @@ export function LeaderboardPage() {
                             <td className="px-5 py-3">{i + 4}</td>
                             <td className="px-5 py-3">{entry.username}</td>
                             <td className="px-5 py-3">{entry.points}</td>
+                            <td className="whitespace-nowrap px-3 py-3 text-ink-muted">{entry.exactScores}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -217,7 +232,7 @@ export function LeaderboardPage() {
           {/* Painel do organizador: lançar ajustes manuais */}
           {isOrganizer && entries.length > 0 && (
             <Card className="mt-6 border-l-4 border-yellow-dark">
-              <h2 className="text-xl">Ajustar pontos (organizador)</h2>
+              <h2 className="text-xl">Ajustar pontos</h2>
               <p className="mt-1 text-sm text-ink-muted">
                 Lance pontos manualmente para corrigir erros. Valores negativos descontam. O ajuste
                 e o motivo ficam visíveis para todos os participantes.

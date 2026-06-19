@@ -154,6 +154,7 @@ export function ContaPage() {
                         void pushReminders.updateAccountPreference({
                           enabled: pushReminders.preference.enabled,
                           leadTimeMinutes: minutes,
+                          reactionEnabled: pushReminders.preference.reactionEnabled,
                         })
                       }
                     >
@@ -164,6 +165,43 @@ export function ContaPage() {
               </div>
               <p className="mt-2 text-xs text-ink-muted">
                 O worker manda no máximo um lembrete por jogo para a sua conta.
+              </p>
+            </div>
+
+            <div>
+              <Label>Reacoes aos meus palpites</Label>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  type="button"
+                  variant={pushReminders.preference.reactionEnabled ? "primary" : "outline"}
+                  disabled={pushReminders.actionPending || !pushReminders.status.data}
+                  onClick={() =>
+                    void pushReminders.updateAccountPreference({
+                      enabled: pushReminders.preference.enabled,
+                      leadTimeMinutes: pushReminders.preference.leadTimeMinutes,
+                      reactionEnabled: true,
+                    })
+                  }
+                >
+                  Ativar
+                </Button>
+                <Button
+                  type="button"
+                  variant={!pushReminders.preference.reactionEnabled ? "primary" : "outline"}
+                  disabled={pushReminders.actionPending || !pushReminders.status.data}
+                  onClick={() =>
+                    void pushReminders.updateAccountPreference({
+                      enabled: pushReminders.preference.enabled,
+                      leadTimeMinutes: pushReminders.preference.leadTimeMinutes,
+                      reactionEnabled: false,
+                    })
+                  }
+                >
+                  Desativar
+                </Button>
+              </div>
+              <p className="mt-2 text-xs text-ink-muted">
+                Quando ativado, voce recebe aviso quando alguem reagir a um palpite seu.
               </p>
             </div>
 
@@ -202,6 +240,7 @@ export function ContaPage() {
                   void pushReminders.updateAccountPreference({
                     enabled: true,
                     leadTimeMinutes: pushReminders.preference.leadTimeMinutes,
+                    reactionEnabled: pushReminders.preference.reactionEnabled,
                   })
                 }
               >
@@ -220,6 +259,7 @@ export function ContaPage() {
                   void pushReminders.updateAccountPreference({
                     enabled: false,
                     leadTimeMinutes: pushReminders.preference.leadTimeMinutes,
+                    reactionEnabled: pushReminders.preference.reactionEnabled,
                   })
                 }
               >

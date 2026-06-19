@@ -1,12 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-// Em dev, o backend Axum roda em :8080. O proxy encaminha /api para lá,
-// então o cookie de sessão (same-origin via proxy) funciona sem CORS.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Config JS simples para evitar o loader TS/esbuild no build do Windows.
 export default defineConfig(() => {
-  // O contato público usa fallback do backend em runtime; aqui deixamos
-  // apenas um valor opcional para builds locais sem depender do `.env` da raiz.
   const contactEmail = (process.env.VITE_CONTACT_EMAIL ?? process.env.WEB_PUSH_CONTACT_EMAIL ?? "")
     .trim();
 

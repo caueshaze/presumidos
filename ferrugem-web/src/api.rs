@@ -280,11 +280,20 @@ struct PoolIdQuery {
 struct NotificationPreferenceBody {
     enabled: bool,
     lead_time_minutes: i64,
+    reaction_enabled: bool,
 }
 
 #[derive(Deserialize)]
 struct SubscriptionRemoveBody {
     endpoint: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PredictionReactionBody {
+    target_user_id: String,
+    match_id: String,
+    emoji: String,
 }
 
 #[derive(serde::Serialize)]
@@ -382,6 +391,7 @@ async fn update_notification_preference_handler(
             String::new(),
             body.enabled,
             body.lead_time_minutes,
+            body.reaction_enabled,
             csrf_header(&headers),
         )
         .await?,
@@ -444,6 +454,32 @@ async fn pool_member_predictions(Path(pool_id): Path<String>) -> ApiResult<impl 
     Ok(Json(
         crate::pools::get_pool_member_predictions(String::new(), pool_id).await?,
     ))
+}
+
+async fn react_to_prediction(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<PredictionReactionBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::react_to_prediction(
+        String::new(),
+        pool_id,
+        body.target_user_id,
+        body.match_id,
+        body.emoji,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn mark_prediction_reactions_seen(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::pools::mark_prediction_reactions_seen(String::new(), pool_id, csrf_header(&headers))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn pool_breakdowns(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
@@ -559,6 +595,12 @@ async fn knockout_released() -> ApiResult<impl IntoResponse> {
 async fn my_predictions() -> ApiResult<impl IntoResponse> {
     Ok(Json(
         crate::matches::get_my_predictions(String::new()).await?,
+    ))
+}
+
+async fn my_prediction_overrides() -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::list_my_prediction_overrides(String::new()).await?,
     ))
 }
 
@@ -861,6 +903,14 @@ pub fn router() -> Router {
             "/pools/{pool_id}/member-predictions",
             get(pool_member_predictions),
         )
+        .route(
+            "/pools/{pool_id}/prediction-reactions",
+            post(react_to_prediction),
+        )
+        .route(
+            "/pools/{pool_id}/prediction-reactions/mark-seen",
+            post(mark_prediction_reactions_seen),
+        )
         .route("/pools/{pool_id}/breakdowns", get(pool_breakdowns))
         .route(
             "/pools/{pool_id}/adjustments",
@@ -874,6 +924,7 @@ pub fn router() -> Router {
         .route("/matches", get(list_matches))
         .route("/matches/knockout-released", get(knockout_released))
         .route("/predictions", get(my_predictions).post(submit_prediction))
+        .route("/predictions/reopened", get(my_prediction_overrides))
         .route("/scoring/my-points", get(my_match_points))
         .route("/admin/overview", get(admin_overview))
         .route("/admin/matches", get(admin_matches))

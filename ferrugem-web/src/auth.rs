@@ -721,6 +721,23 @@ pub async fn delete_account(token: String, csrf_token: String) -> Result<(), Ser
             crate::security::internal_error("delete_account_notification_preferences", e)
         })?;
 
+    sqlx::query(
+        "DELETE FROM prediction_reaction_views WHERE user_id = ?1",
+    )
+    .bind(&session.user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("delete_account_reaction_views", e))?;
+
+    sqlx::query(
+        "DELETE FROM prediction_reactions
+         WHERE target_user_id = ?1 OR reactor_user_id = ?1",
+    )
+    .bind(&session.user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("delete_account_prediction_reactions", e))?;
+
     sqlx::query("DELETE FROM point_adjustments WHERE user_id = ?1")
         .bind(&session.user_id)
         .execute(&mut *tx)

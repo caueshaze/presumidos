@@ -31,7 +31,7 @@ COPY ferrugem-web/ ./ferrugem-web/
 RUN test -f ferrugem-web/src/main.rs && grep -q "serve_application" ferrugem-web/src/main.rs
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --release -p ferrugem-web --features server && \
+    cargo build --release -p ferrugem-web --features server,web-push && \
     test -x target/release/ferrugem-web
 
 # 3) Runtime mínimo

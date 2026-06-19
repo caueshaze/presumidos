@@ -36,7 +36,8 @@ export function usePushReminders() {
     return () => window.clearTimeout(timer);
   }, [actionMessage]);
 
-  const preference = status.data?.preference ?? ({ enabled: false, leadTimeMinutes: 20 } as NotificationPreference);
+  const preference = status.data?.preference ??
+    ({ enabled: false, leadTimeMinutes: 20, reactionEnabled: true } as NotificationPreference);
   const currentDeviceSubscribed = !!currentSubscription;
   const supportsPushFlow =
     browserState.serviceWorkerSupported &&
@@ -66,9 +67,13 @@ export function usePushReminders() {
     async (leadTimeMinutes: NotificationPreference["leadTimeMinutes"]) =>
       runAction(async () => {
         if (!status.data) throw new Error("Estado de notificacoes ainda nao carregado.");
-        await enablePushReminders(status.data, { enabled: true, leadTimeMinutes });
+        await enablePushReminders(status.data, {
+          enabled: true,
+          leadTimeMinutes,
+          reactionEnabled: preference.reactionEnabled,
+        });
       }, "Notificacoes ativadas neste dispositivo."),
-    [runAction, status.data],
+    [preference.reactionEnabled, runAction, status.data],
   );
 
   const subscribeThisDeviceOnly = useCallback(

@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { motion } from "framer-motion";
-import { ChevronLeft } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ChevronLeft, SmilePlus } from "lucide-react";
 import {
-  usePools,
-  usePoolMemberPredictions,
-  usePoolBreakdowns,
+  useMarkPredictionReactionsSeen,
   useMatches,
+  usePoolBreakdowns,
+  usePoolMemberPredictions,
+  usePools,
+  useReactToPrediction,
 } from "@/hooks/queries";
+import { useAuth } from "@/hooks/useAuth";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
 import { Label, Select, ErrorBanner } from "@/components/ui/field";
@@ -16,23 +19,170 @@ import { formatKickoff } from "@/lib/utils";
 import type {
   MatchRecord,
   MemberPredictions,
-  PredictionRecord,
+  PoolPredictionRecord,
   PredictionScoreBreakdown,
 } from "@/types";
+
+const REACTION_EMOJIS = ["🔥", "👏", "😂", "😮", "😅", "😭"] as const;
 
 function initials(name: string): string {
   return name.trim().slice(0, 2).toUpperCase();
 }
 
-/** Linha de placar palpitado, com detalhes de mata-mata quando houver. */
+function ReactionBar({
+  poolId,
+  targetUserId,
+  prediction,
+  disabled,
+  isPending,
+  isPickerOpen,
+  onTogglePicker,
+  onReact,
+}: {
+  poolId: string;
+  targetUserId: string;
+  prediction: PoolPredictionRecord;
+  disabled: boolean;
+  isPending: boolean;
+  isPickerOpen: boolean;
+  onTogglePicker: (matchId: string) => void;
+  onReact: (vars: {
+    poolId: string;
+    targetUserId: string;
+    matchId: string;
+    emoji: string;
+  }) => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {prediction.reactions.map((reaction) => (
+        <motion.span
+          key={reaction.emoji}
+          layout
+          initial={{ opacity: 0, y: 4, scale: 0.92 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          className={
+            reaction.reactedByViewer
+              ? "rounded-pill bg-mint/25 px-2.5 py-1 text-xs font-semibold text-mint-dark ring-1 ring-mint/40"
+              : "rounded-pill bg-card px-2.5 py-1 text-xs font-semibold text-ink-muted ring-1 ring-mint/20"
+          }
+        >
+          {reaction.emoji} {reaction.count}
+        </motion.span>
+      ))}
+
+      {!disabled && (
+        <div className="relative">
+          <motion.button
+            type="button"
+            disabled={isPending}
+            onClick={() => onTogglePicker(prediction.matchId)}
+            whileTap={{ scale: 0.94 }}
+            animate={{
+              scale: isPickerOpen ? 1.04 : 1,
+              rotate: isPickerOpen ? 6 : 0,
+            }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            className={
+              prediction.viewerReaction
+                ? "inline-flex h-8 w-8 items-center justify-center rounded-full bg-mint/20 text-mint-dark ring-1 ring-mint/35 transition hover:bg-mint/25"
+                : "inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-ink-muted ring-1 ring-mint/20 transition hover:bg-mint/10"
+            }
+            aria-expanded={isPickerOpen}
+            aria-label={
+              prediction.viewerReaction
+                ? `Trocar reacao ${prediction.viewerReaction}`
+                : "Abrir menu de reacoes"
+            }
+          >
+            <SmilePlus className="h-4 w-4" />
+          </motion.button>
+
+          <AnimatePresence>
+            {isPickerOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                className="absolute left-0 top-full z-10 mt-2 flex min-w-max flex-wrap gap-1.5 rounded-2xl border border-mint/20 bg-white p-2 shadow-card"
+              >
+                {REACTION_EMOJIS.map((emoji, index) => {
+                  const active = prediction.viewerReaction === emoji;
+                  return (
+                    <motion.button
+                      key={emoji}
+                      type="button"
+                      disabled={isPending}
+                      initial={{ opacity: 0, y: 6, scale: 0.92 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 4, scale: 0.92 }}
+                      transition={{
+                        delay: index * 0.02,
+                        duration: 0.16,
+                        ease: [0.22, 1, 0.36, 1],
+                      }}
+                      whileHover={{ y: -1, scale: 1.04 }}
+                      whileTap={{ scale: 0.92 }}
+                      onClick={() => {
+                        onReact({
+                          poolId,
+                          targetUserId,
+                          matchId: prediction.matchId,
+                          emoji,
+                        });
+                        onTogglePicker(prediction.matchId);
+                      }}
+                      className={
+                        active
+                          ? "rounded-full bg-mint/30 px-2.5 py-1 text-sm ring-1 ring-mint/50"
+                          : "rounded-full bg-card px-2.5 py-1 text-sm ring-1 ring-mint/20 transition hover:bg-mint/10"
+                      }
+                      aria-label={`Reagir com ${emoji}`}
+                    >
+                      {emoji}
+                    </motion.button>
+                  );
+                })}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PredictionDetail({
+  poolId,
+  targetUserId,
   prediction,
   game,
   breakdown,
+  highlight,
+  canReact,
+  reactPending,
+  isPickerOpen,
+  onTogglePicker,
+  onReact,
 }: {
-  prediction: PredictionRecord;
+  poolId: string;
+  targetUserId: string;
+  prediction: PoolPredictionRecord;
   game: MatchRecord | undefined;
   breakdown: PredictionScoreBreakdown | undefined;
+  highlight: boolean;
+  canReact: boolean;
+  reactPending: boolean;
+  isPickerOpen: boolean;
+  onTogglePicker: (matchId: string) => void;
+  onReact: (vars: {
+    poolId: string;
+    targetUserId: string;
+    matchId: string;
+    emoji: string;
+  }) => void;
 }) {
   if (!game) return null;
 
@@ -44,11 +194,16 @@ function PredictionDetail({
         : null;
 
   const hasOfficial = game.homeScore !== null && game.awayScore !== null;
-  // Pontuação que conta neste bolão: 0 quando inelegível (entrou após o kickoff).
   const earned = breakdown && breakdown.eligible ? breakdown.totalPoints : 0;
 
   return (
-    <div className="flex flex-col gap-1 border-t border-mint/20 py-3 first:border-t-0">
+    <div
+      className={
+        highlight
+          ? "flex flex-col gap-1 rounded-2xl border border-sky/45 bg-sky/10 px-3 py-3"
+          : "flex flex-col gap-1 border-t border-mint/20 py-3 first:border-t-0"
+      }
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 text-sm text-ink">
           <span className="truncate">{formatSelectionLabel(game.homeTeam)}</span>
@@ -58,6 +213,12 @@ function PredictionDetail({
           <span className="truncate">{formatSelectionLabel(game.awayTeam)}</span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {prediction.unreadReactionCount > 0 && (
+            <span className="rounded-pill bg-sky/20 px-2.5 py-0.5 text-xs font-semibold text-sky-dark ring-1 ring-sky/35">
+              {prediction.unreadReactionCount} nova
+              {prediction.unreadReactionCount > 1 ? "s" : ""} reacao
+            </span>
+          )}
           {hasOfficial && breakdown && (
             <span
               className={
@@ -88,7 +249,7 @@ function PredictionDetail({
       )}
 
       {qualifierName && (
-        <div className="text-xs text-mint-dark">
+          <div className="text-xs text-mint-dark">
           Classifica: {formatSelectionLabel(qualifierName)}
           {prediction.wentToPenalties && (
             <>
@@ -103,35 +264,51 @@ function PredictionDetail({
           )}
         </div>
       )}
+
+      <ReactionBar
+        poolId={poolId}
+        targetUserId={targetUserId}
+        prediction={prediction}
+        disabled={!canReact}
+        isPending={reactPending}
+        isPickerOpen={isPickerOpen}
+        onTogglePicker={onTogglePicker}
+        onReact={onReact}
+      />
     </div>
   );
 }
 
 export function PoolPredictionsPage() {
   const pools = usePools();
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const poolIdParam = searchParams.get("poolId");
+  const memberIdParam = searchParams.get("memberId");
+  const matchIdParam = searchParams.get("matchId");
   const [selectedPool, setSelectedPool] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [openReactionMatchId, setOpenReactionMatchId] = useState<string | null>(null);
+  const [lastSeenKey, setLastSeenKey] = useState("");
 
-  // Seleciona o bolão indicado na URL (?poolId=) quando existir; senão, o primeiro.
   useEffect(() => {
     if (selectedPool || !pools.data || pools.data.length === 0) return;
     const wanted =
-      poolIdParam && pools.data.some((p) => p.id === poolIdParam)
-        ? poolIdParam
-        : pools.data[0].id;
+      poolIdParam && pools.data.some((p) => p.id === poolIdParam) ? poolIdParam : pools.data[0].id;
     setSelectedPool(wanted);
   }, [pools.data, selectedPool, poolIdParam]);
 
-  // Trocar de bolão fecha o perfil aberto.
   useEffect(() => {
     setSelectedMemberId(null);
+    setOpenReactionMatchId(null);
+    setLastSeenKey("");
   }, [selectedPool]);
 
   const members = usePoolMemberPredictions(selectedPool || null);
   const matches = useMatches();
   const breakdowns = usePoolBreakdowns(selectedPool || null);
+  const reactToPrediction = useReactToPrediction();
+  const markSeen = useMarkPredictionReactionsSeen();
 
   const matchById = useMemo(() => {
     const map = new Map<string, MatchRecord>();
@@ -139,7 +316,6 @@ export function PoolPredictionsPage() {
     return map;
   }, [matches.data]);
 
-  // Chave userId:matchId → breakdown, para achar os pontos de cada palpite.
   const breakdownByKey = useMemo(() => {
     const map = new Map<string, PredictionScoreBreakdown>();
     for (const b of breakdowns.data ?? []) map.set(`${b.userId}:${b.matchId}`, b);
@@ -147,14 +323,38 @@ export function PoolPredictionsPage() {
   }, [breakdowns.data]);
 
   const entries: MemberPredictions[] = members.data ?? [];
+
+  useEffect(() => {
+    if (selectedMemberId || !memberIdParam || entries.length === 0) return;
+    if (entries.some((entry) => entry.userId === memberIdParam)) {
+      setSelectedMemberId(memberIdParam);
+    }
+  }, [entries, memberIdParam, selectedMemberId]);
+
+  useEffect(() => {
+    setOpenReactionMatchId(null);
+  }, [selectedMemberId]);
+
   const selectedMember = entries.find((m) => m.userId === selectedMemberId) ?? null;
+
+  useEffect(() => {
+    if (!selectedPool || !selectedMember || !user) return;
+    if (selectedMember.userId !== user.id) return;
+    if (selectedMember.unreadReactionCount <= 0) return;
+    const seenKey = `${selectedPool}:${selectedMember.userId}:${selectedMember.unreadReactionCount}`;
+    if (lastSeenKey === seenKey) return;
+    if (markSeen.isPending) return;
+    setLastSeenKey(seenKey);
+    markSeen.mutate(selectedPool);
+  }, [lastSeenKey, markSeen, selectedMember, selectedPool, user]);
 
   return (
     <PageShell>
       <h1 className="text-3xl">Palpites do Bolão</h1>
       <p className="mt-2 max-w-3xl text-sm text-ink-muted">
-        Veja os palpites dos outros participantes. Por justiça, o palpite de cada partida só aparece
-        depois que o jogo começa.
+        Veja os palpites dos outros participantes do bolão e compare com os seus. Os palpites
+        aparecem aqui assim que os jogos começam, e mostram os pontos que cada um está somando no
+        bolão.
       </p>
 
       {pools.isLoading ? (
@@ -199,7 +399,6 @@ export function PoolPredictionsPage() {
                 Erro ao carregar palpites: {(members.error as Error).message}
               </ErrorBanner>
             ) : selectedMember ? (
-              // ---- Perfil do membro ----
               <div>
                 <button
                   type="button"
@@ -210,19 +409,27 @@ export function PoolPredictionsPage() {
                 </button>
 
                 <Card>
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-mint/40 font-heading text-lg font-bold text-mint-dark">
-                      {initials(selectedMember.username)}
-                    </span>
-                    <div>
-                      <h2 className="font-heading text-xl">{selectedMember.username}</h2>
-                      <p className="text-sm text-ink-muted">
-                        {selectedMember.predictions.length}{" "}
-                        {selectedMember.predictions.length === 1
-                          ? "palpite visível"
-                          : "palpites visíveis"}
-                      </p>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-mint/40 font-heading text-lg font-bold text-mint-dark">
+                        {initials(selectedMember.username)}
+                      </span>
+                      <div>
+                        <h2 className="font-heading text-xl">{selectedMember.username}</h2>
+                        <p className="text-sm text-ink-muted">
+                          {selectedMember.predictions.length}{" "}
+                          {selectedMember.predictions.length === 1
+                            ? "palpite visível"
+                            : "palpites visíveis"}
+                        </p>
+                      </div>
                     </div>
+                    {selectedMember.unreadReactionCount > 0 && (
+                      <span className="rounded-pill bg-sky/15 px-3 py-1 text-xs font-semibold text-sky-dark ring-1 ring-sky/35">
+                        {selectedMember.unreadReactionCount} nova
+                        {selectedMember.unreadReactionCount > 1 ? "s" : ""} reacao
+                      </span>
+                    )}
                   </div>
 
                   <div className="mt-4">
@@ -231,12 +438,26 @@ export function PoolPredictionsPage() {
                         Os palpites aparecem aqui assim que os jogos começam.
                       </p>
                     ) : (
-                      selectedMember.predictions.map((p) => (
+                      selectedMember.predictions.map((prediction) => (
                         <PredictionDetail
-                          key={p.matchId}
-                          prediction={p}
-                          game={matchById.get(p.matchId)}
-                          breakdown={breakdownByKey.get(`${selectedMember.userId}:${p.matchId}`)}
+                          key={prediction.matchId}
+                          poolId={selectedPool}
+                          targetUserId={selectedMember.userId}
+                          prediction={prediction}
+                          game={matchById.get(prediction.matchId)}
+                          breakdown={breakdownByKey.get(
+                            `${selectedMember.userId}:${prediction.matchId}`,
+                          )}
+                          highlight={matchIdParam === prediction.matchId}
+                          canReact={selectedMember.userId !== user?.id}
+                          reactPending={reactToPrediction.isPending}
+                          isPickerOpen={openReactionMatchId === prediction.matchId}
+                          onTogglePicker={(matchId) =>
+                            setOpenReactionMatchId((current) =>
+                              current === matchId ? null : matchId,
+                            )
+                          }
+                          onReact={(vars) => reactToPrediction.mutate(vars)}
                         />
                       ))
                     )}
@@ -249,7 +470,6 @@ export function PoolPredictionsPage() {
                 <p className="mt-1 text-ink-muted">Este bolão não tem membros para mostrar.</p>
               </Card>
             ) : (
-              // ---- Lista de membros ----
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {entries.map((member, i) => (
                   <motion.button
@@ -264,7 +484,7 @@ export function PoolPredictionsPage() {
                     <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-mint/40 font-heading font-bold text-mint-dark">
                       {initials(member.username)}
                     </span>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="truncate font-heading font-semibold text-ink">
                         {member.username}
                       </div>
@@ -273,6 +493,11 @@ export function PoolPredictionsPage() {
                         {member.predictions.length === 1 ? "palpite" : "palpites"}
                       </div>
                     </div>
+                    {member.unreadReactionCount > 0 && (
+                      <span className="rounded-pill bg-sky/15 px-2.5 py-1 text-xs font-semibold text-sky-dark ring-1 ring-sky/35">
+                        {member.unreadReactionCount}
+                      </span>
+                    )}
                   </motion.button>
                 ))}
               </div>

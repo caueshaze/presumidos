@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   useMatches,
   useMyPredictions,
+  useMyPredictionOverrides,
   useMyMatchPoints,
   useKnockoutReleased,
 } from "@/hooks/queries";
@@ -22,6 +23,7 @@ export function PredictionsPage() {
   const [hideFinished, setHideFinished] = useState(true);
   const matches = useMatches();
   const predictions = useMyPredictions();
+  const overrides = useMyPredictionOverrides();
   const matchPoints = useMyMatchPoints();
   const knockout = useKnockoutReleased();
 
@@ -30,6 +32,12 @@ export function PredictionsPage() {
     for (const p of matchPoints.data ?? []) map.set(p.matchId, p);
     return map;
   }, [matchPoints.data]);
+
+  // Reaberturas administrativas liberam o palpite mesmo com a partida travada por horário.
+  const reopenedMatchIds = useMemo(
+    () => new Set((overrides.data ?? []).map((o) => o.matchId)),
+    [overrides.data],
+  );
 
   const isLoading = matches.isLoading || predictions.isLoading || knockout.isLoading;
   const error = matches.error || predictions.error || knockout.error;
@@ -121,7 +129,7 @@ export function PredictionsPage() {
                   index={i}
                   game={game}
                   prediction={predictions.data?.find((p) => p.matchId === game.id)}
-                  locked={isMatchLocked(game.kickoff)}
+                  locked={isMatchLocked(game.kickoff) && !reopenedMatchIds.has(game.id)}
                   isAdmin={isAdmin}
                   cardId={`match-card-${game.id}`}
                   highlighted={game.id === targetMatchId}
