@@ -874,6 +874,36 @@ pub async fn request_registration(
     let (username, username_lookup, email) =
         validate_registration_input(username, email, &password)?;
 
+    // Cooldown por email: evita reenviar codigos (e queimar cota do Resend) para o
+    // mesmo endereco dentro do limite por IP.
+    let email_hash = crate::security::rate_limit_identity_hash(&email);
+    crate::security::enforce_rate_limit(crate::security::RateLimitRequest {
+        key: format!("rl:register:email:{email_hash}"),
+        rule: crate::security::RateLimitRule {
+            window: Duration::from_secs(60),
+            max_attempts: 1,
+        },
+        blocked_event: "rate_limit_triggered_register_email",
+        failure_policy: crate::security::RateLimitFailurePolicy::FailClosed,
+        audit_fields: serde_json::json!({
+            "email_hash": email_hash,
+        }),
+    })
+    .await?;
+    crate::security::enforce_rate_limit(crate::security::RateLimitRequest {
+        key: format!("rl:register:email_hourly:{email_hash}"),
+        rule: crate::security::RateLimitRule {
+            window: Duration::from_secs(3600),
+            max_attempts: 5,
+        },
+        blocked_event: "rate_limit_triggered_register_email_hourly",
+        failure_policy: crate::security::RateLimitFailurePolicy::FailClosed,
+        audit_fields: serde_json::json!({
+            "email_hash": email_hash,
+        }),
+    })
+    .await?;
+
     let db = pool();
 
     if user_exists_by_identity(db, &username_lookup, &email).await? {
@@ -1063,6 +1093,37 @@ pub async fn request_password_reset(email: String) -> Result<(), ServerFnError> 
     .await?;
 
     let email = crate::security::normalize_email(email)?;
+
+    // Cooldown por email, antes da busca do usuario para nao revelar quais emails
+    // existem (mesmo erro generico independe da existencia) e cortar reenvios.
+    let email_hash = crate::security::rate_limit_identity_hash(&email);
+    crate::security::enforce_rate_limit(crate::security::RateLimitRequest {
+        key: format!("rl:password_reset:email:{email_hash}"),
+        rule: crate::security::RateLimitRule {
+            window: Duration::from_secs(60),
+            max_attempts: 1,
+        },
+        blocked_event: "rate_limit_triggered_password_reset_email",
+        failure_policy: crate::security::RateLimitFailurePolicy::FailClosed,
+        audit_fields: serde_json::json!({
+            "email_hash": email_hash,
+        }),
+    })
+    .await?;
+    crate::security::enforce_rate_limit(crate::security::RateLimitRequest {
+        key: format!("rl:password_reset:email_hourly:{email_hash}"),
+        rule: crate::security::RateLimitRule {
+            window: Duration::from_secs(3600),
+            max_attempts: 5,
+        },
+        blocked_event: "rate_limit_triggered_password_reset_email_hourly",
+        failure_policy: crate::security::RateLimitFailurePolicy::FailClosed,
+        audit_fields: serde_json::json!({
+            "email_hash": email_hash,
+        }),
+    })
+    .await?;
+
     let db = pool();
 
     let user: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE lower(email) = ?1")
@@ -1733,8 +1794,12 @@ mod tests {
     }
 
     fn seed_security_env() {
+        // DB de teste sempre num arquivo unico em temp_dir: independente do diretorio
+        // de onde `cargo test` roda e sem deixar `.db` obsoleto dentro do repo.
+        let db_path =
+            std::env::temp_dir().join(format!("presumidos-test-{}.db", uuid::Uuid::new_v4()));
         std::env::set_var("APP_ENV", "test");
-        std::env::set_var("DATABASE_PATH", "test.db");
+        std::env::set_var("DATABASE_PATH", db_path.to_string_lossy().to_string());
         std::env::set_var(
             "SESSION_SECRET",
             "0123456789abcdef0123456789abcdef0123456789abcdef",

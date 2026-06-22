@@ -5,6 +5,15 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** Valida o formato de um email de forma conservadora (apenas UX: ajuda o usuário a
+ *  corrigir typos antes de submeter; a validação real acontece no backend). */
+export function isValidEmail(email: string): boolean {
+  const value = email.trim();
+  if (value.length === 0 || value.length > 120) return false;
+  // local@dominio.tld, sem espaços, com TLD de ao menos 2 letras.
+  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/.test(value);
+}
+
 /** "2026-06-12T18:00:00Z" -> "12/06 18:00" (horário local). */
 export function formatKickoff(kickoff: string): string {
   const date = new Date(kickoff);

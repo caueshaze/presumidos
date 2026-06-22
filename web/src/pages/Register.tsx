@@ -7,6 +7,7 @@ import { AuthPendingCard } from "@/components/AuthPendingCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ErrorBanner } from "@/components/ui/field";
+import { isValidEmail } from "@/lib/utils";
 
 export function RegisterPage() {
   const { user, loading, applySession } = useAuth();
@@ -28,6 +29,7 @@ export function RegisterPage() {
   const onRequest = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    if (!isValidEmail(email)) return setError("Email inválido. Verifique se digitou corretamente.");
     if (password !== confirmPassword) return setError("As senhas não coincidem.");
     if (password.length < 8) return setError("A senha deve ter pelo menos 8 caracteres.");
     try {

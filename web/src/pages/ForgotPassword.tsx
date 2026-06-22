@@ -5,6 +5,7 @@ import { FormShell } from "@/components/PageShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ErrorBanner } from "@/components/ui/field";
+import { isValidEmail } from "@/lib/utils";
 
 export function ForgotPasswordPage() {
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ export function ForgotPasswordPage() {
   const onRequest = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    if (!isValidEmail(email)) return setError("Email inválido. Verifique se digitou corretamente.");
     try {
       await requestReset.mutateAsync({ email });
       setAwaitingCode(true);

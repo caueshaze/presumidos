@@ -308,10 +308,56 @@ pub fn normalize_optional_text(value: String, max_len: usize) -> Result<String, 
 #[cfg(feature = "server")]
 pub fn normalize_email(email: String) -> Result<String, ServerFnError> {
     let email = email.trim().to_lowercase();
-    if email.is_empty() || email.len() > 120 || !email.contains('@') {
+    if email.is_empty() || email.len() > 120 || !email_format_is_valid(&email) {
         return Err(public_error("Email invalido."));
     }
     Ok(email)
+}
+
+/// Valida o formato de um email `local@dominio.tld` de forma conservadora.
+///
+/// O objetivo nao e cobrir 100% da RFC 5322 (inviavel e desnecessario), mas barrar
+/// typos e enderecos obviamente invalidos antes de gerar um envio inutil no Resend.
+/// A prova final de posse continua sendo o codigo de verificacao.
+#[cfg(feature = "server")]
+fn email_format_is_valid(email: &str) -> bool {
+    // Exatamente um '@', separando parte local e dominio.
+    let mut parts = email.split('@');
+    let (Some(local), Some(domain), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+
+    // Parte local: 1..=64 chars, sem espacos, apenas [A-Za-z0-9._%+-],
+    // sem ponto no inicio/fim e sem '..'.
+    if local.is_empty()
+        || local.len() > 64
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+        || !local
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'%' | b'+' | b'-'))
+    {
+        return false;
+    }
+
+    // Dominio: ao menos um '.', rotulos nao-vazios com [A-Za-z0-9-] sem hifen
+    // no inicio/fim, e TLD final com >=2 letras.
+    if !domain.contains('.') {
+        return false;
+    }
+    let labels: Vec<&str> = domain.split('.').collect();
+    let all_labels_ok = labels.iter().all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    });
+    if !all_labels_ok {
+        return false;
+    }
+    let tld = labels.last().copied().unwrap_or("");
+    tld.len() >= 2 && tld.bytes().all(|b| b.is_ascii_alphabetic())
 }
 
 #[cfg(feature = "server")]
@@ -686,8 +732,8 @@ pub async fn append_audit_log(
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use super::{
-        forwarded_chain, memory_enforce_rate_limit, parse_forwarded_for_ip, parse_ip_token,
-        proxy_boundary_allowed, rate_limit_identity_hash, redis_enforce_rate_limit,
+        email_format_is_valid, forwarded_chain, memory_enforce_rate_limit, parse_forwarded_for_ip,
+        parse_ip_token, proxy_boundary_allowed, rate_limit_identity_hash, redis_enforce_rate_limit,
         resolve_client_ip_from_peer_and_headers, RateLimitFailurePolicy, RateLimitRule,
         RateLimiter,
     };
@@ -704,8 +750,12 @@ mod tests {
     }
 
     fn seed_security_env() {
+        // DB de teste sempre num arquivo unico em temp_dir: independente do diretorio
+        // de onde `cargo test` roda e sem deixar `.db` obsoleto dentro do repo.
+        let db_path =
+            std::env::temp_dir().join(format!("presumidos-test-{}.db", uuid::Uuid::new_v4()));
         std::env::set_var("APP_ENV", "test");
-        std::env::set_var("DATABASE_PATH", "test.db");
+        std::env::set_var("DATABASE_PATH", db_path.to_string_lossy().to_string());
         std::env::set_var(
             "SESSION_SECRET",
             "0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -735,6 +785,36 @@ mod tests {
             );
         }
         headers
+    }
+
+    #[test]
+    fn email_format_validation_accepts_and_rejects() {
+        for ok in [
+            "a@b.com",
+            "joao.silva+tag@gmail.com",
+            "user_name@sub.dominio.com.br",
+            "x@y.io",
+        ] {
+            assert!(email_format_is_valid(ok), "deveria aceitar: {ok}");
+        }
+
+        for bad in [
+            "a@b",          // sem TLD
+            "test@test",    // dominio sem ponto
+            "joao@gmial",   // typo, dominio sem ponto
+            "@x.com",       // local vazio
+            "a@@b.com",     // dois '@'
+            "a b@c.com",    // espaco no local
+            "a@.com",       // rotulo vazio
+            "a@b..com",     // rotulo vazio no meio
+            "a@b-.com",     // hifen no fim do rotulo
+            ".a@b.com",     // ponto no inicio do local
+            "a.@b.com",     // ponto no fim do local
+            "a@b.c",        // TLD com 1 letra
+            "a@b.c0m",      // TLD com digito
+        ] {
+            assert!(!email_format_is_valid(bad), "deveria rejeitar: {bad}");
+        }
     }
 
     #[test]
