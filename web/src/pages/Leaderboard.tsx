@@ -48,13 +48,15 @@ export function LeaderboardPage() {
 
   // ---- Formulário de ajuste (organizador) ----
   const [adjUser, setAdjUser] = useState("");
-  const [adjDelta, setAdjDelta] = useState("");
+  const [adjMode, setAdjMode] = useState<"add" | "subtract">("add");
+  const [adjPoints, setAdjPoints] = useState("");
   const [adjReason, setAdjReason] = useState("");
   const [adjError, setAdjError] = useState("");
 
   useEffect(() => {
     setAdjUser("");
-    setAdjDelta("");
+    setAdjMode("add");
+    setAdjPoints("");
     setAdjReason("");
     setAdjError("");
   }, [selectedPool]);
@@ -62,11 +64,12 @@ export function LeaderboardPage() {
   const onAdjust = async (e: FormEvent) => {
     e.preventDefault();
     setAdjError("");
-    const delta = parseInt(adjDelta, 10);
-    if (!adjUser || Number.isNaN(delta) || delta === 0) {
-      setAdjError("Escolha um membro e um valor de pontos diferente de zero.");
+    const points = parseInt(adjPoints, 10);
+    if (!adjUser || Number.isNaN(points) || points <= 0) {
+      setAdjError("Escolha um membro e uma quantidade de pontos maior que zero.");
       return;
     }
+    const delta = adjMode === "subtract" ? -points : points;
     try {
       await addAdjustment.mutateAsync({
         poolId: selectedPool,
@@ -75,7 +78,8 @@ export function LeaderboardPage() {
         reason: adjReason.trim(),
       });
       setAdjUser("");
-      setAdjDelta("");
+      setAdjMode("add");
+      setAdjPoints("");
       setAdjReason("");
     } catch (err) {
       setAdjError(err instanceof Error ? err.message : "Falha ao lançar ajuste.");
@@ -234,10 +238,10 @@ export function LeaderboardPage() {
             <Card className="mt-6 border-l-4 border-yellow-dark">
               <h2 className="text-xl">Ajustar pontos</h2>
               <p className="mt-1 text-sm text-ink-muted">
-                Lance pontos manualmente para corrigir erros. Valores negativos descontam. O ajuste
-                e o motivo ficam visíveis para todos os participantes.
+                Lance pontos manualmente para corrigir erros: escolha adicionar ou descontar e a
+                quantidade. O ajuste e o motivo ficam visíveis para todos os participantes.
               </p>
-              <form onSubmit={onAdjust} className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto_2fr_auto] sm:items-end">
+              <form onSubmit={onAdjust} className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto_auto_2fr_auto] sm:items-end">
                 <div>
                   <Label htmlFor="adj-user">Membro</Label>
                   <Select id="adj-user" value={adjUser} onChange={(e) => setAdjUser(e.target.value)}>
@@ -250,14 +254,41 @@ export function LeaderboardPage() {
                   </Select>
                 </div>
                 <div>
-                  <Label htmlFor="adj-delta">Pontos</Label>
+                  <Label>Operação</Label>
+                  <div className="flex gap-1 rounded-pill bg-secondary/40 p-1" role="group" aria-label="Tipo de ajuste">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={adjMode === "add" ? "primary" : "outline"}
+                      className={adjMode === "add" ? "" : "border-transparent bg-transparent"}
+                      aria-pressed={adjMode === "add"}
+                      onClick={() => setAdjMode("add")}
+                    >
+                      + Adicionar
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={adjMode === "subtract" ? "primary" : "outline"}
+                      className={adjMode === "subtract" ? "" : "border-transparent bg-transparent"}
+                      aria-pressed={adjMode === "subtract"}
+                      onClick={() => setAdjMode("subtract")}
+                    >
+                      − Descontar
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="adj-points">Pontos</Label>
                   <Input
-                    id="adj-delta"
+                    id="adj-points"
                     type="number"
                     inputMode="numeric"
-                    placeholder="+3"
-                    value={adjDelta}
-                    onChange={(e) => setAdjDelta(e.target.value)}
+                    min={1}
+                    max={1000}
+                    placeholder="3"
+                    value={adjPoints}
+                    onChange={(e) => setAdjPoints(e.target.value)}
                     className="w-24"
                   />
                 </div>
@@ -272,7 +303,11 @@ export function LeaderboardPage() {
                   />
                 </div>
                 <Button type="submit" disabled={addAdjustment.isPending} className="self-start sm:self-auto">
-                  {addAdjustment.isPending ? "Lançando..." : "Lançar"}
+                  {addAdjustment.isPending
+                    ? "Lançando..."
+                    : adjMode === "subtract"
+                      ? "Descontar"
+                      : "Adicionar"}
                 </Button>
               </form>
               {adjError && (
