@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#0f342e" />
+    <title>Intervalo técnico - Presumidos</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <style>
+      :root {
+        --bg-top: 9 35 31;
+        --bg-bottom: 5 18 17;
+        --panel: 14 45 39;
+        --panel-soft: 17 57 49;
+        --line: 110 198 153;
+        --line-soft: 67 118 100;
+        --text: 237 244 239;
+        --muted: 174 204 190;
+        --gold: 253 214 92;
+        --glow: 97 228 167;
+        --shadow: 0 30px 80px rgba(0, 0, 0, 0.38);
+        --board-bg: 8 17 16;
+        --board-edge: 14 30 27;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+        color: rgb(var(--text));
+        background:
+          radial-gradient(
+            120% 90% at 82% -8%,
+            rgba(48, 117, 94, 0.42),
+            transparent 58%
+          ),
+          radial-gradient(
+            110% 80% at 0% 100%,
+            rgba(201, 165, 52, 0.16),
+            transparent 52%
+          ),
+          linear-gradient(180deg, rgb(var(--bg-top)), rgb(var(--bg-bottom)));
+        background-attachment: fixed;
+      }
+
+      .stage {
+        width: 100%;
+        max-width: 640px;
+        text-align: center;
+        animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+
+      .wordmark {
+        margin: 0 0 18px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgb(var(--muted));
+        opacity: 0.94;
+      }
+
+      .wordmark b {
+        color: rgb(var(--glow));
+      }
+
+      .shell {
+        position: relative;
+        overflow: hidden;
+        padding: 28px 22px 24px;
+        border-radius: 24px;
+        border: 1px solid rgba(var(--line), 0.26);
+        background:
+          linear-gradient(180deg, rgba(var(--panel), 0.94), rgba(var(--panel-soft), 0.92));
+        box-shadow: var(--shadow);
+      }
+
+      .shell::before,
+      .shell::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      .shell::before {
+        background:
+          linear-gradient(rgba(var(--line-soft), 0.14) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(var(--line-soft), 0.14) 1px, transparent 1px);
+        background-size: 28px 28px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent);
+      }
+
+      .shell::after {
+        background:
+          radial-gradient(circle at top right, rgba(var(--gold), 0.18), transparent 28%),
+          radial-gradient(circle at left center, rgba(var(--glow), 0.12), transparent 30%);
+      }
+
+      .board {
+        position: relative;
+        margin: 0 auto;
+        max-width: 420px;
+        padding: 22px 18px 24px;
+        border-radius: 22px;
+        background: linear-gradient(180deg, rgb(var(--board-edge)), rgb(var(--board-bg)));
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.05),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+          0 18px 44px rgba(0, 0, 0, 0.34);
+        overflow: hidden;
+      }
+
+      .board::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1.4px);
+        background-size: 7px 7px;
+        opacity: 0.5;
+        pointer-events: none;
+      }
+
+      .board::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          100deg,
+          transparent 30%,
+          rgba(255, 255, 255, 0.06) 50%,
+          transparent 70%
+        );
+        transform: translateX(-100%);
+        animation: sweep 5.5s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      .board-tag {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 14px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgb(var(--glow));
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: rgb(var(--gold));
+        box-shadow: 0 0 10px rgba(var(--gold), 0.9);
+        animation: blink 1.4s steps(1) infinite;
+      }
+
+      .clock {
+        position: relative;
+        font-size: clamp(46px, 15vw, 72px);
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: 0.04em;
+        color: rgb(var(--glow));
+        text-shadow:
+          0 0 14px rgba(var(--glow), 0.55),
+          0 0 36px rgba(var(--glow), 0.25);
+      }
+
+      .clock .colon {
+        display: inline-block;
+        padding: 0 0.06em;
+        animation: blink 1.1s steps(1) infinite;
+      }
+
+      .board-sub {
+        position: relative;
+        margin: 8px 0 0;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.32em;
+        text-transform: uppercase;
+        color: rgba(var(--gold), 0.92);
+      }
+
+      .headline {
+        margin: 28px 0 0;
+        font-size: clamp(30px, 7vw, 52px);
+        font-weight: 700;
+        line-height: 1;
+        color: rgb(var(--text));
+        text-wrap: balance;
+      }
+
+      .lede {
+        margin: 14px auto 0;
+        max-width: 35rem;
+        font-size: 17px;
+        line-height: 1.6;
+        color: rgb(var(--muted));
+      }
+
+      .support {
+        margin: 20px auto 0;
+        max-width: 34rem;
+        padding: 14px 16px;
+        border-radius: 16px;
+        border: 1px solid rgba(var(--line), 0.18);
+        background: rgba(255, 255, 255, 0.04);
+        color: rgb(var(--text));
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .status-list {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin: 22px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .status-card {
+        padding: 14px 12px;
+        border-radius: 16px;
+        border: 1px solid rgba(var(--line), 0.16);
+        background: rgba(0, 0, 0, 0.12);
+        text-align: left;
+      }
+
+      .status-label {
+        display: block;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgb(var(--muted));
+      }
+
+      .status-value {
+        display: block;
+        margin-top: 8px;
+        font-size: 16px;
+        font-weight: 700;
+        color: rgb(var(--text));
+      }
+
+      .mascot {
+        width: 70px;
+        height: 70px;
+        margin: 22px auto 0;
+        display: block;
+        animation: bob 3.2s ease-in-out infinite;
+        filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.25));
+      }
+
+      .footer {
+        margin: 20px 0 0;
+        font-size: 13px;
+        color: rgba(var(--muted), 0.92);
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      @keyframes blink {
+        0%,
+        50% {
+          opacity: 1;
+        }
+        50.01%,
+        100% {
+          opacity: 0.18;
+        }
+      }
+
+      @keyframes sweep {
+        0%,
+        18% {
+          transform: translateX(-100%);
+        }
+        38%,
+        100% {
+          transform: translateX(100%);
+        }
+      }
+
+      @keyframes bob {
+        0%,
+        100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-6px);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .stage,
+        .board::after,
+        .dot,
+        .clock .colon,
+        .mascot {
+          animation: none !important;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .shell {
+          padding: 22px 16px 18px;
+          border-radius: 22px;
+        }
+
+        .status-list {
+          grid-template-columns: 1fr;
+        }
+
+        .headline {
+          font-size: clamp(28px, 10vw, 42px);
+        }
+
+        .lede {
+          font-size: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="stage">
+      <p class="wordmark"><b>Presumidos</b> · Bolão da Copa 2026</p>
+
+      <section class="shell" aria-label="Tela de manutenção">
+        <section class="board" aria-label="Placar">
+          <span class="board-tag"><span class="dot"></span> Jogo pausado</span>
+          <div class="clock" aria-hidden="true">
+            HT<span class="colon">:</span>00
+          </div>
+          <p class="board-sub">Intervalo técnico</p>
+        </section>
+
+        <h1 class="headline">Voltamos em alguns minutos.</h1>
+        <p class="lede">
+          O Presumidos entrou rapidinho no vestiário para receber uns ajustes.
+          Seus palpites continuam guardados; daqui a pouco o jogo segue normal.
+        </p>
+
+        <p class="support">
+          Se você já estava usando o Presumidos, pode atualizar a página em alguns minutos.
+          Nenhuma ação é necessária do seu lado.
+        </p>
+
+        <ul class="status-list" aria-label="Status da manutenção">
+          <li class="status-card">
+            <span class="status-label">Status</span>
+            <span class="status-value">Em manutenção</span>
+          </li>
+          <li class="status-card">
+            <span class="status-label">Retorno</span>
+            <span class="status-value">Logo mais</span>
+          </li>
+          <li class="status-card">
+            <span class="status-label">Palpites</span>
+            <span class="status-value">Preservados</span>
+          </li>
+        </ul>
+
+        <p class="footer">Obrigado pela paciência. O apito já volta.</p>
+      </section>
+    </main>
+  </body>
+</html>

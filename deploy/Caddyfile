@@ -1,13 +1,33 @@
 {$APP_DOMAIN} {
     encode zstd gzip
+    root * /srv/maintenance
 
-    reverse_proxy ferrugem-web:8080 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-        header_up X-Forwarded-Host {host}
-        header_up Forwarded "for={remote_host};proto={scheme};host={host}"
-        header_up -CF-Connecting-IP
+    # Se o arquivo-flag existir, toda requisição vira 503. O matcher é avaliado
+    # por requisição, então criar/remover o flag tem efeito imediato (sem reload).
+    @maintenance file {
+        try_files maintenance.flag
+    }
+    handle @maintenance {
+        error 503
+    }
+
+    # O 503 é renderizado como a página estilizada, preservando o status.
+    handle_errors {
+        rewrite * /maintenance.html
+        file_server
+        header Retry-After 3600
+        header Cache-Control "no-store"
+    }
+
+    handle {
+        reverse_proxy ferrugem-web:8080 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {host}
+            header_up Forwarded "for={remote_host};proto={scheme};host={host}"
+            header_up -CF-Connecting-IP
+        }
     }
 }

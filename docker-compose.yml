@@ -50,6 +50,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/maintenance:/srv/maintenance:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:

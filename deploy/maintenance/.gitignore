@@ -1,0 +1,2 @@
+# O flag de manutenção é estado de runtime, nunca deve ser commitado.
+maintenance.flag
