@@ -24,6 +24,8 @@ import {
   useAdminSettings,
   useAdminUsers,
   useBlockUser,
+  useCreateMatch,
+  useDeleteMatch,
   useInvalidateUserSessions,
   useReauth,
   useRecalculateAll,
@@ -37,6 +39,7 @@ import {
   useSetMatchResult,
   useTriggerUserPasswordReset,
   useUnblockUser,
+  useUpdateMatchSchedule,
   useUserBreakdown,
   useUserPools,
 } from "@/hooks/queries";
@@ -118,6 +121,32 @@ function parseScore(value: string) {
   return value.trim() === "" ? 0 : Number.parseInt(value, 10) || 0;
 }
 
+// Fases de mata-mata disponíveis no cadastro manual de jogos.
+const KNOCKOUT_PHASES = [
+  "16 avos de final",
+  "Oitavas de final",
+  "Quartas de final",
+  "Semifinal",
+  "Disputa de 3º lugar",
+  "Final",
+];
+
+// Converte um ISO (UTC) para o formato aceito pelo input datetime-local
+// (YYYY-MM-DDTHH:mm), mantendo o horário em UTC para um round-trip estável.
+function isoToLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 16);
+}
+
+// O input datetime-local entrega "YYYY-MM-DDTHH:mm"; tratamos como UTC (mesmo
+// padrão usado nas reaberturas de palpite).
+function localInputToIso(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.includes("T") ? `${trimmed}:00Z` : trimmed;
+}
+
 export function AdminPage() {
   const { isAdmin, loading } = useAuth();
   const [tab, setTab] = useState<AdminTab>("overview");
@@ -168,6 +197,9 @@ export function AdminPage() {
   const recalcMatch = useRecalculateMatch();
   const setMatchResult = useSetMatchResult();
   const setMatchFinished = useSetMatchFinished();
+  const createMatch = useCreateMatch();
+  const updateMatchSchedule = useUpdateMatchSchedule();
+  const deleteMatch = useDeleteMatch();
   const reopenPrediction = useReopenPrediction();
   const revokeReopen = useRevokePredictionReopen();
   const blockUser = useBlockUser();
@@ -221,22 +253,37 @@ export function AdminPage() {
 
   const [resultHome, setResultHome] = useState("");
   const [resultAway, setResultAway] = useState("");
-  const [resultQualifier, setResultQualifier] = useState<"home" | "away">("home");
-  const [wentPens, setWentPens] = useState(false);
   const [penHome, setPenHome] = useState("");
   const [penAway, setPenAway] = useState("");
   const [overrideExpiry, setOverrideExpiry] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [selectedPoolUserToAdd, setSelectedPoolUserToAdd] = useState("");
 
+  // Cadastro manual de jogo de mata-mata.
+  const [newMatchHome, setNewMatchHome] = useState("");
+  const [newMatchAway, setNewMatchAway] = useState("");
+  const [newMatchPhase, setNewMatchPhase] = useState(KNOCKOUT_PHASES[0]);
+  const [newMatchKickoff, setNewMatchKickoff] = useState("");
+  const [createMatchError, setCreateMatchError] = useState("");
+
+  // Edição de confronto/fase/horário do jogo selecionado.
+  const [editHome, setEditHome] = useState("");
+  const [editAway, setEditAway] = useState("");
+  const [editPhase, setEditPhase] = useState(KNOCKOUT_PHASES[0]);
+  const [editKickoff, setEditKickoff] = useState("");
+  const [scheduleError, setScheduleError] = useState("");
+
   useEffect(() => {
     if (!selectedMatch) return;
     setResultHome(scoreField(selectedMatch.matchRecord.homeScore));
     setResultAway(scoreField(selectedMatch.matchRecord.awayScore));
-    setResultQualifier(selectedMatch.matchRecord.qualifier === "away" ? "away" : "home");
-    setWentPens(selectedMatch.matchRecord.wentToPenalties);
     setPenHome(scoreField(selectedMatch.matchRecord.penaltyHomeScore));
     setPenAway(scoreField(selectedMatch.matchRecord.penaltyAwayScore));
+    setEditHome(selectedMatch.matchRecord.homeTeam);
+    setEditAway(selectedMatch.matchRecord.awayTeam);
+    setEditPhase(selectedMatch.matchRecord.phase ?? KNOCKOUT_PHASES[0]);
+    setEditKickoff(isoToLocalInput(selectedMatch.matchRecord.kickoff));
+    setScheduleError("");
   }, [selectedMatch]);
 
   const runAdminAction = async <T,>(action: () => Promise<T>) => {
@@ -264,19 +311,96 @@ export function AdminPage() {
       return;
     }
 
+    const knockoutMatch = isKnockout(selectedMatch.matchRecord.phase);
+    const home = parseScore(resultHome);
+    const away = parseScore(resultAway);
+    const draw = knockoutMatch && home === away;
+    if (draw) {
+      if (penHome === "" || penAway === "") {
+        setError("Empate no tempo normal: informe o placar dos pênaltis dos dois lados.");
+        return;
+      }
+      if (parseScore(penHome) === parseScore(penAway)) {
+        setError("O placar dos pênaltis não pode terminar empatado.");
+        return;
+      }
+    }
+
     await runAdminAction(() =>
       setMatchResult.mutateAsync({
         matchId: selectedMatch.matchRecord.id,
-        homeScore: parseScore(resultHome),
-        awayScore: parseScore(resultAway),
+        homeScore: home,
+        awayScore: away,
         knockout: {
-          qualifier: isKnockout(selectedMatch.matchRecord.phase) ? resultQualifier : null,
-          wentToPenalties: wentPens,
-          penaltyHome: wentPens ? parseScore(penHome) : null,
-          penaltyAway: wentPens ? parseScore(penAway) : null,
+          qualifier: null,
+          wentToPenalties: draw,
+          penaltyHome: draw ? parseScore(penHome) : null,
+          penaltyAway: draw ? parseScore(penAway) : null,
         },
       }),
     );
+  };
+
+  const handleCreateMatch = async () => {
+    setCreateMatchError("");
+    if (!newMatchHome.trim() || !newMatchAway.trim()) {
+      setCreateMatchError("Informe os dois times.");
+      return;
+    }
+    if (!newMatchKickoff) {
+      setCreateMatchError("Informe a data e o horário do jogo.");
+      return;
+    }
+    try {
+      await runAdminAction(() =>
+        createMatch.mutateAsync({
+          homeTeam: newMatchHome.trim(),
+          awayTeam: newMatchAway.trim(),
+          phase: newMatchPhase,
+          kickoff: localInputToIso(newMatchKickoff),
+        }),
+      );
+      setNewMatchHome("");
+      setNewMatchAway("");
+      setNewMatchKickoff("");
+    } catch {
+      // erro já exibido por runAdminAction
+    }
+  };
+
+  const handleUpdateSchedule = async () => {
+    if (!selectedMatch) return;
+    setScheduleError("");
+    if (!editHome.trim() || !editAway.trim()) {
+      setScheduleError("Informe os dois times.");
+      return;
+    }
+    if (!editKickoff) {
+      setScheduleError("Informe a data e o horário do jogo.");
+      return;
+    }
+    await runAdminAction(() =>
+      updateMatchSchedule.mutateAsync({
+        matchId: selectedMatch.matchRecord.id,
+        homeTeam: editHome.trim(),
+        awayTeam: editAway.trim(),
+        phase: editPhase,
+        kickoff: localInputToIso(editKickoff),
+      }),
+    );
+  };
+
+  const handleDeleteMatch = async () => {
+    if (!selectedMatch) return;
+    if (
+      !window.confirm(
+        `Excluir o jogo ${selectedMatch.matchRecord.homeTeam} x ${selectedMatch.matchRecord.awayTeam}? Os palpites desse jogo serão removidos.`,
+      )
+    ) {
+      return;
+    }
+    await runAdminAction(() => deleteMatch.mutateAsync(selectedMatch.matchRecord.id));
+    setSelectedMatchId("");
   };
 
   const handleToggleFinished = async () => {
@@ -394,7 +518,45 @@ export function AdminPage() {
       )}
 
       {tab === "matches" && (
-        <div className="mt-6 grid gap-5 xl:grid-cols-[1.1fr_0.9fr] [&>*]:min-w-0">
+        <div className="mt-6 space-y-5">
+          <Card>
+            <h2 className="text-xl">Cadastrar jogo do mata-mata</h2>
+            <p className="mt-1 text-sm text-ink-muted">
+              Monte manualmente os confrontos da fase eliminatória (times, fase e horário).
+            </p>
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <div>
+                <Label>Time mandante</Label>
+                <Input value={newMatchHome} onChange={(e) => setNewMatchHome(e.target.value)} placeholder="Ex.: Brasil" />
+              </div>
+              <div>
+                <Label>Time visitante</Label>
+                <Input value={newMatchAway} onChange={(e) => setNewMatchAway(e.target.value)} placeholder="Ex.: Argentina" />
+              </div>
+              <div>
+                <Label>Fase</Label>
+                <Select value={newMatchPhase} onChange={(e) => setNewMatchPhase(e.target.value)}>
+                  {KNOCKOUT_PHASES.map((phase) => (
+                    <option key={phase} value={phase}>
+                      {phase}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label>Data e horário</Label>
+                <Input type="datetime-local" value={newMatchKickoff} onChange={(e) => setNewMatchKickoff(e.target.value)} />
+              </div>
+            </div>
+            {createMatchError && <div className="mt-3"><ErrorBanner>{createMatchError}</ErrorBanner></div>}
+            <div className="mt-4">
+              <Button onClick={handleCreateMatch} disabled={createMatch.isPending}>
+                {createMatch.isPending ? "Criando..." : "Criar jogo"}
+              </Button>
+            </div>
+          </Card>
+
+        <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr] [&>*]:min-w-0">
           <Card>
             <div className="grid gap-3 md:grid-cols-5">
               <div>
@@ -494,20 +656,12 @@ export function AdminPage() {
                   </div>
                 </div>
 
-                {isKnockout(selectedMatch.matchRecord.phase) && (
-                  <div className="mt-4 space-y-3">
-                    <div>
-                      <Label>Classificado</Label>
-                      <Select value={resultQualifier} onChange={(e) => setResultQualifier(e.target.value as "home" | "away")}>
-                        <option value="home">{selectedMatch.matchRecord.homeTeam}</option>
-                        <option value="away">{selectedMatch.matchRecord.awayTeam}</option>
-                      </Select>
-                    </div>
-                    <label className="flex items-center gap-2 text-sm font-semibold text-ink">
-                      <input type="checkbox" checked={wentPens} onChange={(e) => setWentPens(e.target.checked)} />
-                      Houve pênaltis
-                    </label>
-                    {wentPens && (
+                {isKnockout(selectedMatch.matchRecord.phase) &&
+                  parseScore(resultHome) === parseScore(resultAway) && (
+                    <div className="mt-4 space-y-2">
+                      <p className="text-sm text-ink-muted">
+                        Empate no tempo normal → decidido nos pênaltis (quem fizer mais se classifica).
+                      </p>
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div>
                           <Label>Pênaltis mandante</Label>
@@ -518,9 +672,8 @@ export function AdminPage() {
                           <Input value={penAway} onChange={(e) => setPenAway(e.target.value.replace(/\D+/g, ""))} />
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  )}
 
                 <div className="mt-5 flex flex-wrap gap-2">
                   <Button onClick={handleSaveResult}>Salvar resultado</Button>
@@ -528,6 +681,50 @@ export function AdminPage() {
                     Recalcular este jogo
                   </Button>
                 </div>
+
+                {isKnockout(selectedMatch.matchRecord.phase) && (
+                  <div className="mt-6 space-y-3 rounded-xl border border-mint/15 bg-card/60 p-4">
+                    <h3 className="text-lg">Confronto e horário</h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <Label>Time mandante</Label>
+                        <Input value={editHome} onChange={(e) => setEditHome(e.target.value)} />
+                      </div>
+                      <div>
+                        <Label>Time visitante</Label>
+                        <Input value={editAway} onChange={(e) => setEditAway(e.target.value)} />
+                      </div>
+                      <div>
+                        <Label>Fase</Label>
+                        <Select value={editPhase} onChange={(e) => setEditPhase(e.target.value)}>
+                          {KNOCKOUT_PHASES.map((phase) => (
+                            <option key={phase} value={phase}>
+                              {phase}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                      <div>
+                        <Label>Data e horário</Label>
+                        <Input type="datetime-local" value={editKickoff} onChange={(e) => setEditKickoff(e.target.value)} />
+                      </div>
+                    </div>
+                    {scheduleError && <ErrorBanner>{scheduleError}</ErrorBanner>}
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" onClick={handleUpdateSchedule} disabled={updateMatchSchedule.isPending}>
+                        {updateMatchSchedule.isPending ? "Salvando..." : "Salvar confronto/horário"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="border-danger/50 text-danger hover:border-danger"
+                        onClick={handleDeleteMatch}
+                        disabled={deleteMatch.isPending}
+                      >
+                        Excluir jogo
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-6">
                   <h3 className="text-lg">Auditoria deste jogo</h3>
@@ -550,6 +747,7 @@ export function AdminPage() {
               <p className="text-ink-muted">Selecione um jogo para editar.</p>
             )}
           </Card>
+        </div>
         </div>
       )}
 
