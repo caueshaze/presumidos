@@ -78,8 +78,8 @@ pub fn knockout_bonus(official: &Outcome, guess: &Outcome) -> i64 {
         // Placar exato dos pênaltis.
         3
     } else if (gh > ga) == (oh > oa) {
-        // Acertou só o vencedor da disputa.
-        1
+        // Acertou o vencedor da disputa (sem placar exato).
+        2
     } else {
         0
     }
@@ -991,8 +991,8 @@ mod tests {
         let real = ko(1, 1, "home", true, Some((5, 4)));
         // Placar exato 1x1 (7) + pênaltis exatos 5x4 (+3) = 10.
         assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((5, 4)))), 10);
-        // Placar exato 1x1 (7) + só o vencedor dos pênaltis (+1) = 8.
-        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((4, 3)))), 8);
+        // Placar exato 1x1 (7) + vencedor dos pênaltis (+2) = 9.
+        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((4, 3)))), 9);
         // Placar exato 1x1 (7) + errou o vencedor dos pênaltis (0) = 7.
         assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((3, 5)))), 7);
         // Empate certo não exato (3): sem bônus de pênaltis mesmo acertando o placar/vencedor.
