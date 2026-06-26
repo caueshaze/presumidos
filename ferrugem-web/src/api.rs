@@ -195,6 +195,15 @@ struct UpdateTeamsBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MatchScheduleBody {
+    home_team: String,
+    away_team: String,
+    phase: String,
+    kickoff: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PoolMemberBody {
     user_id: String,
 }
@@ -685,6 +694,48 @@ async fn update_match_teams(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn create_match(
+    headers: HeaderMap,
+    Json(body): Json<MatchScheduleBody>,
+) -> ApiResult<impl IntoResponse> {
+    let created = crate::matches::create_match(
+        String::new(),
+        body.home_team,
+        body.away_team,
+        body.phase,
+        body.kickoff,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(Json(created))
+}
+
+async fn update_match_schedule(
+    Path(match_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<MatchScheduleBody>,
+) -> ApiResult<impl IntoResponse> {
+    let updated = crate::matches::update_match_schedule(
+        String::new(),
+        match_id,
+        body.home_team,
+        body.away_team,
+        body.phase,
+        body.kickoff,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(Json(updated))
+}
+
+async fn delete_match(
+    Path(match_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::matches::delete_match(String::new(), match_id, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn admin_overview() -> ApiResult<impl IntoResponse> {
     Ok(Json(crate::admin::admin_overview(String::new()).await?))
 }
@@ -927,10 +978,12 @@ pub fn router() -> Router {
         .route("/predictions/reopened", get(my_prediction_overrides))
         .route("/scoring/my-points", get(my_match_points))
         .route("/admin/overview", get(admin_overview))
-        .route("/admin/matches", get(admin_matches))
+        .route("/admin/matches", get(admin_matches).post(create_match))
         .route("/admin/matches/{id}/audit", get(admin_match_audit))
         .route("/admin/matches/{id}/result", post(set_match_result))
         .route("/admin/matches/{id}/finished", post(set_match_finished))
+        .route("/admin/matches/{id}/schedule", post(update_match_schedule))
+        .route("/admin/matches/{id}/delete", post(delete_match))
         .route("/admin/knockout-released", post(set_knockout_released))
         .route("/admin/matches/{id}/teams", post(update_match_teams))
         .route("/admin/sync/status", get(admin_sync_status))

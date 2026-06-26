@@ -47,40 +47,42 @@ pub fn base_points(guess_home: i64, guess_away: i64, real_home: i64, real_away: 
     }
 }
 
-/// Bônus extra do mata-mata, somado à pontuação base.
+/// Bônus de pênaltis do mata-mata, somado à pontuação base.
+///
+/// Vale para qualquer palpite de empate quando o jogo foi para os pênaltis:
+/// - placar base exato + placar exato dos pênaltis (ex.: 5x4) → +3 → total 10
+/// - placar base exato + vencedor certo dos pênaltis             → +2 → total 9
+/// - placar base não exato + vencedor certo dos pênaltis         → +1 → total 4
+/// - errou o vencedor dos pênaltis                               → 0
 #[cfg_attr(not(test), allow(dead_code))]
 #[cfg(any(feature = "server", test))]
 pub fn knockout_bonus(official: &Outcome, guess: &Outcome) -> i64 {
-    let mut bonus = 0;
-
-    let qualifier_ok = official.qualifier.is_some() && official.qualifier == guess.qualifier;
-    if qualifier_ok {
-        bonus += 2;
+    if !(official.went_to_penalties && guess.went_to_penalties) {
+        return 0;
     }
 
-    if official.went_to_penalties && guess.went_to_penalties {
-        // Acertou que foi para os pênaltis.
-        bonus += 1;
+    let (Some(gh), Some(ga), Some(oh), Some(oa)) = (
+        guess.penalty_home,
+        guess.penalty_away,
+        official.penalty_home,
+        official.penalty_away,
+    ) else {
+        return 0;
+    };
 
-        // O classificado que palpitou passou justamente nos pênaltis.
-        if qualifier_ok {
-            bonus += 1;
-        }
+    let exact_base = guess.home_score == official.home_score && guess.away_score == official.away_score;
+    let correct_winner = (gh > ga) == (oh > oa);
+    let exact_penalties = gh == oh && ga == oa;
 
-        // Placar exato dos pênaltis (firula opcional).
-        if let (Some(gh), Some(ga), Some(oh), Some(oa)) = (
-            guess.penalty_home,
-            guess.penalty_away,
-            official.penalty_home,
-            official.penalty_away,
-        ) {
-            if gh == oh && ga == oa {
-                bonus += 1;
-            }
-        }
+    if exact_base && exact_penalties {
+        3
+    } else if exact_base && correct_winner {
+        2
+    } else if correct_winner {
+        1
+    } else {
+        0
     }
-
-    bonus
 }
 
 /// Pontuação total de um palpite contra o resultado oficial de uma partida.
@@ -184,21 +186,11 @@ fn breakdown_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> B
         0
     };
 
-    let qualifier_ok = official.qualifier.is_some() && official.qualifier == guess.qualifier;
-    let qualifier_points = if is_knockout && qualifier_ok { 2 } else { 0 };
+    // O classificado deixa de ter bônus próprio (deduzido do placar/pênaltis).
+    let qualifier_points = 0;
 
-    let penalties_points = if is_knockout && official.went_to_penalties && guess.went_to_penalties {
-        let exact_penalties = matches!(
-            (
-                guess.penalty_home,
-                guess.penalty_away,
-                official.penalty_home,
-                official.penalty_away,
-            ),
-            (Some(gh), Some(ga), Some(oh), Some(oa)) if gh == oh && ga == oa
-        );
-
-        1 + if qualifier_ok { 1 } else { 0 } + if exact_penalties { 1 } else { 0 }
+    let penalties_points = if is_knockout {
+        knockout_bonus(official, guess)
     } else {
         0
     };
@@ -979,39 +971,37 @@ mod tests {
         assert_eq!(match_points(false, &real, &group(1, 0)), 0);
     }
 
-    // Mata-mata — vitória no tempo normal: Brasil 2x0 México, Brasil classifica.
+    // Mata-mata — vitória no tempo normal: Brasil 2x0 México.
+    // Sem empate, não há pênaltis: vale apenas a pontuação base.
     #[test]
     fn knockout_normal_win() {
         let real = ko(2, 0, "home", false, None);
-        assert_eq!(match_points(true, &real, &ko(2, 0, "home", false, None)), 9); // 7 + 2
-        assert_eq!(match_points(true, &real, &ko(3, 0, "home", false, None)), 5); // 3 + 2 (gols 0 não contam)
-        assert_eq!(match_points(true, &real, &ko(2, 1, "home", false, None)), 6); // 3 + 1 gol + 2
-        assert_eq!(match_points(true, &real, &ko(1, 0, "home", false, None)), 5); // 3 + 2
-        assert_eq!(match_points(true, &real, &ko(1, 1, "home", false, None)), 2); // 0 + 2 classificado
-        assert_eq!(match_points(true, &real, &ko(0, 1, "away", false, None)), 0); // visitante venceria — errou tudo
+        assert_eq!(match_points(true, &real, &ko(2, 0, "home", false, None)), 7); // placar exato
+        assert_eq!(match_points(true, &real, &ko(3, 0, "home", false, None)), 3); // só vencedor (gols 0 não contam)
+        assert_eq!(match_points(true, &real, &ko(2, 1, "home", false, None)), 4); // vencedor + gols mandante
+        assert_eq!(match_points(true, &real, &ko(1, 0, "home", false, None)), 3); // só vencedor
+        assert_eq!(match_points(true, &real, &ko(1, 1, "home", false, None)), 0); // palpitou empate, deu vitória
+        assert_eq!(match_points(true, &real, &ko(0, 1, "away", false, None)), 0); // errou o vencedor
     }
 
     // Mata-mata — empate decidido nos pênaltis: Brasil 1x1 Argentina,
-    // Brasil classifica nos pênaltis 5x4.
+    // pênaltis 5x4 (mandante avança).
     #[test]
     fn knockout_penalties() {
         let real = ko(1, 1, "home", true, Some((5, 4)));
-        assert_eq!(
-            match_points(true, &real, &ko(1, 1, "home", true, Some((5, 4)))),
-            12
-        );
-        assert_eq!(
-            match_points(true, &real, &ko(1, 1, "home", true, Some((4, 3)))),
-            11
-        );
-        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, None)), 11);
-        assert_eq!(
-            match_points(true, &real, &ko(2, 2, "home", true, Some((5, 4)))),
-            8
-        );
-        assert_eq!(match_points(true, &real, &ko(0, 0, "home", true, None)), 7);
-        assert_eq!(match_points(true, &real, &ko(1, 1, "away", true, None)), 8);
-        assert_eq!(match_points(true, &real, &ko(2, 1, "home", false, None)), 2);
+        // Placar exato 1x1 (7) + pênaltis exatos 5x4 (+3) = 10.
+        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((5, 4)))), 10);
+        // Placar exato 1x1 (7) + vencedor dos pênaltis (+2) = 9.
+        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((4, 3)))), 9);
+        // Placar exato 1x1 (7) + errou o vencedor dos pênaltis (0) = 7.
+        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((3, 5)))), 7);
+        // Empate não exato (3) + vencedor certo dos pênaltis (+1) = 4.
+        assert_eq!(match_points(true, &real, &ko(2, 2, "home", true, Some((5, 4)))), 4);
+        assert_eq!(match_points(true, &real, &ko(2, 2, "home", true, Some((4, 3)))), 4);
+        // Empate não exato (3) + errou o vencedor (0) = 3.
+        assert_eq!(match_points(true, &real, &ko(2, 2, "away", true, Some((3, 5)))), 3);
+        // Palpitou vitória: errou o resultado (era empate) = 0.
+        assert_eq!(match_points(true, &real, &ko(2, 1, "home", false, None)), 0);
         assert_eq!(match_points(true, &real, &ko(2, 1, "away", false, None)), 0);
     }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { motion } from "framer-motion";
-import { X } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, Info } from "lucide-react";
 import {
   usePools,
   useLeaderboard,
@@ -45,6 +45,8 @@ export function LeaderboardPage() {
 
   const currentPool = pools.data?.find((p) => p.id === selectedPool);
   const isOrganizer = !!currentPool && (currentPool.createdBy === user?.id || isAdmin);
+
+  const [scoringOpen, setScoringOpen] = useState(false);
 
   // ---- Formulário de ajuste (organizador) ----
   const [adjUser, setAdjUser] = useState("");
@@ -118,16 +120,9 @@ export function LeaderboardPage() {
           jogos terminam.
         </p>
       )}
-      <p className="mt-2 max-w-3xl text-sm text-ink-muted">
-        A pontuação considera o placar do tempo normal. Placar exato vale 7 pontos; resultado
-        correto vale 3; acertar os gols de um time que marcou pelo menos 1 gol dá +1 se você acertou o ganhador. No mata-mata,
-        acertar o classificado dá +2, e palpites corretos sobre pênaltis podem render bônus extras.
-      </p>
-      <p className="mt-2 max-w-3xl text-sm text-ink-muted">
-        <span className="font-semibold text-ink">Em caso de empate na pontuação</span>, desempata, nesta ordem: (1) mais
-        placares exatos cravados; (2) mais acertos de resultado; (3) mais bônus de precisão
-        (gols, classificado e pênaltis). Ajustes manuais não contam no desempate.
-      </p>
+      <Button variant="outline" size="sm" className="mt-3" onClick={() => setScoringOpen(true)}>
+        <Info className="h-4 w-4" /> Como funciona a pontuação
+      </Button>
 
       {pools.isLoading ? (
         <Card className="mt-6">
@@ -354,6 +349,95 @@ export function LeaderboardPage() {
           )}
         </>
       )}
+      <AnimatePresence>
+        {scoringOpen && (
+          <motion.div
+            key="scoring-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setScoringOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 8 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="relative w-full max-w-lg rounded-2xl bg-card p-6 shadow-card-hover"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <h2 className="text-xl font-heading font-semibold">Como funciona a pontuação</h2>
+                <button
+                  onClick={() => setScoringOpen(false)}
+                  className="mt-0.5 shrink-0 rounded-full p-1 text-ink-muted transition-colors hover:bg-secondary hover:text-ink"
+                  aria-label="Fechar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <p className="mt-1 text-sm text-ink-muted">Aplica-se a todos os jogos (grupos e mata-mata).</p>
+
+              <table className="mt-4 w-full text-sm">
+                <thead>
+                  <tr className="border-b border-mint/30 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                    <th className="pb-2 pr-4">Situação</th>
+                    <th className="pb-2 text-right">Pontos</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-mint/15">
+                  {[
+                    ["Placar exato", "7"],
+                    ["Resultado certo + gols de um time acertados", "4"],
+                    ["Só o resultado certo", "3"],
+                    ["Resultado errado", "0"],
+                  ].map(([label, pts]) => (
+                    <tr key={label}>
+                      <td className="py-2 pr-4 text-ink">{label}</td>
+                      <td className="py-2 text-right font-semibold text-mint-dark">{pts}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <p className="mt-5 text-sm font-semibold text-ink">Bônus mata-mata — pênaltis</p>
+              <p className="text-xs text-ink-muted">Somado à base quando o jogo vai para a disputa de pênaltis.</p>
+
+              <table className="mt-2 w-full text-sm">
+                <thead>
+                  <tr className="border-b border-mint/30 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                    <th className="pb-2 pr-4">Situação</th>
+                    <th className="pb-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-mint/15">
+                  {[
+                    ["Placar exato + pênaltis exatos (ex: 1×1, 5×4)", "10"],
+                    ["Placar exato + classificado certo", "9"],
+                    ["Placar exato + errou a disputa", "7"],
+                    ["Empate não exato + classificado certo", "4"],
+                    ["Empate não exato + errou a disputa", "3"],
+                  ].map(([label, pts]) => (
+                    <tr key={label}>
+                      <td className="py-2 pr-4 text-ink">{label}</td>
+                      <td className="py-2 text-right font-semibold text-mint-dark">{pts}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="mt-5 rounded-xl bg-secondary/50 px-4 py-3 text-sm text-ink-muted">
+                <span className="font-semibold text-ink">Desempate</span> — na ordem: (1) mais placares
+                exatos; (2) mais acertos de vencedor; (3) mais bônus de gols e pênaltis. Ajustes manuais
+                não entram no desempate.
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </PageShell>
   );
 }

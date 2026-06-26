@@ -194,62 +194,50 @@ fn sanitize_knockout_input(
         return Ok(KnockoutEntry::default());
     }
 
-    let qualifier = entry
-        .qualifier
-        .map(|q| q.trim().to_lowercase())
-        .filter(|q| !q.is_empty());
-    let qualifier = match qualifier.as_deref() {
-        Some("home") => "home".to_string(),
-        Some("away") => "away".to_string(),
+    // Empate no tempo normal ⇒ vai aos pênaltis. O classificado deixa de ser
+    // escolhido num seletor: é deduzido do placar (vitória) ou da disputa de
+    // pênaltis (empate).
+    let went_to_penalties = home_score == away_score;
+
+    if !went_to_penalties {
+        let qualifier = if home_score > away_score { "home" } else { "away" };
+        return Ok(KnockoutEntry {
+            qualifier: Some(qualifier.to_string()),
+            went_to_penalties: false,
+            penalty_home: None,
+            penalty_away: None,
+        });
+    }
+
+    // Empate: o placar dos pênaltis é obrigatório e não pode terminar empatado.
+    let (penalty_home, penalty_away) = match (entry.penalty_home, entry.penalty_away) {
+        (Some(ph), Some(pa)) => {
+            if ph < 0 || pa < 0 {
+                return Err(crate::security::public_error(
+                    "O placar dos pênaltis não pode ser negativo.",
+                ));
+            }
+            if ph == pa {
+                return Err(crate::security::public_error(
+                    "O placar dos pênaltis não pode terminar empatado.",
+                ));
+            }
+            (ph, pa)
+        }
         _ => {
             return Err(crate::security::public_error(
-                "Escolha quem se classifica (mandante ou visitante).",
+                "Empate no tempo normal: informe o placar dos pênaltis dos dois lados.",
             ))
         }
     };
 
-    // Pênaltis só fazem sentido se o tempo normal terminou empatado.
-    let went_to_penalties = entry.went_to_penalties && home_score == away_score;
-
-    let (penalty_home, penalty_away) = if went_to_penalties {
-        match (entry.penalty_home, entry.penalty_away) {
-            // Placar dos pênaltis é opcional.
-            (None, None) => (None, None),
-            (Some(ph), Some(pa)) => {
-                if ph < 0 || pa < 0 {
-                    return Err(crate::security::public_error(
-                        "O placar dos pênaltis não pode ser negativo.",
-                    ));
-                }
-                if ph == pa {
-                    return Err(crate::security::public_error(
-                        "O placar dos pênaltis não pode terminar empatado.",
-                    ));
-                }
-                let pen_winner = if ph > pa { "home" } else { "away" };
-                if pen_winner != qualifier {
-                    return Err(crate::security::public_error(
-                        "O vencedor dos pênaltis precisa ser o classificado.",
-                    ));
-                }
-                (Some(ph), Some(pa))
-            }
-            _ => {
-                return Err(crate::security::public_error(
-                    "Informe o placar dos pênaltis dos dois lados.",
-                ))
-            }
-        }
-    } else {
-        // Sem pênaltis (ou tempo normal não empatado): limpa o placar.
-        (None, None)
-    };
+    let qualifier = if penalty_home > penalty_away { "home" } else { "away" };
 
     Ok(KnockoutEntry {
-        qualifier: Some(qualifier),
-        went_to_penalties,
-        penalty_home,
-        penalty_away,
+        qualifier: Some(qualifier.to_string()),
+        went_to_penalties: true,
+        penalty_home: Some(penalty_home),
+        penalty_away: Some(penalty_away),
     })
 }
 
@@ -448,6 +436,15 @@ pub async fn set_match_result(
 
     let _ = crate::scoring::recalculate_match_breakdowns(&match_id, Some(&session.user_id)).await?;
 
+    load_match_record(db, &match_id).await
+}
+
+/// Recarrega um jogo do banco no formato `MatchRecord`.
+#[cfg(feature = "server")]
+async fn load_match_record(
+    db: &sqlx::SqlitePool,
+    match_id: &str,
+) -> Result<MatchRecord, ServerFnError> {
     let updated = sqlx::query_as::<_, MatchRow>(
         "SELECT id, home_team, away_team, kickoff, group_name, phase,
                 home_score, away_score, qualifier, went_to_penalties,
@@ -456,10 +453,10 @@ pub async fn set_match_result(
                 result_source, result_synced_at, result_external_raw_status, live_updated_at
          FROM matches WHERE id = ?1",
     )
-    .bind(&match_id)
+    .bind(match_id)
     .fetch_one(db)
     .await
-    .map_err(|e| crate::security::internal_error("set_match_result_reload", e))?;
+    .map_err(|e| crate::security::internal_error("load_match_record", e))?;
 
     Ok(MatchRecord {
         id: updated.id,
@@ -616,6 +613,213 @@ pub async fn update_match_teams(
             "before": { "home_team": old_home, "away_team": old_away },
             "after": { "home_team": home, "away_team": away }
         }),
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Valida e normaliza uma fase de mata-mata e uma data/hora (RFC 3339).
+#[cfg(feature = "server")]
+fn normalize_knockout_match_input(
+    phase: String,
+    kickoff: String,
+) -> Result<(String, String), ServerFnError> {
+    use crate::models::is_knockout;
+
+    let phase = crate::security::normalize_required_text("Fase", phase, 1, 60)?;
+    if !is_knockout(Some(&phase)) {
+        return Err(crate::security::public_error(
+            "O cadastro manual é apenas para jogos de mata-mata.",
+        ));
+    }
+
+    let kickoff = kickoff.trim().to_string();
+    let parsed = chrono::DateTime::parse_from_rfc3339(&kickoff)
+        .map_err(|_| crate::security::public_error("Data/hora do jogo inválida."))?;
+    let kickoff = parsed.with_timezone(&chrono::Utc).to_rfc3339();
+
+    Ok((phase, kickoff))
+}
+
+/// Cria manualmente um jogo de mata-mata. Permite ao admin montar os confrontos e
+/// horários da fase eliminatória sem refazer a seed. O id é gerado e a origem do
+/// resultado fica como 'manual' (o poller nunca sobrescreve).
+#[cfg(feature = "server")]
+pub async fn create_match(
+    token: String,
+    home_team: String,
+    away_team: String,
+    phase: String,
+    kickoff: String,
+    csrf_token: String,
+) -> Result<MatchRecord, ServerFnError> {
+    use crate::auth::require_recent_admin;
+    use crate::db::pool;
+    use uuid::Uuid;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    let home = crate::security::normalize_required_text("Selecao mandante", home_team, 1, 60)?;
+    let away = crate::security::normalize_required_text("Selecao visitante", away_team, 1, 60)?;
+    let (phase, kickoff) = normalize_knockout_match_input(phase, kickoff)?;
+
+    let id = Uuid::new_v4().to_string();
+    let db = pool();
+
+    sqlx::query(
+        "INSERT INTO matches (id, home_team, away_team, kickoff, group_name, phase, result_source)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, 'manual')",
+    )
+    .bind(&id)
+    .bind(&home)
+    .bind(&away)
+    .bind(&kickoff)
+    .bind(&phase)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("create_match_insert", e))?;
+
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "match_created",
+        "match",
+        Some(&id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({
+            "home_team": home, "away_team": away, "phase": phase, "kickoff": kickoff
+        }),
+    )
+    .await?;
+
+    load_match_record(db, &id).await
+}
+
+/// Edita times, fase e horário de um jogo de mata-mata já cadastrado.
+#[cfg(feature = "server")]
+pub async fn update_match_schedule(
+    token: String,
+    match_id: String,
+    home_team: String,
+    away_team: String,
+    phase: String,
+    kickoff: String,
+    csrf_token: String,
+) -> Result<MatchRecord, ServerFnError> {
+    use crate::auth::require_recent_admin;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    crate::security::validate_match_id(&match_id)?;
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    let home = crate::security::normalize_required_text("Selecao mandante", home_team, 1, 60)?;
+    let away = crate::security::normalize_required_text("Selecao visitante", away_team, 1, 60)?;
+    let (phase, kickoff) = normalize_knockout_match_input(phase, kickoff)?;
+
+    let db = pool();
+    let before: Option<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT home_team, away_team, phase, kickoff FROM matches WHERE id = ?1",
+    )
+    .bind(&match_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("update_match_schedule_lookup", e))?;
+
+    let Some((old_home, old_away, old_phase, old_kickoff)) = before else {
+        return Err(crate::security::public_error("Partida nao encontrada."));
+    };
+
+    sqlx::query(
+        "UPDATE matches SET home_team = ?1, away_team = ?2, phase = ?3, kickoff = ?4 WHERE id = ?5",
+    )
+    .bind(&home)
+    .bind(&away)
+    .bind(&phase)
+    .bind(&kickoff)
+    .bind(&match_id)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("update_match_schedule", e))?;
+
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "match_schedule_updated",
+        "match",
+        Some(&match_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({
+            "before": { "home_team": old_home, "away_team": old_away, "phase": old_phase, "kickoff": old_kickoff },
+            "after": { "home_team": home, "away_team": away, "phase": phase, "kickoff": kickoff }
+        }),
+    )
+    .await?;
+
+    load_match_record(db, &match_id).await
+}
+
+/// Exclui um jogo (e os palpites/breakdowns associados). Usado para remover
+/// confrontos de mata-mata cadastrados por engano.
+#[cfg(feature = "server")]
+pub async fn delete_match(
+    token: String,
+    match_id: String,
+    csrf_token: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::require_recent_admin;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    crate::security::validate_match_id(&match_id)?;
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    let db = pool();
+    let before: Option<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT home_team, away_team, phase FROM matches WHERE id = ?1")
+            .bind(&match_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("delete_match_lookup", e))?;
+
+    let Some((home, away, phase)) = before else {
+        return Err(crate::security::public_error("Partida nao encontrada."));
+    };
+
+    sqlx::query("DELETE FROM prediction_score_breakdowns WHERE match_id = ?1")
+        .bind(&match_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_match_breakdowns", e))?;
+
+    sqlx::query("DELETE FROM predictions WHERE match_id = ?1")
+        .bind(&match_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_match_predictions", e))?;
+
+    sqlx::query("DELETE FROM matches WHERE id = ?1")
+        .bind(&match_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_match", e))?;
+
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "match_deleted",
+        "match",
+        Some(&match_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({ "home_team": home, "away_team": away, "phase": phase }),
     )
     .await?;
 

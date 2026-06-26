@@ -14,7 +14,7 @@ import {
   getSelectionGroups,
   isKnownSelection,
 } from "@/lib/selections";
-import { cn, formatKickoff, formatLiveStatus, isKnockout, winnerSide } from "@/lib/utils";
+import { cn, formatKickoff, formatLiveStatus, isKnockout } from "@/lib/utils";
 import type { KnockoutEntry, MatchPointsSummary, MatchRecord, PredictionRecord } from "@/types";
 import { MotionCard } from "./ui/card";
 import { Button } from "./ui/button";
@@ -168,11 +168,6 @@ export function MatchCard({
   const initialAway = scoreToField(prediction?.awayScore);
   const [homeGuess, setHomeGuess] = useState(initialHome);
   const [awayGuess, setAwayGuess] = useState(initialAway);
-  const [qualifier, setQualifier] = useState(
-    prediction?.qualifier ?? winnerSide(scoreValue(initialHome), scoreValue(initialAway)) ?? "home",
-  );
-  const [qualifierTouched, setQualifierTouched] = useState(!!prediction?.qualifier);
-  const [wentPens, setWentPens] = useState(prediction?.wentToPenalties ?? false);
   const [penHome, setPenHome] = useState(scoreToField(prediction?.penaltyHomeScore));
   const [penAway, setPenAway] = useState(scoreToField(prediction?.penaltyAwayScore));
   const [savedMessage, setSavedMessage] = useState("");
@@ -188,18 +183,11 @@ export function MatchCard({
   useEffect(() => {
     setResultHome(scoreToField(game.homeScore));
     setResultAway(scoreToField(game.awayScore));
-    setResultQualifier(
-      game.qualifier ?? winnerSide(game.homeScore ?? 0, game.awayScore ?? 0) ?? "home",
-    );
-    setResultQualTouched(!!game.qualifier);
-    setResultPens(game.wentToPenalties);
     setResultPenHome(scoreToField(game.penaltyHomeScore));
     setResultPenAway(scoreToField(game.penaltyAwayScore));
   }, [
     game.homeScore,
     game.awayScore,
-    game.qualifier,
-    game.wentToPenalties,
     game.penaltyHomeScore,
     game.penaltyAwayScore,
   ]);
@@ -212,11 +200,6 @@ export function MatchCard({
   // ---- Resultado oficial (admin) ----
   const [resultHome, setResultHome] = useState(scoreToField(game.homeScore));
   const [resultAway, setResultAway] = useState(scoreToField(game.awayScore));
-  const [resultQualifier, setResultQualifier] = useState(
-    game.qualifier ?? winnerSide(game.homeScore ?? 0, game.awayScore ?? 0) ?? "home",
-  );
-  const [resultQualTouched, setResultQualTouched] = useState(!!game.qualifier);
-  const [resultPens, setResultPens] = useState(game.wentToPenalties);
   const [resultPenHome, setResultPenHome] = useState(scoreToField(game.penaltyHomeScore));
   const [resultPenAway, setResultPenAway] = useState(scoreToField(game.penaltyAwayScore));
   const [resultError, setResultError] = useState("");
@@ -230,29 +213,44 @@ export function MatchCard({
     (team, position, allTeams) => allTeams.indexOf(team) === position && !isKnownSelection(team),
   );
 
-  const buildKnockout = (home: number, away: number, q: string, pens: boolean, ph: string, pa: string): KnockoutEntry => {
+  // O classificado é deduzido no servidor (placar ou vencedor dos pênaltis); o
+  // empate no tempo normal exige o placar dos pênaltis.
+  const buildKnockout = (home: number, away: number, ph: string, pa: string): KnockoutEntry => {
     if (!knockout) return { qualifier: null, wentToPenalties: false, penaltyHome: null, penaltyAway: null };
-    const wentPenalties = pens && home === away;
+    const wentPenalties = home === away;
     return {
-      qualifier: q,
+      qualifier: null,
       wentToPenalties: wentPenalties,
       penaltyHome: wentPenalties && ph !== "" ? scoreValue(ph) : null,
       penaltyAway: wentPenalties && pa !== "" ? scoreValue(pa) : null,
     };
   };
 
+  // Valida o placar dos pênaltis quando o palpite/resultado é um empate.
+  const penaltiesError = (home: number, away: number, ph: string, pa: string): string | null => {
+    if (!knockout || home !== away) return null;
+    if (ph === "" || pa === "") return "Empate no tempo normal: informe o placar dos pênaltis dos dois lados.";
+    if (scoreValue(ph) === scoreValue(pa)) return "O placar dos pênaltis não pode terminar empatado.";
+    return null;
+  };
+
   const onSave = async (e: FormEvent) => {
     e.preventDefault();
     setSavedMessage("");
     setError("");
+    const home = scoreValue(homeGuess);
+    const away = scoreValue(awayGuess);
+    const penError = penaltiesError(home, away, penHome, penAway);
+    if (penError) {
+      setError(penError);
+      return;
+    }
     try {
-      const home = scoreValue(homeGuess);
-      const away = scoreValue(awayGuess);
       await submit.mutateAsync({
         matchId: game.id,
         homeScore: home,
         awayScore: away,
-        knockout: buildKnockout(home, away, qualifier, wentPens, penHome, penAway),
+        knockout: buildKnockout(home, away, penHome, penAway),
       });
       setSavedMessage("Palpite salvo!");
     } catch (err) {
@@ -265,6 +263,11 @@ export function MatchCard({
     setResultError("");
     const home = scoreValue(resultHome);
     const away = scoreValue(resultAway);
+    const penError = penaltiesError(home, away, resultPenHome, resultPenAway);
+    if (penError) {
+      setResultError(penError);
+      return;
+    }
     try {
       await withAdminReauth(
         () =>
@@ -272,7 +275,7 @@ export function MatchCard({
             matchId: game.id,
             homeScore: home,
             awayScore: away,
-            knockout: buildKnockout(home, away, resultQualifier, resultPens, resultPenHome, resultPenAway),
+            knockout: buildKnockout(home, away, resultPenHome, resultPenAway),
           }),
         (password) => reauth.mutateAsync(password),
       );
@@ -506,78 +509,32 @@ export function MatchCard({
           <ScoreInputs>
             <ScoreBox
               value={homeGuess}
-              onChange={(e) => {
-                const next = normalizeScoreField(e.target.value);
-                const v = scoreValue(next);
-                setHomeGuess(next);
-                if (knockout) {
-                  if (!qualifierTouched) {
-                    const w = winnerSide(v, scoreValue(awayGuess));
-                    if (w) setQualifier(w);
-                  }
-                  if (v !== scoreValue(awayGuess)) setWentPens(false);
-                }
-              }}
+              onChange={(e) => setHomeGuess(normalizeScoreField(e.target.value))}
             />
             <span className="font-heading text-xl font-bold text-ink-muted">x</span>
             <ScoreBox
               value={awayGuess}
-              onChange={(e) => {
-                const next = normalizeScoreField(e.target.value);
-                const v = scoreValue(next);
-                setAwayGuess(next);
-                if (knockout) {
-                  if (!qualifierTouched) {
-                    const w = winnerSide(scoreValue(homeGuess), v);
-                    if (w) setQualifier(w);
-                  }
-                  if (scoreValue(homeGuess) !== v) setWentPens(false);
-                }
-              }}
+              onChange={(e) => setAwayGuess(normalizeScoreField(e.target.value))}
             />
           </ScoreInputs>
 
-          {knockout && (
+          {knockout && scoreValue(homeGuess) === scoreValue(awayGuess) && (
             <div className="flex flex-col gap-2 rounded-md bg-mint/10 p-3">
-              <Label>Quem se classifica</Label>
-              <Select
-                value={qualifier}
-                onChange={(e) => {
-                  setQualifier(e.target.value);
-                  setQualifierTouched(true);
-                }}
-              >
-                <option value="home">{formatSelectionLabel(game.homeTeam)}</option>
-                <option value="away">{formatSelectionLabel(game.awayTeam)}</option>
-              </Select>
-              {scoreValue(homeGuess) === scoreValue(awayGuess) && (
-                <>
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={wentPens}
-                      onChange={(e) => setWentPens(e.target.checked)}
-                    />
-                    Foi para os pênaltis?
-                  </label>
-                  {wentPens && (
-                    <>
-                      <Label>Placar dos pênaltis (opcional)</Label>
-                      <ScoreInputs>
-                        <ScoreBox
-                          value={penHome}
-                          onChange={(e) => setPenHome(normalizeScoreField(e.target.value))}
-                        />
-                        <span className="font-heading text-xl font-bold text-ink-muted">x</span>
-                        <ScoreBox
-                          value={penAway}
-                          onChange={(e) => setPenAway(normalizeScoreField(e.target.value))}
-                        />
-                      </ScoreInputs>
-                    </>
-                  )}
-                </>
-              )}
+              <Label>Placar dos pênaltis</Label>
+              <ScoreInputs>
+                <ScoreBox
+                  value={penHome}
+                  onChange={(e) => setPenHome(normalizeScoreField(e.target.value))}
+                />
+                <span className="font-heading text-xl font-bold text-ink-muted">x</span>
+                <ScoreBox
+                  value={penAway}
+                  onChange={(e) => setPenAway(normalizeScoreField(e.target.value))}
+                />
+              </ScoreInputs>
+              <p className="text-xs text-ink-muted">
+                Empate no tempo normal vai para os pênaltis — quem fizer mais se classifica.
+              </p>
             </div>
           )}
 
@@ -680,85 +637,31 @@ export function MatchCard({
             <ScoreInputs>
               <ScoreBox
               value={resultHome ?? 0}
-              onChange={(e) => {
-                  const next = normalizeScoreField(e.target.value);
-                  const v = scoreValue(next);
-                  setResultHome(next);
-                  if (knockout) {
-                    const h = v;
-                    const a = scoreValue(resultAway);
-                    if (!resultQualTouched) {
-                      const w = winnerSide(h, a);
-                      if (w) setResultQualifier(w);
-                    }
-                    if (h !== a) setResultPens(false);
-                  }
-                }}
+              onChange={(e) => setResultHome(normalizeScoreField(e.target.value))}
               />
               <span className="font-heading text-xl font-bold text-ink-muted">x</span>
               <ScoreBox
                 value={resultAway}
-                onChange={(e) => {
-                  const next = normalizeScoreField(e.target.value);
-                  const v = scoreValue(next);
-                  setResultAway(next);
-                  if (knockout) {
-                    const h = scoreValue(resultHome);
-                    const a = v;
-                    if (!resultQualTouched) {
-                      const w = winnerSide(h, a);
-                      if (w) setResultQualifier(w);
-                    }
-                    if (h !== a) setResultPens(false);
-                  }
-                }}
+                onChange={(e) => setResultAway(normalizeScoreField(e.target.value))}
               />
             </ScoreInputs>
 
-            {knockout && (
+            {knockout && scoreValue(resultHome) === scoreValue(resultAway) && (
               <div className="flex flex-col gap-2 rounded-md bg-sky/10 p-3">
-                <Label>Quem se classifica</Label>
-                <Select
-                  value={resultQualifier}
-                  onChange={(e) => {
-                    setResultQualifier(e.target.value);
-                    setResultQualTouched(true);
-                  }}
-                >
-                  <option value="home">{formatSelectionLabel(game.homeTeam)}</option>
-                  <option value="away">{formatSelectionLabel(game.awayTeam)}</option>
-                </Select>
-                {scoreValue(resultHome) === scoreValue(resultAway) && (
-                  <>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={resultPens}
-                        onChange={(e) => setResultPens(e.target.checked)}
-                      />
-                      Foi para os pênaltis?
-                    </label>
-                    {resultPens && (
-                      <>
-                        <Label>Placar dos pênaltis (opcional)</Label>
-                        <ScoreInputs>
-                          <ScoreBox
-                            value={resultPenHome}
-                            onChange={(e) => setResultPenHome(normalizeScoreField(e.target.value))}
-                          />
-                          <span className="font-heading text-xl font-bold text-ink-muted">x</span>
-                          <ScoreBox
-                            value={resultPenAway}
-                            onChange={(e) => setResultPenAway(normalizeScoreField(e.target.value))}
-                          />
-                        </ScoreInputs>
-                      </>
-                    )}
-                  </>
-                )}
+                <Label>Placar dos pênaltis</Label>
+                <ScoreInputs>
+                  <ScoreBox
+                    value={resultPenHome}
+                    onChange={(e) => setResultPenHome(normalizeScoreField(e.target.value))}
+                  />
+                  <span className="font-heading text-xl font-bold text-ink-muted">x</span>
+                  <ScoreBox
+                    value={resultPenAway}
+                    onChange={(e) => setResultPenAway(normalizeScoreField(e.target.value))}
+                  />
+                </ScoreInputs>
                 <p className="text-xs text-ink-muted">
-                  Empate no tempo normal sem pênaltis = classificado decidido na prorrogação (sem
-                  pontos extras).
+                  Empate no tempo normal: informe o placar dos pênaltis (quem fez mais se classifica).
                 </p>
               </div>
             )}

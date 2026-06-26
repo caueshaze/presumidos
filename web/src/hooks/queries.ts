@@ -237,6 +237,60 @@ export function useUpdateMatchTeams() {
   });
 }
 
+// Cadastro manual de jogos de mata-mata pelo admin (times + fase + horário).
+export function useCreateMatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      homeTeam: string;
+      awayTeam: string;
+      phase: string;
+      kickoff: string;
+    }) => api.post<MatchRecord>("/admin/matches", vars),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["matches"] });
+      qc.invalidateQueries({ queryKey: ["admin-matches"] });
+      qc.invalidateQueries({ queryKey: ["admin-overview"] });
+    },
+  });
+}
+
+export function useUpdateMatchSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      matchId: string;
+      homeTeam: string;
+      awayTeam: string;
+      phase: string;
+      kickoff: string;
+    }) =>
+      api.post<MatchRecord>(`/admin/matches/${vars.matchId}/schedule`, {
+        homeTeam: vars.homeTeam,
+        awayTeam: vars.awayTeam,
+        phase: vars.phase,
+        kickoff: vars.kickoff,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["matches"] });
+      qc.invalidateQueries({ queryKey: ["admin-matches"] });
+    },
+  });
+}
+
+export function useDeleteMatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (matchId: string) => api.post<void>(`/admin/matches/${matchId}/delete`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["matches"] });
+      qc.invalidateQueries({ queryKey: ["admin-matches"] });
+      qc.invalidateQueries({ queryKey: ["admin-overview"] });
+      qc.invalidateQueries({ queryKey: ["leaderboard"] });
+    },
+  });
+}
+
 export function useReauth() {
   return useMutation({
     mutationFn: (password: string) => api.post<void>("/auth/reauth", { password }),
