@@ -431,7 +431,7 @@ export function LeaderboardPage() {
 
               <div className="mt-5 rounded-xl bg-secondary/50 px-4 py-3 text-sm text-ink-muted">
                 <span className="font-semibold text-ink">Desempate</span> — na ordem: (1) mais placares
-                exatos; (2) mais acertos de resultado; (3) mais bônus de precisão. Ajustes manuais
+                exatos; (2) mais acertos de vencedor; (3) mais bônus de precisão. Ajustes manuais
                 não entram no desempate.
               </div>
             </motion.div>
