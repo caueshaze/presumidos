@@ -182,6 +182,9 @@ export function useSetKnockoutReleased() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["knockout-released"] });
       qc.invalidateQueries({ queryKey: ["matches"] });
+      // Mantém o rascunho de configurações em sincronia para que um "Salvar
+      // configurações" posterior não reverta a liberação feita aqui.
+      qc.invalidateQueries({ queryKey: ["admin-settings"] });
     },
   });
 }

@@ -250,7 +250,7 @@ export function LeaderboardPage() {
                 </div>
                 <div>
                   <Label>Operação</Label>
-                  <div className="flex gap-1 rounded-pill bg-secondary/40 p-1" role="group" aria-label="Tipo de ajuste">
+                  <div className="inline-flex gap-1 rounded-pill bg-secondary/40 p-1" role="group" aria-label="Tipo de ajuste">
                     <Button
                       type="button"
                       size="sm"
