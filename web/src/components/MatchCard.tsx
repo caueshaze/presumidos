@@ -314,6 +314,14 @@ export function MatchCard({
   const hasPrediction = !!prediction || !!savedMessage;
   const hasOfficial = game.homeScore !== null && game.awayScore !== null;
 
+  // Pênaltis só aparecem num empate de verdade: os dois placares preenchidos e
+  // iguais (inclui 0x0). Campos vazios não contam como empate.
+  const drawGuess =
+    knockout &&
+    homeGuess !== "" &&
+    awayGuess !== "" &&
+    scoreValue(homeGuess) === scoreValue(awayGuess);
+
   // Jogo em andamento segundo o poller (placar parcial). O backend só mantém
   // live_status preenchido enquanto o jogo está em andamento.
   const liveInProgress = !game.finished && !hasOfficial && !!game.liveStatus;
@@ -518,25 +526,41 @@ export function MatchCard({
             />
           </ScoreInputs>
 
-          {knockout && scoreValue(homeGuess) === scoreValue(awayGuess) && (
-            <div className="flex flex-col gap-2 rounded-md bg-mint/10 p-3">
-              <Label>Placar dos pênaltis</Label>
-              <ScoreInputs>
-                <ScoreBox
-                  value={penHome}
-                  onChange={(e) => setPenHome(normalizeScoreField(e.target.value))}
-                />
-                <span className="font-heading text-xl font-bold text-ink-muted">x</span>
-                <ScoreBox
-                  value={penAway}
-                  onChange={(e) => setPenAway(normalizeScoreField(e.target.value))}
-                />
-              </ScoreInputs>
-              <p className="text-xs text-ink-muted">
-                Empate no tempo normal vai para os pênaltis — quem fizer mais se classifica.
-              </p>
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {drawGuess && (
+              // -mt-3 cancela o gap-3 do form enquanto a altura anima (mesmo
+              // padrão do "Palpite salvo!"), evitando o "pulo" do flex gap.
+              <motion.div
+                key="penalties"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{
+                  height: { duration: 0.32, ease: [0.22, 1, 0.36, 1] },
+                  opacity: { duration: 0.22, ease: "easeOut" },
+                }}
+                className="-mt-3 overflow-hidden"
+              >
+                <div className="mt-3 flex flex-col gap-2 rounded-md bg-mint/10 p-3">
+                  <Label>Placar dos pênaltis</Label>
+                  <ScoreInputs>
+                    <ScoreBox
+                      value={penHome}
+                      onChange={(e) => setPenHome(normalizeScoreField(e.target.value))}
+                    />
+                    <span className="font-heading text-xl font-bold text-ink-muted">x</span>
+                    <ScoreBox
+                      value={penAway}
+                      onChange={(e) => setPenAway(normalizeScoreField(e.target.value))}
+                    />
+                  </ScoreInputs>
+                  <p className="text-xs text-ink-muted">
+                    Empate no tempo normal vai para os pênaltis — quem fizer mais se classifica.
+                  </p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {error && <ErrorBanner>{error}</ErrorBanner>}
           <AnimatePresence initial={false}>

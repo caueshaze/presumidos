@@ -67,14 +67,14 @@ function LiveCard({
         </span>
       </div>
 
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="font-heading text-lg font-semibold">
+      <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+        <span className="font-heading text-lg font-semibold leading-tight">
           {formatSelectionLabel(game.homeTeam)}
         </span>
-        <span className="font-heading text-2xl font-bold text-danger">
+        <span className="whitespace-nowrap font-heading text-2xl font-bold text-danger">
           {liveScore(game).home} <span className="text-ink-muted">x</span> {liveScore(game).away}
         </span>
-        <span className="text-right font-heading text-lg font-semibold">
+        <span className="text-right font-heading text-lg font-semibold leading-tight">
           {formatSelectionLabel(game.awayTeam)}
         </span>
       </div>
@@ -112,12 +112,12 @@ function NextGameCard({ game, onClick }: { game: MatchRecord; onClick: () => voi
         <Timer className="h-4 w-4" />
         Próximo jogo
       </div>
-      <div className="mt-2 flex items-center justify-between gap-3">
-        <span className="font-heading text-lg font-semibold">
+      <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+        <span className="font-heading text-lg font-semibold leading-tight">
           {formatSelectionLabel(game.homeTeam)}
         </span>
         <span className="text-ink-muted">x</span>
-        <span className="text-right font-heading text-lg font-semibold">
+        <span className="text-right font-heading text-lg font-semibold leading-tight">
           {formatSelectionLabel(game.awayTeam)}
         </span>
       </div>

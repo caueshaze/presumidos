@@ -3,7 +3,10 @@ import { Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
+  CheckCircle2,
   Clock3,
+  Eye,
+  EyeOff,
   Lock,
   RefreshCcw,
   ShieldAlert,
@@ -27,6 +30,7 @@ import {
   useCreateMatch,
   useDeleteMatch,
   useInvalidateUserSessions,
+  useKnockoutReleased,
   useReauth,
   useRecalculateAll,
   useRecalculateMatch,
@@ -35,6 +39,7 @@ import {
   useRevokePredictionReopen,
   useRunSyncNow,
   useSaveAdminSettings,
+  useSetKnockoutReleased,
   useSetMatchFinished,
   useSetMatchResult,
   useTriggerUserPasswordReset,
@@ -45,6 +50,7 @@ import {
 } from "@/hooks/queries";
 import { withAdminReauth } from "@/lib/adminReauth";
 import { formatKickoff, isKnockout } from "@/lib/utils";
+import { formatSelectionLabel, getSelectionGroups, isKnownSelection } from "@/lib/selections";
 import { PageShell } from "@/components/PageShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -110,6 +116,44 @@ function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
       {...props}
       className={`min-h-28 w-full rounded-md border-2 border-mint/40 bg-card px-4 py-2.5 text-ink focus:border-mint-dark focus:outline-none focus:shadow-glow ${props.className ?? ""}`}
     />
+  );
+}
+
+// Seleção de seleções (com bandeira) para montar confrontos do mata-mata.
+// Mantém o valor atual como opção mesmo se não estiver no catálogo, para não
+// perder confrontos já cadastrados com nomes legados.
+function TeamSelect({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel?: string;
+}) {
+  const groups = getSelectionGroups();
+  const unknown = value !== "" && !isKnownSelection(value);
+  return (
+    <Select value={value} onChange={(e) => onChange(e.target.value)} aria-label={ariaLabel}>
+      <option value="">Selecione a seleção</option>
+      {unknown && <option value={value}>{formatSelectionLabel(value)}</option>}
+      <optgroup label="Seleções">
+        {groups.teams.map((selection) => (
+          <option key={selection.key} value={selection.name}>
+            {formatSelectionLabel(selection.name)}
+          </option>
+        ))}
+      </optgroup>
+      {groups.placeholders.length > 0 && (
+        <optgroup label="Chaves do mata-mata">
+          {groups.placeholders.map((selection) => (
+            <option key={selection.key} value={selection.name}>
+              {formatSelectionLabel(selection.name)}
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </Select>
   );
 }
 
@@ -191,6 +235,10 @@ export function AdminPage() {
   const breakdown = useUserBreakdown(selectedUserId || null, selectedPoolId || null);
   const audit = useAdminAudit({});
   const settings = useAdminSettings();
+  // Lista sem filtros, dedicada ao painel do mata-mata: o contador/chaveamento
+  // não devem mudar quando o admin filtra a lista de jogos logo abaixo.
+  const allMatchesForKnockout = useAdminMatches({});
+  const knockoutReleasedQuery = useKnockoutReleased();
 
   const runSyncNow = useRunSyncNow();
   const recalcAll = useRecalculateAll();
@@ -198,6 +246,7 @@ export function AdminPage() {
   const setMatchResult = useSetMatchResult();
   const setMatchFinished = useSetMatchFinished();
   const createMatch = useCreateMatch();
+  const setKnockoutReleased = useSetKnockoutReleased();
   const updateMatchSchedule = useUpdateMatchSchedule();
   const deleteMatch = useDeleteMatch();
   const reopenPrediction = useReopenPrediction();
@@ -265,6 +314,17 @@ export function AdminPage() {
   const [newMatchPhase, setNewMatchPhase] = useState(KNOCKOUT_PHASES[0]);
   const [newMatchKickoff, setNewMatchKickoff] = useState("");
   const [createMatchError, setCreateMatchError] = useState("");
+  const [createMatchSuccess, setCreateMatchSuccess] = useState("");
+  const [knockoutToggleMsg, setKnockoutToggleMsg] = useState("");
+
+  const knockoutReleased = knockoutReleasedQuery.data?.released ?? false;
+  const knockoutMatches = useMemo(
+    () =>
+      (allMatchesForKnockout.data ?? []).filter((item) =>
+        isKnockout(item.matchRecord.phase),
+      ),
+    [allMatchesForKnockout.data],
+  );
 
   // Edição de confronto/fase/horário do jogo selecionado.
   const [editHome, setEditHome] = useState("");
@@ -285,6 +345,19 @@ export function AdminPage() {
     setEditKickoff(isoToLocalInput(selectedMatch.matchRecord.kickoff));
     setScheduleError("");
   }, [selectedMatch]);
+
+  // As confirmações de "criado"/"liberado" somem sozinhas depois de alguns segundos.
+  useEffect(() => {
+    if (!createMatchSuccess) return;
+    const timer = window.setTimeout(() => setCreateMatchSuccess(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [createMatchSuccess]);
+
+  useEffect(() => {
+    if (!knockoutToggleMsg) return;
+    const timer = window.setTimeout(() => setKnockoutToggleMsg(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [knockoutToggleMsg]);
 
   const runAdminAction = async <T,>(action: () => Promise<T>) => {
     setError("");
@@ -343,14 +416,21 @@ export function AdminPage() {
 
   const handleCreateMatch = async () => {
     setCreateMatchError("");
+    setCreateMatchSuccess("");
     if (!newMatchHome.trim() || !newMatchAway.trim()) {
-      setCreateMatchError("Informe os dois times.");
+      setCreateMatchError("Escolha as duas seleções.");
+      return;
+    }
+    if (newMatchHome.trim() === newMatchAway.trim()) {
+      setCreateMatchError("Mandante e visitante não podem ser a mesma seleção.");
       return;
     }
     if (!newMatchKickoff) {
       setCreateMatchError("Informe a data e o horário do jogo.");
       return;
     }
+    const homeLabel = formatSelectionLabel(newMatchHome.trim());
+    const awayLabel = formatSelectionLabel(newMatchAway.trim());
     try {
       await runAdminAction(() =>
         createMatch.mutateAsync({
@@ -363,6 +443,22 @@ export function AdminPage() {
       setNewMatchHome("");
       setNewMatchAway("");
       setNewMatchKickoff("");
+      setCreateMatchSuccess(`${homeLabel} x ${awayLabel} adicionado ao mata-mata (${newMatchPhase}).`);
+    } catch {
+      // erro já exibido por runAdminAction
+    }
+  };
+
+  const handleToggleKnockout = async () => {
+    setKnockoutToggleMsg("");
+    const next = !knockoutReleased;
+    try {
+      await runAdminAction(() => setKnockoutReleased.mutateAsync(next));
+      setKnockoutToggleMsg(
+        next
+          ? "Mata-mata liberado — agora visível para todos os participantes."
+          : "Mata-mata ocultado — só você (admin) vê os confrontos.",
+      );
     } catch {
       // erro já exibido por runAdminAction
     }
@@ -519,40 +615,136 @@ export function AdminPage() {
 
       {tab === "matches" && (
         <div className="mt-6 space-y-5">
-          <Card>
-            <h2 className="text-xl">Cadastrar jogo do mata-mata</h2>
-            <p className="mt-1 text-sm text-ink-muted">
-              Monte manualmente os confrontos da fase eliminatória (times, fase e horário).
-            </p>
-            <div className="mt-4 grid gap-3 md:grid-cols-4">
-              <div>
-                <Label>Time mandante</Label>
-                <Input value={newMatchHome} onChange={(e) => setNewMatchHome(e.target.value)} placeholder="Ex.: Brasil" />
+          <Card className="border-l-4 border-yellow-dark">
+            {/* Cabeçalho + status de liberação */}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Trophy className="h-5 w-5 text-yellow-dark" />
+                <h2 className="text-xl">Mata-mata</h2>
               </div>
-              <div>
-                <Label>Time visitante</Label>
-                <Input value={newMatchAway} onChange={(e) => setNewMatchAway(e.target.value)} placeholder="Ex.: Argentina" />
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-pill px-3 py-1 text-xs font-semibold ring-1 ${
+                  knockoutReleased
+                    ? "bg-success/15 text-mint-dark ring-success/40"
+                    : "bg-yellow/15 text-yellow-dark ring-yellow-dark/40"
+                }`}
+              >
+                {knockoutReleased ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                {knockoutReleased ? "Liberado" : "Oculto"}
+              </span>
+            </div>
+
+            <div
+              className={`mt-4 rounded-xl border p-4 ${
+                knockoutReleased
+                  ? "border-success/40 bg-success/10"
+                  : "border-yellow-dark/30 bg-yellow/10"
+              }`}
+            >
+              <p className="text-sm text-ink">
+                {knockoutReleased
+                  ? "Os confrontos do mata-mata estão visíveis para todos os participantes."
+                  : "Os confrontos estão ocultos. Só você (admin) os vê para montar o chaveamento — libere quando a fase de grupos terminar."}
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button
+                  variant={knockoutReleased ? "outline" : "primary"}
+                  disabled={setKnockoutReleased.isPending || knockoutReleasedQuery.isLoading}
+                  onClick={handleToggleKnockout}
+                >
+                  {setKnockoutReleased.isPending
+                    ? "Salvando..."
+                    : knockoutReleased
+                      ? "Ocultar mata-mata"
+                      : "Liberar mata-mata"}
+                </Button>
+                <span className="text-sm text-ink-muted">
+                  {knockoutMatches.length} confronto(s) cadastrado(s)
+                </span>
               </div>
-              <div>
-                <Label>Fase</Label>
-                <Select value={newMatchPhase} onChange={(e) => setNewMatchPhase(e.target.value)}>
-                  {KNOCKOUT_PHASES.map((phase) => (
-                    <option key={phase} value={phase}>
-                      {phase}
-                    </option>
-                  ))}
-                </Select>
+              {knockoutToggleMsg && (
+                <p className="mt-3 flex items-center gap-2 text-sm font-semibold text-mint-dark">
+                  <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} />
+                  {knockoutToggleMsg}
+                </p>
+              )}
+            </div>
+
+            {/* Adicionar confronto */}
+            <div className="mt-5 border-t border-mint/15 pt-5">
+              <h3 className="text-lg">Adicionar confronto</h3>
+              <p className="mt-1 text-sm text-ink-muted">
+                Escolha as seleções, a fase e o horário. O confronto entra direto no chaveamento do mata-mata.
+              </p>
+              <div className="mt-4 grid gap-3 md:grid-cols-4">
+                <div>
+                  <Label>Mandante</Label>
+                  <TeamSelect value={newMatchHome} onChange={setNewMatchHome} ariaLabel="Seleção mandante" />
+                </div>
+                <div>
+                  <Label>Visitante</Label>
+                  <TeamSelect value={newMatchAway} onChange={setNewMatchAway} ariaLabel="Seleção visitante" />
+                </div>
+                <div>
+                  <Label>Fase</Label>
+                  <Select value={newMatchPhase} onChange={(e) => setNewMatchPhase(e.target.value)}>
+                    {KNOCKOUT_PHASES.map((phase) => (
+                      <option key={phase} value={phase}>
+                        {phase}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <Label>Data e horário</Label>
+                  <Input type="datetime-local" value={newMatchKickoff} onChange={(e) => setNewMatchKickoff(e.target.value)} />
+                </div>
               </div>
-              <div>
-                <Label>Data e horário</Label>
-                <Input type="datetime-local" value={newMatchKickoff} onChange={(e) => setNewMatchKickoff(e.target.value)} />
+              {createMatchError && <div className="mt-3"><ErrorBanner>{createMatchError}</ErrorBanner></div>}
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button onClick={handleCreateMatch} disabled={createMatch.isPending}>
+                  {createMatch.isPending ? "Criando..." : "Adicionar ao mata-mata"}
+                </Button>
+                {createMatchSuccess && (
+                  <span className="flex items-center gap-2 text-sm font-semibold text-mint-dark">
+                    <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} />
+                    {createMatchSuccess}
+                  </span>
+                )}
               </div>
             </div>
-            {createMatchError && <div className="mt-3"><ErrorBanner>{createMatchError}</ErrorBanner></div>}
-            <div className="mt-4">
-              <Button onClick={handleCreateMatch} disabled={createMatch.isPending}>
-                {createMatch.isPending ? "Criando..." : "Criar jogo"}
-              </Button>
+
+            {/* Chaveamento atual — confirma o que está realmente no mata-mata */}
+            <div className="mt-5 border-t border-mint/15 pt-5">
+              <h3 className="text-lg">Confrontos no mata-mata</h3>
+              {knockoutMatches.length === 0 ? (
+                <p className="mt-2 text-sm text-ink-muted">
+                  Nenhum confronto de mata-mata ainda. Adicione um acima para começar o chaveamento.
+                </p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {knockoutMatches.map((item) => (
+                    <div
+                      key={item.matchRecord.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-mint/15 bg-card/70 px-4 py-3"
+                    >
+                      <div>
+                        <p className="font-heading text-ink">
+                          {formatSelectionLabel(item.matchRecord.homeTeam)}{" "}
+                          <span className="text-ink-muted">x</span>{" "}
+                          {formatSelectionLabel(item.matchRecord.awayTeam)}
+                        </p>
+                        <p className="mt-0.5 text-xs text-ink-muted">
+                          {formatKickoff(item.matchRecord.kickoff)}
+                        </p>
+                      </div>
+                      <span className="rounded-pill bg-yellow/20 px-3 py-1 text-xs font-semibold text-yellow-dark">
+                        {item.matchRecord.phase ?? "Sem fase"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </Card>
 
@@ -657,6 +849,8 @@ export function AdminPage() {
                 </div>
 
                 {isKnockout(selectedMatch.matchRecord.phase) &&
+                  resultHome !== "" &&
+                  resultAway !== "" &&
                   parseScore(resultHome) === parseScore(resultAway) && (
                     <div className="mt-4 space-y-2">
                       <p className="text-sm text-ink-muted">
@@ -688,11 +882,11 @@ export function AdminPage() {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
                         <Label>Time mandante</Label>
-                        <Input value={editHome} onChange={(e) => setEditHome(e.target.value)} />
+                        <TeamSelect value={editHome} onChange={setEditHome} ariaLabel="Seleção mandante" />
                       </div>
                       <div>
                         <Label>Time visitante</Label>
-                        <Input value={editAway} onChange={(e) => setEditAway(e.target.value)} />
+                        <TeamSelect value={editAway} onChange={setEditAway} ariaLabel="Seleção visitante" />
                       </div>
                       <div>
                         <Label>Fase</Label>
@@ -856,7 +1050,7 @@ export function AdminPage() {
                   .filter((row) => row.missing)
                   .slice(0, 12)
                   .map((row) => (
-                    <div key={`${row.userId}-${row.matchId}`} className="flex items-center justify-between gap-3 rounded-xl border border-mint/10 bg-card px-3 py-3">
+                    <div key={`${row.poolId}-${row.userId}-${row.matchId}`} className="flex items-center justify-between gap-3 rounded-xl border border-mint/10 bg-card px-3 py-3">
                       <div>
                         <p className="font-semibold text-ink">{row.username}</p>
                         <p className="text-xs text-ink-muted">{row.poolName}</p>
@@ -1130,14 +1324,23 @@ export function AdminPage() {
         <Card className="mt-6">
           <h2 className="text-2xl">Configurações operacionais</h2>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <label className="flex items-center gap-2 text-sm font-semibold text-ink">
-              <input
-                type="checkbox"
-                checked={settingsDraft.knockoutReleased}
-                onChange={(e) => setSettingsDraft((v) => (v ? { ...v, knockoutReleased: e.target.checked } : v))}
-              />
-              Mata-mata liberado
-            </label>
+            <div className="flex items-center justify-between gap-2 rounded-md border border-mint/20 bg-card/60 px-3 py-2 text-sm">
+              <span className="flex items-center gap-2 font-semibold text-ink">
+                {knockoutReleased ? (
+                  <Eye className="h-4 w-4 text-mint-dark" />
+                ) : (
+                  <EyeOff className="h-4 w-4 text-yellow-dark" />
+                )}
+                Mata-mata {knockoutReleased ? "liberado" : "oculto"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setTab("matches")}
+                className="font-semibold text-mint-dark underline-offset-4 hover:underline"
+              >
+                Gerenciar em Jogos
+              </button>
+            </div>
             <label className="flex items-center gap-2 text-sm font-semibold text-ink">
               <input
                 type="checkbox"
