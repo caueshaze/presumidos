@@ -890,3 +890,93 @@ pub async fn delete_match(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Testes
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+
+    fn entry(penalty_home: Option<i64>, penalty_away: Option<i64>) -> KnockoutEntry {
+        KnockoutEntry {
+            qualifier: None,
+            went_to_penalties: false,
+            penalty_home,
+            penalty_away,
+        }
+    }
+
+    #[test]
+    fn group_match_zeroes_knockout_fields() {
+        // Fora do mata-mata, qualquer entrada de pênaltis é descartada.
+        let ko = sanitize_knockout_input(false, 1, 1, entry(Some(5), Some(4))).unwrap();
+        assert_eq!(ko, KnockoutEntry::default());
+    }
+
+    #[test]
+    fn win_in_regulation_derives_qualifier_without_penalties() {
+        // Vitória no tempo normal: classificado pelo placar, sem pênaltis.
+        let home_win = sanitize_knockout_input(true, 2, 1, entry(None, None)).unwrap();
+        assert_eq!(
+            home_win,
+            KnockoutEntry {
+                qualifier: Some("home".into()),
+                went_to_penalties: false,
+                penalty_home: None,
+                penalty_away: None,
+            }
+        );
+        let away_win = sanitize_knockout_input(true, 0, 3, entry(None, None)).unwrap();
+        assert_eq!(away_win.qualifier.as_deref(), Some("away"));
+        assert!(!away_win.went_to_penalties);
+    }
+
+    #[test]
+    fn draw_derives_qualifier_from_penalties() {
+        // Empate no tempo normal: o vencedor dos pênaltis é o classificado.
+        let ko = sanitize_knockout_input(true, 1, 1, entry(Some(4), Some(2))).unwrap();
+        assert_eq!(
+            ko,
+            KnockoutEntry {
+                qualifier: Some("home".into()),
+                went_to_penalties: true,
+                penalty_home: Some(4),
+                penalty_away: Some(2),
+            }
+        );
+        // Lado de baixo vencendo a disputa.
+        let away = sanitize_knockout_input(true, 2, 2, entry(Some(3), Some(5))).unwrap();
+        assert_eq!(away.qualifier.as_deref(), Some("away"));
+    }
+
+    #[test]
+    fn draw_rejects_tied_penalties() {
+        let err = sanitize_knockout_input(true, 1, 1, entry(Some(3), Some(3))).unwrap_err();
+        assert_eq!(err.message(), "O placar dos pênaltis não pode terminar empatado.");
+    }
+
+    #[test]
+    fn draw_rejects_negative_penalties() {
+        let err = sanitize_knockout_input(true, 0, 0, entry(Some(-1), Some(2))).unwrap_err();
+        assert_eq!(err.message(), "O placar dos pênaltis não pode ser negativo.");
+    }
+
+    #[test]
+    fn draw_requires_both_penalty_sides() {
+        let expected = "Empate no tempo normal: informe o placar dos pênaltis dos dois lados.";
+        assert_eq!(
+            sanitize_knockout_input(true, 1, 1, entry(None, None)).unwrap_err().message(),
+            expected
+        );
+        assert_eq!(
+            sanitize_knockout_input(true, 1, 1, entry(Some(4), None)).unwrap_err().message(),
+            expected
+        );
+        assert_eq!(
+            sanitize_knockout_input(true, 1, 1, entry(None, Some(2))).unwrap_err().message(),
+            expected
+        );
+    }
+}

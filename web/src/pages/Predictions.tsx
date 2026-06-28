@@ -173,9 +173,9 @@ export function PredictionsPage() {
         Dê seu palpite de placar para cada partida antes do apito inicial.
       </p>
       <p className="mt-1 max-w-3xl text-sm text-ink-muted">
-        Em jogos de mata-mata, além do placar no tempo normal, escolha quem se classifica. Se apostar
-        em empate no tempo normal, você pode marcar que o jogo vai para os pênaltis e, opcionalmente,
-        palpitar o placar da disputa.
+        Em jogos de mata-mata, dê o placar do tempo normal. Se você palpitar empate, o jogo vai para os
+        pênaltis: informe o placar da disputa (que não pode terminar empatado) — é ele que define quem
+        se classifica.
       </p>
 
       <div className="mt-6">
