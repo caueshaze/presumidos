@@ -53,13 +53,13 @@ import {
 } from "@/hooks/queries";
 import { withAdminReauth } from "@/lib/adminReauth";
 import { formatKickoff, isKnockout } from "@/lib/utils";
-import { formatSelectionLabel, getSelectionGroups, isKnownSelection } from "@/lib/selections";
+import { formatSelectionLabel, getSelectionCatalogEntry, getSelectionGroups, isKnownSelection } from "@/lib/selections";
 import { PageShell } from "@/components/PageShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorBanner, Label, Select } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import type { AdminMatchRecord, AdminSettings } from "@/types";
+import type { AdminMatchRecord, AdminSettings, FixtureCheckResult } from "@/types";
 
 type AdminTab =
   | "overview"
@@ -198,6 +198,13 @@ type BrasiliaDateTimeInput = {
   time: string;
 };
 
+type FixtureCheckState = {
+  eventId: number;
+  ok: boolean;
+  message: string;
+  fingerprint: string;
+};
+
 function formatDateInput(value: string): string {
   const digits = value.replace(/\D/g, "").slice(0, 8);
   if (digits.length <= 2) return digits;
@@ -271,6 +278,85 @@ function brasiliaDateToIsoDateFilter(dateValue: string): string | null {
     calendarDate.getUTCMonth() === month - 1 &&
     calendarDate.getUTCDate() === day;
   return validDate ? `${yearText}-${monthText}-${dayText}` : null;
+}
+
+function comparableSelectionName(value: string | null | undefined): string {
+  if (!value) return "";
+  const catalogEntry = getSelectionCatalogEntry(value);
+  const canonical = catalogEntry?.name ?? value;
+  return canonical
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sameKickoffMinute(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const first = new Date(a).getTime();
+  const second = new Date(b).getTime();
+  if (Number.isNaN(first) || Number.isNaN(second)) return false;
+  return Math.floor(first / 60000) === Math.floor(second / 60000);
+}
+
+function fixtureFingerprint(eventId: number, homeTeam: string, awayTeam: string, kickoff: string): string {
+  return [
+    eventId,
+    comparableSelectionName(homeTeam),
+    comparableSelectionName(awayTeam),
+    Math.floor(new Date(kickoff).getTime() / 60000),
+  ].join("|");
+}
+
+function validateFixtureAgainstMatch(
+  checked: FixtureCheckResult,
+  expected: { homeTeam: string; awayTeam: string; kickoff: string },
+): { ok: boolean; message: string } {
+  if (!checked.found) {
+    return {
+      ok: false,
+      message: `ID ${checked.eventId}: o provedor respondeu, mas não trouxe detalhes do evento.`,
+    };
+  }
+  if (!checked.homeTeam || !checked.awayTeam || !checked.kickoff) {
+    return {
+      ok: false,
+      message: `ID ${checked.eventId}: faltam time mandante, visitante ou horário no provedor.`,
+    };
+  }
+
+  const expectedHome = comparableSelectionName(expected.homeTeam);
+  const expectedAway = comparableSelectionName(expected.awayTeam);
+  const providerHome = comparableSelectionName(checked.homeTeam);
+  const providerAway = comparableSelectionName(checked.awayTeam);
+  const exactTeams = expectedHome === providerHome && expectedAway === providerAway;
+  const swappedTeams = expectedHome === providerAway && expectedAway === providerHome;
+  const kickoffMatches = sameKickoffMinute(expected.kickoff, checked.kickoff);
+
+  if (!exactTeams || !kickoffMatches) {
+    const issues: string[] = [];
+    if (swappedTeams) {
+      issues.push("mandante/visitante estão invertidos");
+    } else if (!exactTeams) {
+      issues.push(
+        `confronto esperado ${formatSelectionLabel(expected.homeTeam)} x ${formatSelectionLabel(expected.awayTeam)}, mas o ID retornou ${checked.homeTeam} x ${checked.awayTeam}`,
+      );
+    }
+    if (!kickoffMatches) {
+      issues.push(`horário esperado ${formatKickoff(expected.kickoff)}, mas o ID retornou ${formatKickoff(checked.kickoff)}`);
+    }
+    return {
+      ok: false,
+      message: `ID ${checked.eventId} não confere: ${issues.join("; ")}.`,
+    };
+  }
+
+  return {
+    ok: true,
+    message: `ID correto: ${checked.homeTeam} x ${checked.awayTeam} · ${formatKickoff(checked.kickoff)}`,
+  };
 }
 
 export function AdminPage() {
@@ -455,7 +541,7 @@ export function AdminPage() {
   const [editFixtureId, setEditFixtureId] = useState("");
   const [fixtureError, setFixtureError] = useState("");
   const [fixtureSuccess, setFixtureSuccess] = useState("");
-  const [fixtureCheckMsg, setFixtureCheckMsg] = useState("");
+  const [fixtureCheckState, setFixtureCheckState] = useState<FixtureCheckState | null>(null);
 
   useEffect(() => {
     if (!selectedMatch) return;
@@ -475,7 +561,7 @@ export function AdminPage() {
     );
     setFixtureError("");
     setFixtureSuccess("");
-    setFixtureCheckMsg("");
+    setFixtureCheckState(null);
   }, [selectedMatch]);
 
   // As confirmações de "criado"/"liberado" somem sozinhas depois de alguns segundos.
@@ -649,6 +735,18 @@ export function AdminPage() {
       }
       fixtureId = parsed;
     }
+    if (fixtureId != null) {
+      const kickoff = brasiliaInputToIso(editMatchDate, editMatchTime);
+      if (!kickoff) {
+        setFixtureError("Salve uma data/horário válidos antes de mapear o ID do evento.");
+        return;
+      }
+      const fingerprint = fixtureFingerprint(fixtureId, editHome.trim(), editAway.trim(), kickoff);
+      if (!fixtureCheckState || !fixtureCheckState.ok || fixtureCheckState.fingerprint !== fingerprint) {
+        setFixtureError("Cheque o ID e confirme confronto + horário antes de salvar o mapeamento.");
+        return;
+      }
+    }
     try {
       await runAdminAction(() =>
         setMatchFixture.mutateAsync({
@@ -666,22 +764,32 @@ export function AdminPage() {
 
   const handleCheckFixture = async () => {
     setFixtureError("");
-    setFixtureCheckMsg("");
+    setFixtureCheckState(null);
     const trimmed = editFixtureId.trim();
     const parsed = Number(trimmed);
     if (!trimmed || !Number.isInteger(parsed) || parsed <= 0) {
       setFixtureError("Informe um ID numérico positivo para checar.");
       return;
     }
+    const kickoff = brasiliaInputToIso(editMatchDate, editMatchTime);
+    if (!kickoff || !editHome.trim() || !editAway.trim()) {
+      setFixtureError("Informe confronto, data e horário válidos antes de checar o ID.");
+      return;
+    }
 
     try {
       const checked = await runAdminAction(() => checkFixture.mutateAsync(parsed));
-      if (!checked.found) {
-        setFixtureCheckMsg(`ID ${checked.eventId}: o provedor respondeu, mas não trouxe detalhes do evento.`);
-        return;
-      }
-      const kickoff = checked.kickoff ? ` · ${formatKickoff(checked.kickoff)}` : "";
-      setFixtureCheckMsg(`ID correto: ${checked.label}${kickoff}`);
+      const validation = validateFixtureAgainstMatch(checked, {
+        homeTeam: editHome.trim(),
+        awayTeam: editAway.trim(),
+        kickoff,
+      });
+      setFixtureCheckState({
+        eventId: parsed,
+        ok: validation.ok,
+        message: validation.message,
+        fingerprint: fixtureFingerprint(parsed, editHome.trim(), editAway.trim(), kickoff),
+      });
     } catch (err) {
       setFixtureError(err instanceof Error ? err.message : "Falha ao checar o ID no provedor.");
     }
@@ -1220,11 +1328,25 @@ export function AdminPage() {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
                         <Label>Time mandante</Label>
-                        <TeamSelect value={editHome} onChange={setEditHome} ariaLabel="Seleção mandante" />
+                        <TeamSelect
+                          value={editHome}
+                          onChange={(value) => {
+                            setEditHome(value);
+                            setFixtureCheckState(null);
+                          }}
+                          ariaLabel="Seleção mandante"
+                        />
                       </div>
                       <div>
                         <Label>Time visitante</Label>
-                        <TeamSelect value={editAway} onChange={setEditAway} ariaLabel="Seleção visitante" />
+                        <TeamSelect
+                          value={editAway}
+                          onChange={(value) => {
+                            setEditAway(value);
+                            setFixtureCheckState(null);
+                          }}
+                          ariaLabel="Seleção visitante"
+                        />
                       </div>
                       <div>
                         <Label>Fase</Label>
@@ -1242,7 +1364,10 @@ export function AdminPage() {
                           inputMode="numeric"
                           placeholder="DD/MM/AAAA"
                           value={editMatchDate}
-                          onChange={(e) => setEditMatchDate(formatDateInput(e.target.value))}
+                          onChange={(e) => {
+                            setEditMatchDate(formatDateInput(e.target.value));
+                            setFixtureCheckState(null);
+                          }}
                         />
                       </div>
                       <div>
@@ -1251,7 +1376,10 @@ export function AdminPage() {
                           inputMode="numeric"
                           placeholder="HH:mm"
                           value={editMatchTime}
-                          onChange={(e) => setEditMatchTime(formatTimeInput(e.target.value))}
+                          onChange={(e) => {
+                            setEditMatchTime(formatTimeInput(e.target.value));
+                            setFixtureCheckState(null);
+                          }}
                         />
                       </div>
                     </div>
@@ -1289,7 +1417,7 @@ export function AdminPage() {
                         value={editFixtureId}
                         onChange={(e) => {
                           setEditFixtureId(e.target.value.replace(/\D+/g, ""));
-                          setFixtureCheckMsg("");
+                          setFixtureCheckState(null);
                         }}
                       />
                     </div>
@@ -1327,10 +1455,18 @@ export function AdminPage() {
                       </span>
                     )}
                   </div>
-                  {fixtureCheckMsg && (
-                    <p className="flex items-center gap-2 text-sm font-semibold text-mint-dark">
-                      <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} />
-                      {fixtureCheckMsg}
+                  {fixtureCheckState && (
+                    <p
+                      className={`flex items-center gap-2 text-sm font-semibold ${
+                        fixtureCheckState.ok ? "text-mint-dark" : "text-danger"
+                      }`}
+                    >
+                      {fixtureCheckState.ok ? (
+                        <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4" strokeWidth={2.5} />
+                      )}
+                      {fixtureCheckState.message}
                     </p>
                   )}
                 </div>
