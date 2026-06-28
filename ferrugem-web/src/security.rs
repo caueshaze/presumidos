@@ -647,7 +647,10 @@ pub fn apply_security_headers() {
         // e fetch da API no mesmo host. Sem 'unsafe-inline'/'wasm-unsafe-eval' (não há mais
         // SSR/WASM do Dioxus). 'style-src' mantém 'unsafe-inline' para estilos utilitários
         // injetados em runtime (Tailwind/shadcn) e variáveis de tema.
-        "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'".to_string(),
+        // O hash em 'script-src' libera o único script inline (anti-FOUC de tema em
+        // web/index.html, executado antes do React montar). Se aquele script mudar, o
+        // hash precisa ser recalculado (sha256 do conteúdo entre as tags <script>).
+        "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self' 'sha256-sXw+kzZjEDOTCprbeOhrRSIW0La32ltxhXRk+DncIVU='; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'".to_string(),
     );
     set_response_header(
         "referrer-policy",
