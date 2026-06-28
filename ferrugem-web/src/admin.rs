@@ -102,6 +102,19 @@ fn sqlite_bool(flag: bool) -> &'static str {
 }
 
 #[cfg(feature = "server")]
+fn kickoff_matches_brasilia_date(kickoff: &str, date: &str) -> bool {
+    if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
+        return false;
+    }
+    let Some(brasilia_offset) = chrono::FixedOffset::west_opt(3 * 60 * 60) else {
+        return false;
+    };
+    chrono::DateTime::parse_from_rfc3339(kickoff)
+        .map(|dt| dt.with_timezone(&brasilia_offset).format("%Y-%m-%d").to_string() == date)
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "server")]
 fn to_match_record(row: AdminMatchRow) -> AdminMatchRecord {
     // Status é puramente ciclo de vida (ao vivo / finalizado / agendado); a
     // origem do resultado (manual vs API) é filtrada à parte por `result_source`.
@@ -313,7 +326,7 @@ pub async fn list_admin_matches(
         items.retain(|item| item.match_record.group_name.as_deref() == Some(group_name.as_str()));
     }
     if let Some(date) = date {
-        items.retain(|item| item.match_record.kickoff.starts_with(&date));
+        items.retain(|item| kickoff_matches_brasilia_date(&item.match_record.kickoff, &date));
     }
     if let Some(status) = status {
         items.retain(|item| item.admin_status == status);

@@ -258,6 +258,21 @@ function brasiliaInputToIso(dateValue: string, timeValue: string): string | null
   return new Date(utc).toISOString();
 }
 
+function brasiliaDateToIsoDateFilter(dateValue: string): string | null {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dateValue.trim());
+  if (!match) return null;
+  const [, dayText, monthText, yearText] = match;
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  const validDate =
+    calendarDate.getUTCFullYear() === year &&
+    calendarDate.getUTCMonth() === month - 1 &&
+    calendarDate.getUTCDate() === day;
+  return validDate ? `${yearText}-${monthText}-${dayText}` : null;
+}
+
 export function AdminPage() {
   const { isAdmin, loading } = useAuth();
   const [tab, setTab] = useState<AdminTab>("overview");
@@ -282,7 +297,7 @@ export function AdminPage() {
   const adminMatches = useAdminMatches({
     phase: matchFilters.phase || undefined,
     groupName: matchFilters.groupName || undefined,
-    date: matchFilters.date || undefined,
+    date: matchFilters.date ? (brasiliaDateToIsoDateFilter(matchFilters.date) ?? undefined) : undefined,
     status: matchFilters.status || undefined,
     origin: matchFilters.origin || undefined,
   });
@@ -1023,7 +1038,12 @@ export function AdminPage() {
               </div>
               <div>
                 <Label>Data</Label>
-                <Input type="date" value={matchFilters.date} onChange={(e) => setMatchFilters((v) => ({ ...v, date: e.target.value }))} />
+                <Input
+                  inputMode="numeric"
+                  placeholder="DD/MM/AAAA"
+                  value={matchFilters.date}
+                  onChange={(e) => setMatchFilters((v) => ({ ...v, date: formatDateInput(e.target.value) }))}
+                />
               </div>
               <div>
                 <Label>Status</Label>
