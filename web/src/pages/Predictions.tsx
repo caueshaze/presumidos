@@ -9,7 +9,7 @@ import {
   useMyMatchPoints,
   useKnockoutReleased,
 } from "@/hooks/queries";
-import { cn, isMatchLocked } from "@/lib/utils";
+import { cn, formatKnockoutPhase, isMatchLocked } from "@/lib/utils";
 import { formatSelectionLabel } from "@/lib/selections";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
@@ -261,7 +261,7 @@ export function PredictionsPage() {
                                 setPhaseFilter((current) => (current === phase ? null : phase))
                               }
                             >
-                              {phase}
+                              {formatKnockoutPhase(phase)}
                             </Chip>
                           ))}
                         </div>

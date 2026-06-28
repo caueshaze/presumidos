@@ -14,7 +14,7 @@ import {
   getSelectionGroups,
   isKnownSelection,
 } from "@/lib/selections";
-import { cn, formatKickoff, formatLiveStatus, isKnockout } from "@/lib/utils";
+import { cn, formatKickoff, formatKnockoutPhase, formatLiveStatus, isKnockout } from "@/lib/utils";
 import type { KnockoutEntry, MatchPointsSummary, MatchRecord, PredictionRecord } from "@/types";
 import { MotionCard } from "./ui/card";
 import { Button } from "./ui/button";
@@ -373,7 +373,7 @@ export function MatchCard({
           )}
           {game.phase && (
             <span className="rounded-pill bg-sky/40 px-3 py-1 text-xs font-semibold">
-              {game.phase}
+              {formatKnockoutPhase(game.phase)}
             </span>
           )}
           {game.groupName && (

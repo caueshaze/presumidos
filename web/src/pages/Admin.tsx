@@ -52,7 +52,7 @@ import {
   useUserPools,
 } from "@/hooks/queries";
 import { withAdminReauth } from "@/lib/adminReauth";
-import { formatKickoff, isKnockout } from "@/lib/utils";
+import { formatKickoff, formatKnockoutPhase, isKnockout } from "@/lib/utils";
 import { formatSelectionLabel, getSelectionCatalogEntry, getSelectionGroups, isKnownSelection } from "@/lib/selections";
 import { PageShell } from "@/components/PageShell";
 import { Button } from "@/components/ui/button";
@@ -1022,7 +1022,7 @@ export function AdminPage() {
                   <Select value={newMatchPhase} onChange={(e) => setNewMatchPhase(e.target.value)}>
                     {KNOCKOUT_PHASES.map((phase) => (
                       <option key={phase} value={phase}>
-                        {phase}
+                        {formatKnockoutPhase(phase)}
                       </option>
                     ))}
                   </Select>
@@ -1089,7 +1089,7 @@ export function AdminPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="rounded-pill bg-yellow/20 px-3 py-1 text-xs font-semibold text-yellow-dark">
-                          {item.matchRecord.phase ?? "Sem fase"}
+                          {formatKnockoutPhase(item.matchRecord.phase)}
                         </span>
                         <Button size="sm" variant="outline" onClick={() => handleEditMatch(item.matchRecord.id)}>
                           Editar
@@ -1128,7 +1128,7 @@ export function AdminPage() {
                   <option value="">Todas</option>
                   {phaseOptions.map((phase) => (
                     <option key={phase} value={phase}>
-                      {phase}
+                      {formatKnockoutPhase(phase)}
                     </option>
                   ))}
                 </Select>
@@ -1207,7 +1207,7 @@ export function AdminPage() {
                         {item.matchRecord.homeTeam} x {item.matchRecord.awayTeam}
                       </p>
                       <p className="mt-1 text-sm text-ink-muted">
-                        {formatKickoff(item.matchRecord.kickoff)} · {item.matchRecord.phase ?? "Sem fase"} · {adminStatusLabel(item.adminStatus)}
+                        {formatKickoff(item.matchRecord.kickoff)} · {formatKnockoutPhase(item.matchRecord.phase)} · {adminStatusLabel(item.adminStatus)}
                       </p>
                       {item.adminStatus === "finished_pending" && (
                         <span className="mt-1 inline-block rounded-pill bg-yellow/20 px-3 py-0.5 text-xs font-semibold text-yellow-dark">
@@ -1353,7 +1353,7 @@ export function AdminPage() {
                         <Select value={editPhase} onChange={(e) => setEditPhase(e.target.value)}>
                           {KNOCKOUT_PHASES.map((phase) => (
                             <option key={phase} value={phase}>
-                              {phase}
+                              {formatKnockoutPhase(phase)}
                             </option>
                           ))}
                         </Select>

@@ -45,6 +45,27 @@ export function isMatchLive(kickoff: string, finished: boolean): boolean {
   return !finished && isMatchLocked(kickoff);
 }
 
+export function formatKnockoutPhase(phase: string | null | undefined): string {
+  if (!phase) return "Sem fase";
+  const normalized = phase.trim().toLowerCase();
+  switch (normalized) {
+    case "16 avos de final":
+      return "Fase de 32";
+    case "oitavas de final":
+      return "Oitavas";
+    case "quartas de final":
+      return "Quartas";
+    case "semifinal":
+      return "Semis";
+    case "disputa de 3º lugar":
+      return "3º lugar";
+    case "final":
+      return "Final";
+    default:
+      return phase;
+  }
+}
+
 /** Rótulo amigável do status ao vivo. O status vem como texto livre da API
  *  (ex.: "45'", "HT", "90+2'"); mapeamos os códigos conhecidos e exibimos o resto. */
 export function formatLiveStatus(status: string | null, elapsed: number | null): string {
