@@ -193,20 +193,40 @@ const KNOCKOUT_PHASES = [
   "Final",
 ];
 
-// Converte um ISO (UTC) para o formato aceito pelo input datetime-local
-// (YYYY-MM-DDTHH:mm), mantendo o horário em UTC para um round-trip estável.
+// Converte um ISO (UTC) para o input datetime-local em horario de Brasilia.
 function isoToLocalInput(iso: string | null | undefined): string {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 16);
+  const parts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}T${value("hour")}:${value("minute")}`;
 }
 
-// O input datetime-local entrega "YYYY-MM-DDTHH:mm"; tratamos como UTC (mesmo
-// padrão usado nas reaberturas de palpite).
+// O input datetime-local entrega "YYYY-MM-DDTHH:mm"; no admin, esse horário é
+// digitado como Brasília. Salvamos em UTC para o backend/poller.
 function localInputToIso(value: string): string {
   const trimmed = value.trim();
-  return trimmed.includes("T") ? `${trimmed}:00Z` : trimmed;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(trimmed);
+  if (!match) return trimmed;
+  const [, year, month, day, hour, minute] = match;
+  const utc = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour) + 3,
+    Number(minute),
+  );
+  return new Date(utc).toISOString();
 }
 
 export function AdminPage() {
