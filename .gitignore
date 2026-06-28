@@ -34,6 +34,8 @@ pnpm-debug.log*
 *.db-journal
 *.db-shm
 *.db-wal
+*.db.bak-*
+*.bak
 /backups/
 
 # ==========================================
