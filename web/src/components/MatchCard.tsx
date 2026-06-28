@@ -507,13 +507,13 @@ export function MatchCard({
           ) : (
             showLockedMessage && (
               <p className="mt-3 rounded-md bg-danger-bg px-3 py-2 text-sm font-semibold">
-                Partida já iniciada — palpites encerrados.
+                Partida já iniciada palpites encerrados!
               </p>
             )
           )
         ) : (
         <form onSubmit={onSave} className="mt-4 flex flex-col gap-3">
-          {knockout && <Label>Placar no tempo normal</Label>}
+          {knockout && <Label>Considere os 90 minutos. Se houver prorrogação, considere os 120 minutos.</Label>}
           <ScoreInputs>
             <ScoreBox
               value={homeGuess}
@@ -554,9 +554,6 @@ export function MatchCard({
                       onChange={(e) => setPenAway(normalizeScoreField(e.target.value))}
                     />
                   </ScoreInputs>
-                  <p className="text-xs text-ink-muted">
-                    Empate no tempo normal vai para os pênaltis — quem fizer mais se classifica.
-                  </p>
                 </div>
               </motion.div>
             )}

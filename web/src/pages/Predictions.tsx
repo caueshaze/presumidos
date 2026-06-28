@@ -173,9 +173,10 @@ export function PredictionsPage() {
         Dê seu palpite de placar para cada partida antes do apito inicial.
       </p>
       <p className="mt-1 max-w-3xl text-sm text-ink-muted">
-        Em jogos de mata-mata, dê o placar do tempo normal. Se você palpitar empate, o jogo vai para os
-        pênaltis: informe o placar da disputa (que não pode terminar empatado) — é ele que define quem
-        se classifica.
+        Em jogos de mata-mata, informe o placar final do jogo antes dos pênaltis: 90 minutos se acabar
+        no tempo normal, 120 minutos se houver prorrogação. Se o palpite continuar empatado, informe
+        também o placar dos pênaltis (que não pode terminar empatado) — é ele que define quem se
+        classifica.
       </p>
 
       <div className="mt-6">
