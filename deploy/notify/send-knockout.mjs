@@ -22,8 +22,20 @@
 
 import { readFileSync } from "node:fs";
 
-const API_KEY = process.env.RESEND_API_KEY;
-const FROM = process.env.RESEND_FROM_EMAIL || process.env.RESEND_FROM;
+// Remove aspas em volta do valor. `docker run --env-file` (ao contrário do
+// docker compose env_file) NÃO tira aspas, então RESEND_FROM_EMAIL="Nome <x@y>"
+// chegaria com as aspas literais e quebraria o campo `from` no Resend.
+function unquote(value) {
+  if (!value) return value;
+  const v = value.trim();
+  if (v.length >= 2 && ((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'"))) {
+    return v.slice(1, -1);
+  }
+  return v;
+}
+
+const API_KEY = unquote(process.env.RESEND_API_KEY);
+const FROM = unquote(process.env.RESEND_FROM_EMAIL || process.env.RESEND_FROM);
 const DRY_RUN = process.env.DRY_RUN === "1" || process.env.DRY_RUN === "true";
 const ONLY = (process.env.ONLY || "").trim();
 const CSV_PATH = process.argv[2] || "/work/usuarios.csv";
