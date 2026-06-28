@@ -382,13 +382,14 @@ pub async fn set_match_result(
         knockout,
     )?;
 
-    // Resultado lançado pelo admin é soberano: marca a origem como 'manual'
-    // (o poller nunca sobrescreve) e limpa o placar ao vivo.
+    // Resultado lançado pelo admin é soberano: marca a origem como 'manual',
+    // fecha o jogo e limpa o placar ao vivo.
     sqlx::query(
         "UPDATE matches SET
             home_score = ?1, away_score = ?2,
             qualifier = ?3, went_to_penalties = ?4,
             penalty_home_score = ?5, penalty_away_score = ?6,
+            finished = 1,
             result_source = 'manual',
             result_synced_at = datetime('now'),
             live_home_score = NULL, live_away_score = NULL,
@@ -643,8 +644,8 @@ fn normalize_knockout_match_input(
 }
 
 /// Cria manualmente um jogo de mata-mata. Permite ao admin montar os confrontos e
-/// horários da fase eliminatória sem refazer a seed. O id é gerado e a origem do
-/// resultado fica como 'manual' (o poller nunca sobrescreve).
+/// horários da fase eliminatória sem refazer a seed. O resultado oficial continua
+/// sem origem até o admin confirmar ou o poller gerar uma sugestão.
 #[cfg(feature = "server")]
 pub async fn create_match(
     token: String,
@@ -671,8 +672,8 @@ pub async fn create_match(
     let db = pool();
 
     sqlx::query(
-        "INSERT INTO matches (id, home_team, away_team, kickoff, group_name, phase, result_source)
-         VALUES (?1, ?2, ?3, ?4, NULL, ?5, 'manual')",
+        "INSERT INTO matches (id, home_team, away_team, kickoff, group_name, phase)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
     )
     .bind(&id)
     .bind(&home)
@@ -758,6 +759,70 @@ pub async fn update_match_schedule(
         serde_json::json!({
             "before": { "home_team": old_home, "away_team": old_away, "phase": old_phase, "kickoff": old_kickoff },
             "after": { "home_team": home, "away_team": away, "phase": phase, "kickoff": kickoff }
+        }),
+    )
+    .await?;
+
+    load_match_record(db, &match_id).await
+}
+
+/// Define (ou limpa, com `None`) o id do evento no provedor externo de placares
+/// para um jogo. É esse id que o poller usa para puxar o placar ao vivo; sem ele,
+/// o jogo nunca entra na janela de polling. Mapeamento por id é determinístico —
+/// não depende de casar nomes de seleção.
+#[cfg(feature = "server")]
+pub async fn set_match_fixture(
+    token: String,
+    match_id: String,
+    external_fixture_id: Option<i64>,
+    csrf_token: String,
+) -> Result<MatchRecord, ServerFnError> {
+    use crate::auth::require_recent_admin;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    crate::security::validate_match_id(&match_id)?;
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    if let Some(id) = external_fixture_id {
+        if id <= 0 {
+            return Err(crate::security::public_error(
+                "O ID do evento externo deve ser um número positivo.",
+            ));
+        }
+    }
+
+    let db = pool();
+    let before: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT external_fixture_id FROM matches WHERE id = ?1")
+            .bind(&match_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("set_match_fixture_lookup", e))?;
+
+    let Some((old_fixture,)) = before else {
+        return Err(crate::security::public_error("Partida nao encontrada."));
+    };
+
+    sqlx::query("UPDATE matches SET external_fixture_id = ?1 WHERE id = ?2")
+        .bind(external_fixture_id)
+        .bind(&match_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("set_match_fixture_update", e))?;
+
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "external_fixture_mapped",
+        "match",
+        Some(&match_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({
+            "before": old_fixture,
+            "after": external_fixture_id,
         }),
     )
     .await?;

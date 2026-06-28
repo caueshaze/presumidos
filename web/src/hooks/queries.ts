@@ -8,6 +8,7 @@ import type {
   AdminUserRecord,
   AuditLogEntry,
   AuthResult,
+  FixtureCheckResult,
   KnockoutEntry,
   LeaderboardEntry,
   MatchPointsSummary,
@@ -33,10 +34,55 @@ function normalizeAdminUserRecord(input: AdminUserRecord | UserPublic): AdminUse
   };
 }
 
-function normalizeAdminMatchRecord(input: AdminMatchRecord | MatchRecord): AdminMatchRecord {
+type FlatAdminMatchRecord = MatchRecord & Omit<AdminMatchRecord, "matchRecord">;
+
+function normalizeAdminMatchRecord(input: AdminMatchRecord | FlatAdminMatchRecord | MatchRecord): AdminMatchRecord {
   if ("matchRecord" in input) return input;
+
+  const matchRecord: MatchRecord = {
+    id: input.id,
+    homeTeam: input.homeTeam,
+    awayTeam: input.awayTeam,
+    kickoff: input.kickoff,
+    groupName: input.groupName,
+    phase: input.phase,
+    homeScore: input.homeScore,
+    awayScore: input.awayScore,
+    qualifier: input.qualifier,
+    wentToPenalties: input.wentToPenalties,
+    penaltyHomeScore: input.penaltyHomeScore,
+    penaltyAwayScore: input.penaltyAwayScore,
+    finished: input.finished,
+    liveHomeScore: input.liveHomeScore,
+    liveAwayScore: input.liveAwayScore,
+    liveStatus: input.liveStatus,
+    liveElapsed: input.liveElapsed,
+    resultSource: input.resultSource,
+    resultSyncedAt: input.resultSyncedAt,
+    resultExternalRawStatus: input.resultExternalRawStatus,
+    liveUpdatedAt: input.liveUpdatedAt,
+  };
+
+  if ("adminStatus" in input) {
+    return {
+      matchRecord,
+      adminStatus: input.adminStatus,
+      lastAuditAt: input.lastAuditAt,
+      externalFixtureId: input.externalFixtureId,
+      autoHomeScore: input.autoHomeScore,
+      autoAwayScore: input.autoAwayScore,
+      autoPenaltyHomeScore: input.autoPenaltyHomeScore,
+      autoPenaltyAwayScore: input.autoPenaltyAwayScore,
+      autoQualifier: input.autoQualifier,
+      autoStatus: input.autoStatus,
+      autoDetectedAt: input.autoDetectedAt,
+      sourceLastCheckedAt: input.sourceLastCheckedAt,
+      sourceLastStatus: input.sourceLastStatus,
+    };
+  }
+
   return {
-    matchRecord: input,
+    matchRecord,
     adminStatus:
       input.resultSource === "manual"
         ? "manually_corrected"
@@ -46,6 +92,16 @@ function normalizeAdminMatchRecord(input: AdminMatchRecord | MatchRecord): Admin
             ? "live"
             : "scheduled",
     lastAuditAt: null,
+    externalFixtureId: null,
+    autoHomeScore: null,
+    autoAwayScore: null,
+    autoPenaltyHomeScore: null,
+    autoPenaltyAwayScore: null,
+    autoQualifier: null,
+    autoStatus: null,
+    autoDetectedAt: null,
+    sourceLastCheckedAt: null,
+    sourceLastStatus: null,
   };
 }
 
@@ -278,6 +334,33 @@ export function useUpdateMatchSchedule() {
       qc.invalidateQueries({ queryKey: ["matches"] });
       qc.invalidateQueries({ queryKey: ["admin-matches"] });
     },
+  });
+}
+
+export function useSetMatchFixture() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { matchId: string; externalFixtureId: number | null }) =>
+      api.post<MatchRecord>(`/admin/matches/${vars.matchId}/fixture`, {
+        externalFixtureId: vars.externalFixtureId,
+      }),
+    onSuccess: (_updated, vars) => {
+      qc.setQueriesData<AdminMatchRecord[]>({ queryKey: ["admin-matches"] }, (old) =>
+        old?.map((item) =>
+          item.matchRecord.id === vars.matchId
+            ? { ...item, externalFixtureId: vars.externalFixtureId }
+            : item,
+        ),
+      );
+      qc.invalidateQueries({ queryKey: ["admin-matches"] });
+    },
+  });
+}
+
+export function useCheckFixture() {
+  return useMutation({
+    mutationFn: (externalFixtureId: number) =>
+      api.post<FixtureCheckResult>("/admin/fixtures/check", { externalFixtureId }),
   });
 }
 
@@ -543,6 +626,19 @@ export function useRunSyncNow() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post<SyncStatus>("/admin/sync/run-now"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-sync-status"] });
+      qc.invalidateQueries({ queryKey: ["admin-overview"] });
+      qc.invalidateQueries({ queryKey: ["matches"] });
+      qc.invalidateQueries({ queryKey: ["admin-matches"] });
+    },
+  });
+}
+
+export function useRunBackfill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<SyncStatus>("/admin/sync/backfill"),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-sync-status"] });
       qc.invalidateQueries({ queryKey: ["admin-overview"] });

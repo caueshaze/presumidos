@@ -157,6 +157,28 @@ async fn run_housekeeping() -> Result<(), error::ServerFnError> {
     Ok(())
 }
 
+fn run_backfill_results_command() -> i32 {
+    let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+    let result = runtime.block_on(async {
+        db::init().await;
+        football::run_backfill().await
+    });
+
+    match result {
+        Ok(summary) => {
+            println!(
+                "backfill concluído: {} jogo(s) elegível(is), {} finalizado(s), {} sugerido(s) (mata-mata, confirme no admin), {} ao vivo.",
+                summary.candidates, summary.finalized, summary.suggested, summary.live
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!("falha no backfill-results: {error:?}");
+            1
+        }
+    }
+}
+
 fn run_cleanup_expired_command() -> i32 {
     let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
     let result = runtime.block_on(async {
@@ -181,6 +203,9 @@ fn try_handle_server_command() -> Option<i32> {
     }
     if command == "cleanup-expired" {
         return Some(run_cleanup_expired_command());
+    }
+    if command == "backfill-results" {
+        return Some(run_backfill_results_command());
     }
     if command != "bootstrap-admin" {
         return None;

@@ -28,6 +28,7 @@ import {
   useAdminUsers,
   useBlockUser,
   useCreateMatch,
+  useCheckFixture,
   useDeleteMatch,
   useInvalidateUserSessions,
   useKnockoutReleased,
@@ -38,6 +39,7 @@ import {
   useReopenPrediction,
   useRevokePredictionReopen,
   useRunSyncNow,
+  useRunBackfill,
   useSaveAdminSettings,
   useSetKnockoutReleased,
   useSetMatchFinished,
@@ -45,6 +47,7 @@ import {
   useTriggerUserPasswordReset,
   useUnblockUser,
   useUpdateMatchSchedule,
+  useSetMatchFixture,
   useUserBreakdown,
   useUserPools,
 } from "@/hooks/queries";
@@ -56,7 +59,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorBanner, Label, Select } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import type { AdminSettings } from "@/types";
+import type { AdminMatchRecord, AdminSettings } from "@/types";
 
 type AdminTab =
   | "overview"
@@ -165,6 +168,21 @@ function parseScore(value: string) {
   return value.trim() === "" ? 0 : Number.parseInt(value, 10) || 0;
 }
 
+function adminStatusLabel(status: string): string {
+  switch (status) {
+    case "scheduled":
+      return "agendado";
+    case "live":
+      return "ao vivo";
+    case "finished_pending":
+      return "pendente de confirmação";
+    case "finalized":
+      return "finalizado";
+    default:
+      return status;
+  }
+}
+
 // Fases de mata-mata disponíveis no cadastro manual de jogos.
 const KNOCKOUT_PHASES = [
   "16 avos de final",
@@ -195,13 +213,8 @@ export function AdminPage() {
   const { isAdmin, loading } = useAuth();
   const [tab, setTab] = useState<AdminTab>("overview");
   const [error, setError] = useState("");
-  const [matchFilters, setMatchFilters] = useState({
-    phase: "",
-    groupName: "",
-    date: "",
-    status: "",
-    origin: "",
-  });
+  const emptyMatchFilters = { phase: "", groupName: "", date: "", status: "", origin: "", team: "" };
+  const [matchFilters, setMatchFilters] = useState(emptyMatchFilters);
   const [predictionFilters, setPredictionFilters] = useState({
     matchId: "",
     userId: "",
@@ -241,6 +254,7 @@ export function AdminPage() {
   const knockoutReleasedQuery = useKnockoutReleased();
 
   const runSyncNow = useRunSyncNow();
+  const runBackfill = useRunBackfill();
   const recalcAll = useRecalculateAll();
   const recalcMatch = useRecalculateMatch();
   const setMatchResult = useSetMatchResult();
@@ -248,6 +262,8 @@ export function AdminPage() {
   const createMatch = useCreateMatch();
   const setKnockoutReleased = useSetKnockoutReleased();
   const updateMatchSchedule = useUpdateMatchSchedule();
+  const setMatchFixture = useSetMatchFixture();
+  const checkFixture = useCheckFixture();
   const deleteMatch = useDeleteMatch();
   const reopenPrediction = useReopenPrediction();
   const revokeReopen = useRevokePredictionReopen();
@@ -326,12 +342,54 @@ export function AdminPage() {
     [allMatchesForKnockout.data],
   );
 
+  // Opções de filtro derivadas dos jogos existentes (fase e grupo de verdade,
+  // em vez de digitar o texto exato à mão).
+  const phaseOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of allMatchesForKnockout.data ?? []) {
+      if (item.matchRecord.phase) set.add(item.matchRecord.phase);
+    }
+    return Array.from(set).sort();
+  }, [allMatchesForKnockout.data]);
+
+  const groupOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of allMatchesForKnockout.data ?? []) {
+      if (item.matchRecord.groupName) set.add(item.matchRecord.groupName);
+    }
+    return Array.from(set).sort();
+  }, [allMatchesForKnockout.data]);
+
+  // Busca por time é client-side, sobre o que o backend já filtrou.
+  const visibleMatches = useMemo(() => {
+    const term = matchFilters.team.trim().toLowerCase();
+    const list = adminMatches.data ?? [];
+    if (!term) return list;
+    return list.filter((item) => {
+      const home = formatSelectionLabel(item.matchRecord.homeTeam).toLowerCase();
+      const away = formatSelectionLabel(item.matchRecord.awayTeam).toLowerCase();
+      return home.includes(term) || away.includes(term);
+    });
+  }, [adminMatches.data, matchFilters.team]);
+
+  const hasActiveMatchFilters =
+    matchFilters.phase !== "" ||
+    matchFilters.groupName !== "" ||
+    matchFilters.date !== "" ||
+    matchFilters.status !== "" ||
+    matchFilters.origin !== "" ||
+    matchFilters.team !== "";
+
   // Edição de confronto/fase/horário do jogo selecionado.
   const [editHome, setEditHome] = useState("");
   const [editAway, setEditAway] = useState("");
   const [editPhase, setEditPhase] = useState(KNOCKOUT_PHASES[0]);
   const [editKickoff, setEditKickoff] = useState("");
   const [scheduleError, setScheduleError] = useState("");
+  const [editFixtureId, setEditFixtureId] = useState("");
+  const [fixtureError, setFixtureError] = useState("");
+  const [fixtureSuccess, setFixtureSuccess] = useState("");
+  const [fixtureCheckMsg, setFixtureCheckMsg] = useState("");
 
   useEffect(() => {
     if (!selectedMatch) return;
@@ -344,6 +402,12 @@ export function AdminPage() {
     setEditPhase(selectedMatch.matchRecord.phase ?? KNOCKOUT_PHASES[0]);
     setEditKickoff(isoToLocalInput(selectedMatch.matchRecord.kickoff));
     setScheduleError("");
+    setEditFixtureId(
+      selectedMatch.externalFixtureId != null ? String(selectedMatch.externalFixtureId) : "",
+    );
+    setFixtureError("");
+    setFixtureSuccess("");
+    setFixtureCheckMsg("");
   }, [selectedMatch]);
 
   // As confirmações de "criado"/"liberado" somem sozinhas depois de alguns segundos.
@@ -352,6 +416,12 @@ export function AdminPage() {
     const timer = window.setTimeout(() => setCreateMatchSuccess(""), 5000);
     return () => window.clearTimeout(timer);
   }, [createMatchSuccess]);
+
+  useEffect(() => {
+    if (!fixtureSuccess) return;
+    const timer = window.setTimeout(() => setFixtureSuccess(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [fixtureSuccess]);
 
   useEffect(() => {
     if (!knockoutToggleMsg) return;
@@ -486,17 +556,88 @@ export function AdminPage() {
     );
   };
 
-  const handleDeleteMatch = async () => {
+  const handleSaveFixture = async () => {
     if (!selectedMatch) return;
+    setFixtureError("");
+    setFixtureSuccess("");
+    const trimmed = editFixtureId.trim();
+    let fixtureId: number | null = null;
+    if (trimmed !== "") {
+      const parsed = Number(trimmed);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        setFixtureError("Informe um ID numérico positivo, ou deixe vazio para remover.");
+        return;
+      }
+      fixtureId = parsed;
+    }
+    try {
+      await runAdminAction(() =>
+        setMatchFixture.mutateAsync({
+          matchId: selectedMatch.matchRecord.id,
+          externalFixtureId: fixtureId,
+        }),
+      );
+      setFixtureSuccess(
+        fixtureId == null ? "Mapeamento removido." : `ID ${fixtureId} salvo com sucesso.`,
+      );
+    } catch (err) {
+      setFixtureError(err instanceof Error ? err.message : "Falha ao salvar o ID do evento.");
+    }
+  };
+
+  const handleCheckFixture = async () => {
+    setFixtureError("");
+    setFixtureCheckMsg("");
+    const trimmed = editFixtureId.trim();
+    const parsed = Number(trimmed);
+    if (!trimmed || !Number.isInteger(parsed) || parsed <= 0) {
+      setFixtureError("Informe um ID numérico positivo para checar.");
+      return;
+    }
+
+    try {
+      const checked = await runAdminAction(() => checkFixture.mutateAsync(parsed));
+      if (!checked.found) {
+        setFixtureCheckMsg(`ID ${checked.eventId}: o provedor respondeu, mas não trouxe detalhes do evento.`);
+        return;
+      }
+      const kickoff = checked.kickoff ? ` · ${formatKickoff(checked.kickoff)}` : "";
+      setFixtureCheckMsg(`ID correto: ${checked.label}${kickoff}`);
+    } catch (err) {
+      setFixtureError(err instanceof Error ? err.message : "Falha ao checar o ID no provedor.");
+    }
+  };
+
+  const applySuggestion = () => {
+    if (!selectedMatch) return;
+    const m = selectedMatch;
+    if (m.autoHomeScore == null || m.autoAwayScore == null) return;
+    setResultHome(String(m.autoHomeScore));
+    setResultAway(String(m.autoAwayScore));
+    setPenHome(m.autoPenaltyHomeScore != null ? String(m.autoPenaltyHomeScore) : "");
+    setPenAway(m.autoPenaltyAwayScore != null ? String(m.autoPenaltyAwayScore) : "");
+  };
+
+  const handleDeleteMatch = async (target?: AdminMatchRecord) => {
+    const match = target ?? selectedMatch;
+    if (!match) return;
     if (
       !window.confirm(
-        `Excluir o jogo ${selectedMatch.matchRecord.homeTeam} x ${selectedMatch.matchRecord.awayTeam}? Os palpites desse jogo serão removidos.`,
+        `Excluir o jogo ${match.matchRecord.homeTeam} x ${match.matchRecord.awayTeam}? Os palpites desse jogo serão removidos.`,
       )
     ) {
       return;
     }
-    await runAdminAction(() => deleteMatch.mutateAsync(selectedMatch.matchRecord.id));
-    setSelectedMatchId("");
+    await runAdminAction(() => deleteMatch.mutateAsync(match.matchRecord.id));
+    if (selectedMatchId === match.matchRecord.id) setSelectedMatchId("");
+  };
+
+  // Seleciona o jogo e rola até o painel de edição (usado nas listas de cima).
+  const handleEditMatch = (matchId: string) => {
+    setSelectedMatchId(matchId);
+    requestAnimationFrame(() => {
+      document.getElementById("match-edit-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   };
 
   const handleToggleFinished = async () => {
@@ -528,7 +669,7 @@ export function AdminPage() {
 
   return (
     <PageShell className="max-w-[1280px]">
-      <div className="rounded-[28px] border border-mint/20 bg-[radial-gradient(circle_at_top_left,rgba(130,207,255,0.22),transparent_35%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,255,252,0.92))] p-5 shadow-card sm:p-6">
+      <div className="rounded-[28px] border border-mint/20 bg-[radial-gradient(circle_at_top_left,rgba(130,207,255,0.22),transparent_35%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,255,252,0.92))] p-5 shadow-card dark:border-mint/15 dark:bg-[radial-gradient(circle_at_top_left,rgba(79,206,159,0.18),transparent_34%),radial-gradient(circle_at_86%_16%,rgba(95,176,230,0.14),transparent_30%),linear-gradient(180deg,rgba(22,33,30,0.96),rgba(12,20,18,0.92))] sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.22em] text-mint-dark">
@@ -546,6 +687,10 @@ export function AdminPage() {
             <Button onClick={() => runAdminAction(() => runSyncNow.mutateAsync())}>
               <RefreshCcw className="h-4 w-4" />
               Sincronizar agora
+            </Button>
+            <Button variant="outline" onClick={() => runAdminAction(() => runBackfill.mutateAsync())}>
+              <RefreshCcw className="h-4 w-4" />
+              Sincronizar histórico
             </Button>
             <Button variant="outline" onClick={() => runAdminAction(() => recalcAll.mutateAsync())}>
               <Trophy className="h-4 w-4" />
@@ -601,7 +746,7 @@ export function AdminPage() {
             <h2 className="text-xl">Feed recente de jogos</h2>
             <div className="mt-3 space-y-3">
               {overview.data?.activityFeed.map((item) => (
-                <div key={`${item.action}-${item.at}-${item.targetId ?? "none"}`} className="rounded-lg border border-mint/15 bg-card/75 px-4 py-3">
+                <div key={item.id} className="rounded-lg border border-mint/15 bg-card/75 px-4 py-3">
                   <p className="font-semibold text-ink">{item.label}</p>
                   <p className="mt-1 text-xs uppercase tracking-[0.14em] text-ink-muted">
                     {item.action} · {formatKickoff(item.at)}
@@ -717,6 +862,9 @@ export function AdminPage() {
             {/* Chaveamento atual — confirma o que está realmente no mata-mata */}
             <div className="mt-5 border-t border-mint/15 pt-5">
               <h3 className="text-lg">Confrontos no mata-mata</h3>
+              <p className="mt-1 text-sm text-ink-muted">
+                Use <strong>Editar</strong> para ajustar times/fase/horário e mapear o ID do evento, ou <strong>Excluir</strong> para remover o confronto.
+              </p>
               {knockoutMatches.length === 0 ? (
                 <p className="mt-2 text-sm text-ink-muted">
                   Nenhum confronto de mata-mata ainda. Adicione um acima para começar o chaveamento.
@@ -738,9 +886,23 @@ export function AdminPage() {
                           {formatKickoff(item.matchRecord.kickoff)}
                         </p>
                       </div>
-                      <span className="rounded-pill bg-yellow/20 px-3 py-1 text-xs font-semibold text-yellow-dark">
-                        {item.matchRecord.phase ?? "Sem fase"}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-pill bg-yellow/20 px-3 py-1 text-xs font-semibold text-yellow-dark">
+                          {item.matchRecord.phase ?? "Sem fase"}
+                        </span>
+                        <Button size="sm" variant="outline" onClick={() => handleEditMatch(item.matchRecord.id)}>
+                          Editar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-danger/50 text-danger hover:border-danger"
+                          onClick={() => handleDeleteMatch(item)}
+                          disabled={deleteMatch.isPending}
+                        >
+                          Excluir
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -750,14 +912,36 @@ export function AdminPage() {
 
         <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr] [&>*]:min-w-0">
           <Card>
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div>
+                <Label>Time</Label>
+                <Input
+                  value={matchFilters.team}
+                  onChange={(e) => setMatchFilters((v) => ({ ...v, team: e.target.value }))}
+                  placeholder="Buscar seleção..."
+                />
+              </div>
               <div>
                 <Label>Fase</Label>
-                <Input value={matchFilters.phase} onChange={(e) => setMatchFilters((v) => ({ ...v, phase: e.target.value }))} placeholder="Fase" />
+                <Select value={matchFilters.phase} onChange={(e) => setMatchFilters((v) => ({ ...v, phase: e.target.value }))}>
+                  <option value="">Todas</option>
+                  {phaseOptions.map((phase) => (
+                    <option key={phase} value={phase}>
+                      {phase}
+                    </option>
+                  ))}
+                </Select>
               </div>
               <div>
                 <Label>Grupo</Label>
-                <Input value={matchFilters.groupName} onChange={(e) => setMatchFilters((v) => ({ ...v, groupName: e.target.value }))} placeholder="Grupo" />
+                <Select value={matchFilters.groupName} onChange={(e) => setMatchFilters((v) => ({ ...v, groupName: e.target.value }))}>
+                  <option value="">Todos</option>
+                  {groupOptions.map((group) => (
+                    <option key={group} value={group}>
+                      {group}
+                    </option>
+                  ))}
+                </Select>
               </div>
               <div>
                 <Label>Data</Label>
@@ -769,6 +953,7 @@ export function AdminPage() {
                   <option value="">Todos</option>
                   <option value="scheduled">Agendado</option>
                   <option value="live">Ao vivo</option>
+                  <option value="finished_pending">Pendente (sugestão)</option>
                   <option value="finalized">Finalizado</option>
                 </Select>
               </div>
@@ -782,8 +967,25 @@ export function AdminPage() {
               </div>
             </div>
 
-            <div className="mt-5 space-y-3">
-              {adminMatches.data?.map((item, index) => (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm text-ink-muted">
+                {visibleMatches.length} jogo(s)
+                {hasActiveMatchFilters ? " (filtrado)" : ""}
+              </span>
+              {hasActiveMatchFilters && (
+                <Button size="sm" variant="outline" onClick={() => setMatchFilters(emptyMatchFilters)}>
+                  Limpar filtros
+                </Button>
+              )}
+            </div>
+
+            <div className="mt-3 space-y-3">
+              {visibleMatches.length === 0 && (
+                <p className="rounded-xl border border-mint/15 bg-card/70 px-4 py-6 text-center text-sm text-ink-muted">
+                  Nenhum jogo encontrado com esses filtros.
+                </p>
+              )}
+              {visibleMatches.map((item, index) => (
                 <motion.button
                   key={item.matchRecord.id}
                   type="button"
@@ -799,8 +1001,13 @@ export function AdminPage() {
                         {item.matchRecord.homeTeam} x {item.matchRecord.awayTeam}
                       </p>
                       <p className="mt-1 text-sm text-ink-muted">
-                        {formatKickoff(item.matchRecord.kickoff)} · {item.matchRecord.phase ?? "Sem fase"} · {item.adminStatus}
+                        {formatKickoff(item.matchRecord.kickoff)} · {item.matchRecord.phase ?? "Sem fase"} · {adminStatusLabel(item.adminStatus)}
                       </p>
+                      {item.adminStatus === "finished_pending" && (
+                        <span className="mt-1 inline-block rounded-pill bg-yellow/20 px-3 py-0.5 text-xs font-semibold text-yellow-dark">
+                          Sugestão pendente
+                        </span>
+                      )}
                     </div>
                     <div className="text-right text-sm">
                       <p className="font-semibold text-ink">
@@ -820,7 +1027,7 @@ export function AdminPage() {
             </div>
           </Card>
 
-          <Card>
+          <Card id="match-edit-panel">
             {selectedMatch ? (
               <>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -836,6 +1043,39 @@ export function AdminPage() {
                     {selectedMatch.matchRecord.finished ? "Marcar como não finalizado" : "Marcar finalizado"}
                   </Button>
                 </div>
+
+                {selectedMatch.autoDetectedAt && selectedMatch.autoHomeScore != null && !selectedMatch.matchRecord.finished && (
+                  <div className="mt-4 space-y-2 rounded-xl border border-yellow/40 bg-yellow/10 p-4">
+                    <p className="text-sm font-semibold text-yellow-dark">
+                      Sugestão da fonte externa (aguardando sua confirmação)
+                    </p>
+                    <p className="text-sm text-ink">
+                      {selectedMatch.matchRecord.homeTeam} {selectedMatch.autoHomeScore} ×{" "}
+                      {selectedMatch.autoAwayScore} {selectedMatch.matchRecord.awayTeam}
+                      {selectedMatch.autoPenaltyHomeScore != null && (
+                        <>
+                          {" "}· pênaltis {selectedMatch.autoPenaltyHomeScore}×{selectedMatch.autoPenaltyAwayScore}
+                        </>
+                      )}
+                      {selectedMatch.autoQualifier ? (
+                        <>
+                          {" "}· classificado:{" "}
+                          {selectedMatch.autoQualifier === "home"
+                            ? selectedMatch.matchRecord.homeTeam
+                            : selectedMatch.matchRecord.awayTeam}
+                        </>
+                      ) : (
+                        <> · classificado: indefinido (confira os pênaltis)</>
+                      )}
+                    </p>
+                    <p className="text-xs text-ink-muted">
+                      Status: {selectedMatch.autoStatus ?? "—"}. Revise e clique em Salvar resultado para oficializar e recalcular o ranking.
+                    </p>
+                    <Button size="sm" variant="outline" onClick={applySuggestion}>
+                      Aplicar sugestão ao formulário
+                    </Button>
+                  </div>
+                )}
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <div>
@@ -911,7 +1151,7 @@ export function AdminPage() {
                       <Button
                         variant="outline"
                         className="border-danger/50 text-danger hover:border-danger"
-                        onClick={handleDeleteMatch}
+                        onClick={() => handleDeleteMatch()}
                         disabled={deleteMatch.isPending}
                       >
                         Excluir jogo
@@ -919,6 +1159,69 @@ export function AdminPage() {
                     </div>
                   </div>
                 )}
+
+                <div className="mt-6 space-y-3 rounded-xl border border-mint/15 bg-card/60 p-4">
+                  <div>
+                    <h3 className="text-lg">Sincronização ao vivo</h3>
+                    <p className="mt-1 text-sm text-ink-muted">
+                      Cole o ID do evento no provedor de placares para o jogo puxar o placar ao
+                      vivo automaticamente. Sem ID, o jogo não é sincronizado.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>ID do evento externo</Label>
+                      <Input
+                        inputMode="numeric"
+                        placeholder="ex. 760500 (vazio = não sincronizar)"
+                        value={editFixtureId}
+                        onChange={(e) => {
+                          setEditFixtureId(e.target.value.replace(/\D+/g, ""));
+                          setFixtureCheckMsg("");
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <p className="text-sm text-ink-muted">
+                        {selectedMatch.matchRecord.liveStatus
+                          ? `Ao vivo: ${selectedMatch.matchRecord.liveHomeScore ?? 0} x ${
+                              selectedMatch.matchRecord.liveAwayScore ?? 0
+                            } · ${selectedMatch.matchRecord.liveStatus}`
+                          : selectedMatch.externalFixtureId != null
+                            ? `Mapeado: ID ${selectedMatch.externalFixtureId}. Aguardando a janela do jogo para sincronizar.`
+                            : "Sem mapeamento."}
+                      </p>
+                    </div>
+                  </div>
+                  {isKnockout(selectedMatch.matchRecord.phase) && (
+                    <p className="text-xs text-ink-muted">
+                      No mata-mata, a sincronização fecha automaticamente quando a fonte traz
+                      classificado/pênaltis completos. Se houver conflito, a sugestão fica para
+                      revisão manual acima.
+                    </p>
+                  )}
+                  {fixtureError && <ErrorBanner>{fixtureError}</ErrorBanner>}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button variant="outline" onClick={handleSaveFixture} disabled={setMatchFixture.isPending}>
+                      {setMatchFixture.isPending ? "Salvando..." : "Salvar ID do evento"}
+                    </Button>
+                    <Button variant="outline" onClick={handleCheckFixture} disabled={checkFixture.isPending}>
+                      {checkFixture.isPending ? "Checando..." : "Checar ID"}
+                    </Button>
+                    {fixtureSuccess && (
+                      <span className="flex items-center gap-2 text-sm font-semibold text-mint-dark">
+                        <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} />
+                        {fixtureSuccess}
+                      </span>
+                    )}
+                  </div>
+                  {fixtureCheckMsg && (
+                    <p className="flex items-center gap-2 text-sm font-semibold text-mint-dark">
+                      <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} />
+                      {fixtureCheckMsg}
+                    </p>
+                  )}
+                </div>
 
                 <div className="mt-6">
                   <h3 className="text-lg">Auditoria deste jogo</h3>

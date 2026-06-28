@@ -168,6 +168,8 @@ pub struct AdminOverview {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminActivityItem {
+    /// Id do registro de auditoria — chave única e estável para a lista.
+    pub id: String,
     pub action: String,
     pub label: String,
     pub at: String,
@@ -181,6 +183,32 @@ pub struct AdminMatchRecord {
     pub match_record: MatchRecord,
     pub admin_status: String,
     pub last_audit_at: Option<String>,
+    /// Id do evento no provedor externo de placares (usado pelo poller ao vivo).
+    /// Exposto só no admin para o mapeamento manual.
+    pub external_fixture_id: Option<i64>,
+    /// Sugestão de resultado de mata-mata auto-detectada pelo poller (placar +
+    /// classificado + pênaltis). Não é o resultado oficial: o admin confirma.
+    pub auto_home_score: Option<i64>,
+    pub auto_away_score: Option<i64>,
+    pub auto_penalty_home_score: Option<i64>,
+    pub auto_penalty_away_score: Option<i64>,
+    pub auto_qualifier: Option<String>,
+    pub auto_status: Option<String>,
+    pub auto_detected_at: Option<String>,
+    pub source_last_checked_at: Option<String>,
+    pub source_last_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FixtureCheckResult {
+    pub event_id: i64,
+    pub found: bool,
+    pub label: String,
+    pub status: Option<String>,
+    pub kickoff: Option<String>,
+    pub home_team: Option<String>,
+    pub away_team: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

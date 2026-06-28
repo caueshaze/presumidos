@@ -29,6 +29,16 @@ struct AdminMatchRow {
     result_synced_at: Option<String>,
     result_external_raw_status: Option<String>,
     live_updated_at: Option<String>,
+    external_fixture_id: Option<i64>,
+    auto_home_score: Option<i64>,
+    auto_away_score: Option<i64>,
+    auto_penalty_home_score: Option<i64>,
+    auto_penalty_away_score: Option<i64>,
+    auto_qualifier: Option<String>,
+    auto_status: Option<String>,
+    auto_detected_at: Option<String>,
+    source_last_checked_at: Option<String>,
+    source_last_status: Option<String>,
     last_audit_at: Option<String>,
     // Derivado em SQL: o jogo já começou (kickoff <= agora).
     started: bool,
@@ -97,8 +107,18 @@ fn to_match_record(row: AdminMatchRow) -> AdminMatchRecord {
     // origem do resultado (manual vs API) é filtrada à parte por `result_source`.
     // "Ao vivo" = começou e ainda não foi finalizado, espelhando o badge
     // "AO VIVO" da interface do usuário (isMatchLive).
+    // "Pendente" = mata-mata encerrado pela fonte (sugestão gravada), ainda não
+    // confirmado pelo admin e não soberano por lançamento manual. Tem prioridade
+    // sobre "live" porque o jogo já acabou, só falta a confirmação oficial.
+    let is_pending_knockout = crate::models::is_knockout(row.phase.as_deref())
+        && row.auto_detected_at.is_some()
+        && !row.finished
+        && row.result_source.as_deref() != Some("manual");
+
     let admin_status = if row.finished {
         "finalized"
+    } else if is_pending_knockout {
+        "finished_pending"
     } else if row.live_status.is_some() || row.started {
         "live"
     } else {
@@ -131,6 +151,16 @@ fn to_match_record(row: AdminMatchRow) -> AdminMatchRecord {
         },
         admin_status: admin_status.to_string(),
         last_audit_at: row.last_audit_at,
+        external_fixture_id: row.external_fixture_id,
+        auto_home_score: row.auto_home_score,
+        auto_away_score: row.auto_away_score,
+        auto_penalty_home_score: row.auto_penalty_home_score,
+        auto_penalty_away_score: row.auto_penalty_away_score,
+        auto_qualifier: row.auto_qualifier,
+        auto_status: row.auto_status,
+        auto_detected_at: row.auto_detected_at,
+        source_last_checked_at: row.source_last_checked_at,
+        source_last_status: row.source_last_status,
     }
 }
 
@@ -261,6 +291,11 @@ pub async fn list_admin_matches(
                 m.penalty_home_score, m.penalty_away_score, m.finished,
                 m.live_home_score, m.live_away_score, m.live_status, m.live_elapsed,
                 m.result_source, m.result_synced_at, m.result_external_raw_status, m.live_updated_at,
+                m.external_fixture_id,
+                m.auto_home_score, m.auto_away_score,
+                m.auto_penalty_home_score, m.auto_penalty_away_score,
+                m.auto_qualifier, m.auto_status, m.auto_detected_at,
+                m.source_last_checked_at, m.source_last_status,
                 (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.target_type = 'match' AND a.target_id = m.id) AS last_audit_at,
                 (datetime(m.kickoff) <= datetime('now')) AS started
          FROM matches m
@@ -412,6 +447,81 @@ pub async fn run_sync_now(token: String, csrf_token: String) -> Result<SyncStatu
         id: run_id,
         status: status.to_string(),
         trigger_source: "admin".to_string(),
+        started_at: String::new(),
+        finished_at: None,
+        summary_json: summary_json.to_string(),
+    })
+}
+
+/// Backfill global acionado pelo admin: varre todos os jogos passados ainda não
+/// finalizados (não só a janela do poller) e aplica o resultado da fonte externa.
+/// Registra a execução em `sync_runs` com `trigger_source = 'backfill'`.
+#[cfg(feature = "server")]
+pub async fn run_backfill_now(token: String, csrf_token: String) -> Result<SyncStatus, ServerFnError> {
+    use crate::auth::require_recent_admin;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+
+    if !crate::config::settings().football.enabled {
+        return Err(crate::security::public_error("A sincronizacao externa nao esta habilitada."));
+    }
+
+    let db = crate::db::pool();
+    let run_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO sync_runs (id, triggered_by, trigger_source, status, summary_json)
+         VALUES (?1, ?2, 'backfill', 'running', '{}')",
+    )
+    .bind(&run_id)
+    .bind(&session.user_id)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("run_backfill_now_insert", e))?;
+
+    let result = crate::football::run_backfill().await;
+    let (status, summary_json) = match result {
+        Ok(summary) => (
+            "completed",
+            serde_json::json!({
+                "candidates": summary.candidates,
+                "finalized": summary.finalized,
+                "suggested": summary.suggested,
+                "live": summary.live,
+            }),
+        ),
+        Err(error) => ("failed", serde_json::json!({ "error": error.to_string() })),
+    };
+
+    sqlx::query(
+        "UPDATE sync_runs
+         SET status = ?1, finished_at = datetime('now'), summary_json = ?2
+         WHERE id = ?3",
+    )
+    .bind(status)
+    .bind(summary_json.to_string())
+    .bind(&run_id)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("run_backfill_now_update", e))?;
+
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "sync_backfill_triggered",
+        "sync_run",
+        Some(&run_id),
+        Some(&crate::security::client_ip(&headers)),
+        summary_json.clone(),
+    )
+    .await?;
+
+    Ok(SyncStatus {
+        id: run_id,
+        status: status.to_string(),
+        trigger_source: "backfill".to_string(),
         started_at: String::new(),
         finished_at: None,
         summary_json: summary_json.to_string(),
@@ -1094,8 +1204,8 @@ pub async fn admin_overview(token: String) -> Result<AdminOverview, ServerFnErro
     .await
     .map_err(|e| crate::security::internal_error("admin_overview_missing_predictions", e))?;
 
-    let feed_rows = sqlx::query_as::<_, (String, String, Option<String>, String, Option<i64>, Option<i64>, String)>(
-        "SELECT a.action, m.home_team, a.target_id, m.away_team, m.home_score, m.away_score, a.created_at
+    let feed_rows = sqlx::query_as::<_, (String, String, String, Option<String>, String, Option<i64>, Option<i64>, String)>(
+        "SELECT a.id, a.action, m.home_team, a.target_id, m.away_team, m.home_score, m.away_score, a.created_at
          FROM audit_logs a
          LEFT JOIN matches m ON m.id = a.target_id
          WHERE a.target_type = 'match'
@@ -1108,13 +1218,13 @@ pub async fn admin_overview(token: String) -> Result<AdminOverview, ServerFnErro
 
     let activity_feed = feed_rows
         .into_iter()
-        .map(|(action, home_team, target_id, away_team, home_score, away_score, at)| {
+        .map(|(id, action, home_team, target_id, away_team, home_score, away_score, at)| {
             let label = if let (Some(home_score), Some(away_score)) = (home_score, away_score) {
                 format!("{home_team} {home_score}x{away_score} {away_team} atualizado")
             } else {
                 format!("{home_team} x {away_team} atualizado")
             };
-            AdminActivityItem { action, label, at, target_id }
+            AdminActivityItem { id, action, label, at, target_id }
         })
         .collect();
 

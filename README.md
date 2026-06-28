@@ -164,12 +164,13 @@ FOOTBALL_POLL_INTERVAL_SECS=900  # 15 min
 Como funciona:
 
 - Um **poller em background** roda a cada `FOOTBALL_POLL_INTERVAL_SECS`. Para
-  economizar requisições, ele só chama a API quando há jogo na janela (de −4h a
+  economizar requisições, ele só chama a API quando há jogo na janela (de −5h a
   +30min do kickoff).
 - Quando um jogo de **fase de grupos** é marcado como encerrado, o poller grava
   o placar oficial (`result_source = 'api'`) e o ranking atualiza sozinho.
-- O **mata-mata** é apenas exibido ao vivo (quando disponível): o resultado
-  oficial (classificado/pênaltis) continua sendo lançado pelo admin.
+- No **mata-mata**, o poller exibe o placar ao vivo e, quando a fonte retorna
+  classificado/pênaltis completos e coerentes, fecha o jogo automaticamente. Se
+  houver conflito ou dado incompleto, grava uma sugestão para revisão do admin.
 - **Resultado manual é soberano:** o poller nunca sobrescreve um placar lançado
   pelo admin — em divergência, apenas registra `match_result_api_conflict` na
   auditoria.

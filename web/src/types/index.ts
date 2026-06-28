@@ -145,6 +145,7 @@ export interface NotificationStatus {
 }
 
 export interface AdminActivityItem {
+  id: string;
   action: string;
   label: string;
   at: string;
@@ -180,6 +181,28 @@ export interface AdminMatchRecord {
   matchRecord: MatchRecord;
   adminStatus: string;
   lastAuditAt: string | null;
+  /** Id do evento no provedor externo de placares (mapeamento manual do admin). */
+  externalFixtureId: number | null;
+  /** Sugestão de mata-mata auto-detectada pelo poller (aguardando confirmação). */
+  autoHomeScore: number | null;
+  autoAwayScore: number | null;
+  autoPenaltyHomeScore: number | null;
+  autoPenaltyAwayScore: number | null;
+  autoQualifier: string | null;
+  autoStatus: string | null;
+  autoDetectedAt: string | null;
+  sourceLastCheckedAt: string | null;
+  sourceLastStatus: string | null;
+}
+
+export interface FixtureCheckResult {
+  eventId: number;
+  found: boolean;
+  label: string;
+  status: string | null;
+  kickoff: string | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
 }
 
 export interface PredictionReopenOverride {

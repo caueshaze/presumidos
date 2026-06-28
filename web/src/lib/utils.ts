@@ -14,14 +14,24 @@ export function isValidEmail(email: string): boolean {
   return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/.test(value);
 }
 
-/** "2026-06-12T18:00:00Z" -> "12/06 18:00" (horário local). */
+/** "2026-06-12T17:00:00Z" -> "12/06/2026 às 14h" (horário de Brasília). */
 export function formatKickoff(kickoff: string): string {
   const date = new Date(kickoff);
   if (Number.isNaN(date.getTime())) return kickoff;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} ${pad(date.getHours())}:${pad(
-    date.getMinutes(),
-  )}`;
+  const parts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const minute = value("minute");
+  const time = minute === "00" ? `${value("hour")}h` : `${value("hour")}h${minute}`;
+  return `${value("day")}/${value("month")}/${value("year")} às ${time}`;
 }
 
 export function isMatchLocked(kickoff: string): boolean {

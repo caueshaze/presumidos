@@ -195,6 +195,19 @@ struct UpdateTeamsBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MatchFixtureBody {
+    /// `None` limpa o mapeamento; um id positivo aponta o jogo ao evento externo.
+    external_fixture_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureCheckBody {
+    external_fixture_id: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MatchScheduleBody {
     home_team: String,
     away_team: String,
@@ -728,6 +741,31 @@ async fn update_match_schedule(
     Ok(Json(updated))
 }
 
+async fn set_match_fixture(
+    Path(match_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<MatchFixtureBody>,
+) -> ApiResult<impl IntoResponse> {
+    let updated = crate::matches::set_match_fixture(
+        String::new(),
+        match_id,
+        body.external_fixture_id,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(Json(updated))
+}
+
+async fn check_fixture(
+    headers: HeaderMap,
+    Json(body): Json<FixtureCheckBody>,
+) -> ApiResult<impl IntoResponse> {
+    let session = crate::auth::require_admin("").await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_header(&headers))?;
+    let checked = crate::football::check_fixture_id(body.external_fixture_id).await?;
+    Ok(Json(checked))
+}
+
 async fn delete_match(
     Path(match_id): Path<String>,
     headers: HeaderMap,
@@ -767,6 +805,12 @@ async fn admin_sync_status() -> ApiResult<impl IntoResponse> {
 async fn admin_sync_run_now(headers: HeaderMap) -> ApiResult<impl IntoResponse> {
     Ok(Json(
         crate::admin::run_sync_now(String::new(), csrf_header(&headers)).await?,
+    ))
+}
+
+async fn admin_sync_backfill(headers: HeaderMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::run_backfill_now(String::new(), csrf_header(&headers)).await?,
     ))
 }
 
@@ -983,11 +1027,14 @@ pub fn router() -> Router {
         .route("/admin/matches/{id}/result", post(set_match_result))
         .route("/admin/matches/{id}/finished", post(set_match_finished))
         .route("/admin/matches/{id}/schedule", post(update_match_schedule))
+        .route("/admin/matches/{id}/fixture", post(set_match_fixture))
+        .route("/admin/fixtures/check", post(check_fixture))
         .route("/admin/matches/{id}/delete", post(delete_match))
         .route("/admin/knockout-released", post(set_knockout_released))
         .route("/admin/matches/{id}/teams", post(update_match_teams))
         .route("/admin/sync/status", get(admin_sync_status))
         .route("/admin/sync/run-now", post(admin_sync_run_now))
+        .route("/admin/sync/backfill", post(admin_sync_backfill))
         .route("/admin/predictions", get(admin_predictions))
         .route("/admin/predictions/reopen", post(admin_prediction_reopen))
         .route(
