@@ -193,11 +193,29 @@ const KNOCKOUT_PHASES = [
   "Final",
 ];
 
-// Converte um ISO (UTC) para o input datetime-local em horario de Brasilia.
-function isoToLocalInput(iso: string | null | undefined): string {
-  if (!iso) return "";
+type BrasiliaDateTimeInput = {
+  date: string;
+  time: string;
+};
+
+function formatDateInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function formatTimeInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 4);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+}
+
+// Converte um ISO (UTC) para campos brasileiros, sempre em horario de Brasilia.
+function isoToBrasiliaInput(iso: string | null | undefined): BrasiliaDateTimeInput {
+  if (!iso) return { date: "", time: "" };
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
+  if (Number.isNaN(date.getTime())) return { date: "", time: "" };
   const parts = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
     year: "numeric",
@@ -209,23 +227,34 @@ function isoToLocalInput(iso: string | null | undefined): string {
   }).formatToParts(date);
   const value = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
-  return `${value("year")}-${value("month")}-${value("day")}T${value("hour")}:${value("minute")}`;
+  return {
+    date: `${value("day")}/${value("month")}/${value("year")}`,
+    time: `${value("hour") === "24" ? "00" : value("hour")}:${value("minute")}`,
+  };
 }
 
-// O input datetime-local entrega "YYYY-MM-DDTHH:mm"; no admin, esse horário é
-// digitado como Brasília. Salvamos em UTC para o backend/poller.
-function localInputToIso(value: string): string {
-  const trimmed = value.trim();
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(trimmed);
-  if (!match) return trimmed;
-  const [, year, month, day, hour, minute] = match;
-  const utc = Date.UTC(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour) + 3,
-    Number(minute),
-  );
+// No admin, a data/hora digitada e Brasilia. Salvamos em UTC para o backend/poller.
+function brasiliaInputToIso(dateValue: string, timeValue: string): string | null {
+  const dateMatch = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dateValue.trim());
+  const timeMatch = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(timeValue.trim());
+  if (!dateMatch || !timeMatch) return null;
+
+  const [, dayText, monthText, yearText] = dateMatch;
+  const [, hourText, minuteText] = timeMatch;
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  const validDate =
+    calendarDate.getUTCFullYear() === year &&
+    calendarDate.getUTCMonth() === month - 1 &&
+    calendarDate.getUTCDate() === day;
+  if (!validDate) return null;
+
+  const utc = Date.UTC(year, month - 1, day, hour + 3, minute);
   return new Date(utc).toISOString();
 }
 
@@ -348,7 +377,8 @@ export function AdminPage() {
   const [newMatchHome, setNewMatchHome] = useState("");
   const [newMatchAway, setNewMatchAway] = useState("");
   const [newMatchPhase, setNewMatchPhase] = useState(KNOCKOUT_PHASES[0]);
-  const [newMatchKickoff, setNewMatchKickoff] = useState("");
+  const [newMatchDate, setNewMatchDate] = useState("");
+  const [newMatchTime, setNewMatchTime] = useState("");
   const [createMatchError, setCreateMatchError] = useState("");
   const [createMatchSuccess, setCreateMatchSuccess] = useState("");
   const [knockoutToggleMsg, setKnockoutToggleMsg] = useState("");
@@ -404,7 +434,8 @@ export function AdminPage() {
   const [editHome, setEditHome] = useState("");
   const [editAway, setEditAway] = useState("");
   const [editPhase, setEditPhase] = useState(KNOCKOUT_PHASES[0]);
-  const [editKickoff, setEditKickoff] = useState("");
+  const [editMatchDate, setEditMatchDate] = useState("");
+  const [editMatchTime, setEditMatchTime] = useState("");
   const [scheduleError, setScheduleError] = useState("");
   const [editFixtureId, setEditFixtureId] = useState("");
   const [fixtureError, setFixtureError] = useState("");
@@ -420,7 +451,9 @@ export function AdminPage() {
     setEditHome(selectedMatch.matchRecord.homeTeam);
     setEditAway(selectedMatch.matchRecord.awayTeam);
     setEditPhase(selectedMatch.matchRecord.phase ?? KNOCKOUT_PHASES[0]);
-    setEditKickoff(isoToLocalInput(selectedMatch.matchRecord.kickoff));
+    const kickoffInput = isoToBrasiliaInput(selectedMatch.matchRecord.kickoff);
+    setEditMatchDate(kickoffInput.date);
+    setEditMatchTime(kickoffInput.time);
     setScheduleError("");
     setEditFixtureId(
       selectedMatch.externalFixtureId != null ? String(selectedMatch.externalFixtureId) : "",
@@ -515,8 +548,13 @@ export function AdminPage() {
       setCreateMatchError("Mandante e visitante não podem ser a mesma seleção.");
       return;
     }
-    if (!newMatchKickoff) {
+    if (!newMatchDate || !newMatchTime) {
       setCreateMatchError("Informe a data e o horário do jogo.");
+      return;
+    }
+    const kickoff = brasiliaInputToIso(newMatchDate, newMatchTime);
+    if (!kickoff) {
+      setCreateMatchError("Informe data no formato DD/MM/AAAA e horário no formato HH:mm.");
       return;
     }
     const homeLabel = formatSelectionLabel(newMatchHome.trim());
@@ -527,12 +565,13 @@ export function AdminPage() {
           homeTeam: newMatchHome.trim(),
           awayTeam: newMatchAway.trim(),
           phase: newMatchPhase,
-          kickoff: localInputToIso(newMatchKickoff),
+          kickoff,
         }),
       );
       setNewMatchHome("");
       setNewMatchAway("");
-      setNewMatchKickoff("");
+      setNewMatchDate("");
+      setNewMatchTime("");
       setCreateMatchSuccess(`${homeLabel} x ${awayLabel} adicionado ao mata-mata (${newMatchPhase}).`);
     } catch {
       // erro já exibido por runAdminAction
@@ -561,8 +600,13 @@ export function AdminPage() {
       setScheduleError("Informe os dois times.");
       return;
     }
-    if (!editKickoff) {
+    if (!editMatchDate || !editMatchTime) {
       setScheduleError("Informe a data e o horário do jogo.");
+      return;
+    }
+    const kickoff = brasiliaInputToIso(editMatchDate, editMatchTime);
+    if (!kickoff) {
+      setScheduleError("Informe data no formato DD/MM/AAAA e horário no formato HH:mm.");
       return;
     }
     await runAdminAction(() =>
@@ -571,7 +615,7 @@ export function AdminPage() {
         homeTeam: editHome.trim(),
         awayTeam: editAway.trim(),
         phase: editPhase,
-        kickoff: localInputToIso(editKickoff),
+        kickoff,
       }),
     );
   };
@@ -841,7 +885,7 @@ export function AdminPage() {
               <p className="mt-1 text-sm text-ink-muted">
                 Escolha as seleções, a fase e o horário. O confronto entra direto no chaveamento do mata-mata.
               </p>
-              <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <div className="mt-4 grid gap-3 md:grid-cols-5">
                 <div>
                   <Label>Mandante</Label>
                   <TeamSelect value={newMatchHome} onChange={setNewMatchHome} ariaLabel="Seleção mandante" />
@@ -861,8 +905,22 @@ export function AdminPage() {
                   </Select>
                 </div>
                 <div>
-                  <Label>Data e horário</Label>
-                  <Input type="datetime-local" value={newMatchKickoff} onChange={(e) => setNewMatchKickoff(e.target.value)} />
+                  <Label>Data</Label>
+                  <Input
+                    inputMode="numeric"
+                    placeholder="DD/MM/AAAA"
+                    value={newMatchDate}
+                    onChange={(e) => setNewMatchDate(formatDateInput(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <Label>Horário</Label>
+                  <Input
+                    inputMode="numeric"
+                    placeholder="HH:mm"
+                    value={newMatchTime}
+                    onChange={(e) => setNewMatchTime(formatTimeInput(e.target.value))}
+                  />
                 </div>
               </div>
               {createMatchError && <div className="mt-3"><ErrorBanner>{createMatchError}</ErrorBanner></div>}
@@ -1159,8 +1217,22 @@ export function AdminPage() {
                         </Select>
                       </div>
                       <div>
-                        <Label>Data e horário</Label>
-                        <Input type="datetime-local" value={editKickoff} onChange={(e) => setEditKickoff(e.target.value)} />
+                        <Label>Data</Label>
+                        <Input
+                          inputMode="numeric"
+                          placeholder="DD/MM/AAAA"
+                          value={editMatchDate}
+                          onChange={(e) => setEditMatchDate(formatDateInput(e.target.value))}
+                        />
+                      </div>
+                      <div>
+                        <Label>Horário</Label>
+                        <Input
+                          inputMode="numeric"
+                          placeholder="HH:mm"
+                          value={editMatchTime}
+                          onChange={(e) => setEditMatchTime(formatTimeInput(e.target.value))}
+                        />
                       </div>
                     </div>
                     {scheduleError && <ErrorBanner>{scheduleError}</ErrorBanner>}
