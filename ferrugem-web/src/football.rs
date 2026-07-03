@@ -208,7 +208,11 @@ fn classify_event(is_knockout: bool, event: &Event) -> GameApply {
             home: home_score,
             away: away_score,
             elapsed: live_elapsed(clock),
-            status: live_label(comp.status.type_.name.as_str(), clock, comp.status.type_.short_detail.trim()),
+            status: live_label(
+                comp.status.type_.name.as_str(),
+                clock,
+                comp.status.type_.short_detail.trim(),
+            ),
         };
     }
 
@@ -258,9 +262,8 @@ fn compute_shootout(
             || (!entry.team.is_empty() && canonical_team(&entry.team) == canonical_team(name))
     }
 
-    let count = |entry: &ShootoutTeam| -> i64 {
-        entry.shots.iter().filter(|s| s.did_score).count() as i64
-    };
+    let count =
+        |entry: &ShootoutTeam| -> i64 { entry.shots.iter().filter(|s| s.did_score).count() as i64 };
 
     let home = shootout.iter().find(|e| matches(e, home_id, home_team));
     let away = shootout.iter().find(|e| matches(e, away_id, away_team));
@@ -308,7 +311,11 @@ struct RawEvent {
 
 /// Busca o scoreboard externo de uma data (formato YYYYMMDD, em ET).
 async fn fetch_scoreboard(date: &str) -> Result<Vec<RawEvent>, ServerFnError> {
-    let url = settings().football.base_url.trim_end_matches('/').to_string();
+    let url = settings()
+        .football
+        .base_url
+        .trim_end_matches('/')
+        .to_string();
 
     let mut last_err: Option<reqwest::Error> = None;
     for attempt in 1..=FETCH_ATTEMPTS {
@@ -346,7 +353,10 @@ async fn fetch_scoreboard(date: &str) -> Result<Vec<RawEvent>, ServerFnError> {
                             .filter_map(|raw| {
                                 serde_json::from_value::<Event>(raw.clone())
                                     .ok()
-                                    .map(|event| RawEvent { event, raw: raw.clone() })
+                                    .map(|event| RawEvent {
+                                        event,
+                                        raw: raw.clone(),
+                                    })
                             })
                             .collect::<Vec<_>>()
                     })
@@ -386,7 +396,9 @@ fn summary_url() -> Option<String> {
 /// Busca a disputa de pênaltis de um evento via `summary`. Retorna `None` quando
 /// não há `shootout` ou a URL não pôde ser derivada (mantém o fluxo: sem
 /// pênaltis confiáveis, vira conflito e o admin digita).
-async fn fetch_summary_shootout(event_id: &str) -> Result<Option<Vec<ShootoutTeam>>, ServerFnError> {
+async fn fetch_summary_shootout(
+    event_id: &str,
+) -> Result<Option<Vec<ShootoutTeam>>, ServerFnError> {
     let Some(url) = summary_url() else {
         eprintln!("[football] summary: base_url sem 'scoreboard'; pulando pênaltis");
         return Ok(None);
@@ -439,7 +451,9 @@ async fn fetch_summary_shootout(event_id: &str) -> Result<Option<Vec<ShootoutTea
     ))
 }
 
-pub async fn check_fixture_id(event_id: i64) -> Result<crate::models::FixtureCheckResult, ServerFnError> {
+pub async fn check_fixture_id(
+    event_id: i64,
+) -> Result<crate::models::FixtureCheckResult, ServerFnError> {
     if event_id <= 0 {
         return Err(crate::security::public_error(
             "O ID do evento externo deve ser um número positivo.",
@@ -463,10 +477,9 @@ pub async fn check_fixture_id(event_id: i64) -> Result<crate::models::FixtureChe
         {
             Ok(resp) => {
                 let status = resp.status();
-                let body = resp
-                    .text()
-                    .await
-                    .map_err(|e| crate::security::internal_error("football_fixture_check_body", e))?;
+                let body = resp.text().await.map_err(|e| {
+                    crate::security::internal_error("football_fixture_check_body", e)
+                })?;
                 if !status.is_success() {
                     return Err(crate::security::public_error(format!(
                         "Provedor de placares respondeu {status}: {}",
@@ -474,8 +487,9 @@ pub async fn check_fixture_id(event_id: i64) -> Result<crate::models::FixtureChe
                     )));
                 }
 
-                let root: serde_json::Value = serde_json::from_str(&body)
-                    .map_err(|e| crate::security::internal_error("football_fixture_check_parse", e))?;
+                let root: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+                    crate::security::internal_error("football_fixture_check_parse", e)
+                })?;
                 let header = root.get("header");
                 let competition = header
                     .and_then(|h| h.get("competitions"))
@@ -492,7 +506,10 @@ pub async fn check_fixture_id(event_id: i64) -> Result<crate::models::FixtureChe
                             })
                         })
                         .and_then(|item| item.get("team"))
-                        .and_then(|team| team.get("displayName").or_else(|| team.get("shortDisplayName")))
+                        .and_then(|team| {
+                            team.get("displayName")
+                                .or_else(|| team.get("shortDisplayName"))
+                        })
                         .and_then(|v| v.as_str())
                         .map(str::to_string)
                 };
@@ -564,7 +581,10 @@ pub async fn check_fixture_id(event_id: i64) -> Result<crate::models::FixtureChe
 
 /// Hash hex do recorte combinado (scoreboard + shootout) para idempotência: se a
 /// disputa de pênaltis chegar depois, o hash muda e a sugestão é regravada.
-fn payload_hash(scoreboard_event: &serde_json::Value, shootout: &Option<Vec<ShootoutTeam>>) -> String {
+fn payload_hash(
+    scoreboard_event: &serde_json::Value,
+    shootout: &Option<Vec<ShootoutTeam>>,
+) -> String {
     use sha2::Digest;
     let combined = serde_json::json!({
         "scoreboard_event": scoreboard_event,
@@ -760,8 +780,13 @@ async fn apply_knockout_suggestion(
 
     // Pênaltis: só busca o summary quando o tempo normal/prorrogação empatou.
     let shootout = if went_to_penalties {
-        fetch_summary_shootout(&candidate.external_fixture_id.map(|i| i.to_string()).unwrap_or_default())
-            .await?
+        fetch_summary_shootout(
+            &candidate
+                .external_fixture_id
+                .map(|i| i.to_string())
+                .unwrap_or_default(),
+        )
+        .await?
     } else {
         None
     };
@@ -813,13 +838,21 @@ async fn apply_knockout_suggestion(
     // Classificado e pênaltis. Em caso de divergência, vira conflito: grava a
     // sugestão de placar mas sem qualifier confiável (admin decide).
     let (pen_home, pen_away, qualifier, conflict) = if went_to_penalties {
-        match shootout
-            .as_ref()
-            .and_then(|s| compute_shootout(s, home_id, away_id, &candidate.home_team, &candidate.away_team))
-        {
+        match shootout.as_ref().and_then(|s| {
+            compute_shootout(
+                s,
+                home_id,
+                away_id,
+                &candidate.home_team,
+                &candidate.away_team,
+            )
+        }) {
             Some((ph, pa)) if ph != pa => {
                 let pen_winner = if ph > pa { "home" } else { "away" };
-                let agrees = winner_side.as_deref().map(|w| w == pen_winner).unwrap_or(true);
+                let agrees = winner_side
+                    .as_deref()
+                    .map(|w| w == pen_winner)
+                    .unwrap_or(true);
                 if agrees {
                     (Some(ph), Some(pa), Some(pen_winner.to_string()), false)
                 } else {
@@ -831,9 +864,13 @@ async fn apply_knockout_suggestion(
         }
     } else {
         // Vitória no tempo normal: classificado pelo `winner` (ou pelo placar).
-        let q = winner_side
-            .clone()
-            .unwrap_or_else(|| if home >= away { "home".to_string() } else { "away".to_string() });
+        let q = winner_side.clone().unwrap_or_else(|| {
+            if home >= away {
+                "home".to_string()
+            } else {
+                "away".to_string()
+            }
+        });
         (None, None, Some(q), false)
     };
 
@@ -902,7 +939,11 @@ async fn apply_knockout_suggestion(
         .await
         .map_err(|e| crate::security::internal_error("football_ko_suggestion_update", e))?;
 
-        if conflict { "knockout_result_conflict" } else { "knockout_result_suggested" }
+        if conflict {
+            "knockout_result_conflict"
+        } else {
+            "knockout_result_suggested"
+        }
     };
 
     crate::security::append_audit_log(
@@ -1146,13 +1187,22 @@ fn build_team_table() -> HashMap<String, &'static str> {
         ("australia", &["Austrália", "Australia"]),
         ("austria", &["Áustria", "Austria"]),
         ("belgium", &["Bélgica", "Belgium"]),
-        ("bosnia", &["Bósnia e Herzegovina", "Bosnia and Herzegovina"]),
+        (
+            "bosnia",
+            &["Bósnia e Herzegovina", "Bosnia and Herzegovina"],
+        ),
         ("brazil", &["Brasil", "Brazil"]),
         ("cape-verde", &["Cabo Verde", "Cape Verde"]),
         ("canada", &["Canadá", "Canada"]),
         ("colombia", &["Colômbia", "Colombia"]),
-        ("south-korea", &["Coreia do Sul", "South Korea", "Korea Republic"]),
-        ("ivory-coast", &["Costa do Marfim", "Ivory Coast", "Côte d'Ivoire"]),
+        (
+            "south-korea",
+            &["Coreia do Sul", "South Korea", "Korea Republic"],
+        ),
+        (
+            "ivory-coast",
+            &["Costa do Marfim", "Ivory Coast", "Côte d'Ivoire"],
+        ),
         ("croatia", &["Croácia", "Croatia"]),
         ("curacao", &["Curaçao", "Curacao"]),
         ("egypt", &["Egito", "Egypt"]),
@@ -1177,16 +1227,22 @@ fn build_team_table() -> HashMap<String, &'static str> {
         ("paraguay", &["Paraguai", "Paraguay"]),
         ("portugal", &["Portugal"]),
         ("qatar", &["Qatar", "Catar"]),
-        ("dr-congo", &[
-            "RD Congo",
-            "DR Congo",
-            "Congo DR",
-            "República Democrática do Congo",
-        ]),
+        (
+            "dr-congo",
+            &[
+                "RD Congo",
+                "DR Congo",
+                "Congo DR",
+                "República Democrática do Congo",
+            ],
+        ),
         ("senegal", &["Senegal"]),
         ("sweden", &["Suécia", "Sweden"]),
         ("switzerland", &["Suíça", "Switzerland"]),
-        ("czechia", &["Tchéquia", "República Tcheca", "Czech Republic", "Czechia"]),
+        (
+            "czechia",
+            &["Tchéquia", "República Tcheca", "Czech Republic", "Czechia"],
+        ),
         ("tunisia", &["Tunísia", "Tunisia"]),
         ("turkey", &["Turquia", "Turkey", "Türkiye"]),
         ("uruguay", &["Uruguai", "Uruguay"]),
@@ -1258,12 +1314,17 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
 
     // Busca os scoreboards de todas as datas ET dos jogos locais e indexa por par.
     let dates = distinct_et_dates(locals.iter().map(|m| m.kickoff.clone()));
-    println!("Consultando {} data(s) no provedor de placares...", dates.len());
+    println!(
+        "Consultando {} data(s) no provedor de placares...",
+        dates.len()
+    );
     let mut by_pair: HashMap<(String, String), i64> = HashMap::new();
     for date in &dates {
         for raw in fetch_scoreboard(date).await? {
             let ev = &raw.event;
-            let Some(comp) = ev.competition() else { continue };
+            let Some(comp) = ev.competition() else {
+                continue;
+            };
             let (Some(home), Some(away)) = (comp.side("home"), comp.side("away")) else {
                 continue;
             };
@@ -1303,7 +1364,9 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
 
     println!("\nMapeados: {matched}. Não casados: {}.", unmatched.len());
     if !unmatched.is_empty() {
-        println!("Não casados (mata-mata sem times definidos ou nome novo — use --fixture jogo-XXX=ID):");
+        println!(
+            "Não casados (mata-mata sem times definidos ou nome novo — use --fixture jogo-XXX=ID):"
+        );
         for line in &unmatched {
             println!("{line}");
         }
@@ -1347,13 +1410,19 @@ mod tests {
                         home_away: "home".into(),
                         score: hs.into(),
                         winner: hw,
-                        team: Team { id: "1".into(), display_name: "México".into() },
+                        team: Team {
+                            id: "1".into(),
+                            display_name: "México".into(),
+                        },
                     },
                     Competitor {
                         home_away: "away".into(),
                         score: aws.into(),
                         winner: aw,
-                        team: Team { id: "2".into(), display_name: "África do Sul".into() },
+                        team: Team {
+                            id: "2".into(),
+                            display_name: "África do Sul".into(),
+                        },
                     },
                 ],
             }],
@@ -1372,7 +1441,12 @@ mod tests {
     fn live_group_game() {
         assert_eq!(
             classify_event(false, &event("in", false, "1", "0", "67'")),
-            GameApply::Live { home: 1, away: 0, status: "67'".into(), elapsed: Some(67) }
+            GameApply::Live {
+                home: 1,
+                away: 0,
+                status: "67'".into(),
+                elapsed: Some(67)
+            }
         );
     }
 
@@ -1383,7 +1457,12 @@ mod tests {
         ev.competitions[0].status.type_.name = "STATUS_HALFTIME".into();
         assert_eq!(
             classify_event(false, &ev),
-            GameApply::Live { home: 0, away: 0, status: "Intervalo".into(), elapsed: Some(45) }
+            GameApply::Live {
+                home: 0,
+                away: 0,
+                status: "Intervalo".into(),
+                elapsed: Some(45)
+            }
         );
     }
 
@@ -1393,20 +1472,32 @@ mod tests {
         let g = event("in", false, "1", "0", "45'+3'");
         assert_eq!(
             classify_event(false, &g),
-            GameApply::Live { home: 1, away: 0, status: "45'+3'".into(), elapsed: Some(45) }
+            GameApply::Live {
+                home: 1,
+                away: 0,
+                status: "45'+3'".into(),
+                elapsed: Some(45)
+            }
         );
     }
 
     #[test]
     fn scheduled_is_skipped() {
-        assert_eq!(classify_event(false, &event("pre", false, "0", "0", "")), GameApply::Skip);
+        assert_eq!(
+            classify_event(false, &event("pre", false, "0", "0", "")),
+            GameApply::Skip
+        );
     }
 
     #[test]
     fn finished_group_autofilled() {
         assert_eq!(
             classify_event(false, &event("post", true, "2", "0", "")),
-            GameApply::FinalGroup { home: 2, away: 0, raw_status: "STATUS_X".into() }
+            GameApply::FinalGroup {
+                home: 2,
+                away: 0,
+                raw_status: "STATUS_X".into()
+            }
         );
     }
 
@@ -1486,10 +1577,7 @@ mod tests {
         // Mesmo scoreboard, mas a chegada do shootout muda o hash (não é pulado).
         let sb = serde_json::json!({ "id": "633850", "status": "post" });
         let none = payload_hash(&sb, &None);
-        let with_pens = payload_hash(
-            &sb,
-            &Some(vec![shootout_team("202", "Argentina", &[true])]),
-        );
+        let with_pens = payload_hash(&sb, &Some(vec![shootout_team("202", "Argentina", &[true])]));
         assert_ne!(none, with_pens);
     }
 
@@ -1501,7 +1589,10 @@ mod tests {
             canonical_team("República Democrática do Congo"),
             canonical_team("RD Congo")
         );
-        assert_eq!(canonical_team("República Tcheca"), canonical_team("Tchéquia"));
+        assert_eq!(
+            canonical_team("República Tcheca"),
+            canonical_team("Tchéquia")
+        );
         assert_eq!(canonical_team("Brasil"), canonical_team("Brazil"));
     }
 

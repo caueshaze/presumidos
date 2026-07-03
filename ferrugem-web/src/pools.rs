@@ -54,7 +54,9 @@ async fn ensure_pool_membership(
             .map_err(|e| crate::security::internal_error(error_context, e))?;
 
     if membership.is_none() {
-        Err(crate::security::public_error("Voce nao e membro deste bolao."))
+        Err(crate::security::public_error(
+            "Voce nao e membro deste bolao.",
+        ))
     } else {
         Ok(())
     }
@@ -67,11 +69,12 @@ async fn generate_invite_code(pool: &sqlx::SqlitePool) -> Result<String, ServerF
     for _ in 0..5 {
         let code = Uuid::new_v4().simple().to_string()[..6].to_uppercase();
 
-        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM pools WHERE invite_code = ?1")
-            .bind(&code)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| crate::security::internal_error("generate_invite_code_lookup", e))?;
+        let exists: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM pools WHERE invite_code = ?1")
+                .bind(&code)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| crate::security::internal_error("generate_invite_code_lookup", e))?;
 
         if exists.is_none() {
             return Ok(code);
@@ -110,16 +113,27 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, invite_code, member_count, created_by, description, visible_rules, join_closed_at)| PoolSummary {
-            id,
-            name,
-            invite_code,
-            member_count,
-            created_by,
-            description,
-            visible_rules,
-            join_closed_at,
-        })
+        .map(
+            |(
+                id,
+                name,
+                invite_code,
+                member_count,
+                created_by,
+                description,
+                visible_rules,
+                join_closed_at,
+            )| PoolSummary {
+                id,
+                name,
+                invite_code,
+                member_count,
+                created_by,
+                description,
+                visible_rules,
+                join_closed_at,
+            },
+        )
         .collect())
 }
 
@@ -194,8 +208,9 @@ pub async fn join_pool(
     let session = require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
-    let invite_code = crate::security::normalize_required_text("Codigo de convite", invite_code, 6, 12)?
-        .to_uppercase();
+    let invite_code =
+        crate::security::normalize_required_text("Codigo de convite", invite_code, 6, 12)?
+            .to_uppercase();
     let client_ip = crate::security::client_ip(&headers);
     crate::security::enforce_rate_limit(crate::security::RateLimitRequest {
         key: format!("rl:join_pool:ip:{client_ip}"),
@@ -237,13 +252,19 @@ pub async fn join_pool(
         .await
         .map_err(|e| crate::security::internal_error("join_pool_insert_member", e))?;
 
-    let _ = crate::scoring::recalculate_pool_user_breakdowns(&pool_id, &session.user_id, Some(&session.user_id)).await?;
+    let _ = crate::scoring::recalculate_pool_user_breakdowns(
+        &pool_id,
+        &session.user_id,
+        Some(&session.user_id),
+    )
+    .await?;
 
-    let member_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id = ?1")
-        .bind(&pool_id)
-        .fetch_one(db)
-        .await
-        .map_err(|e| crate::security::internal_error("join_pool_count_members", e))?;
+    let member_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id = ?1")
+            .bind(&pool_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("join_pool_count_members", e))?;
 
     Ok(PoolSummary {
         id: pool_id,
@@ -440,7 +461,9 @@ pub async fn get_pool_member_predictions(
                 .unwrap_or(true);
         if unseen {
             prediction.unread_reaction_count += 1;
-            *unread_by_user.entry(row.target_user_id.clone()).or_default() += 1;
+            *unread_by_user
+                .entry(row.target_user_id.clone())
+                .or_default() += 1;
         }
     }
 
@@ -483,8 +506,13 @@ pub async fn react_to_prediction(
     }
 
     let db = pool();
-    ensure_pool_membership(db, &pool_id, &session.user_id, "react_to_prediction_membership")
-        .await?;
+    ensure_pool_membership(
+        db,
+        &pool_id,
+        &session.user_id,
+        "react_to_prediction_membership",
+    )
+    .await?;
 
     let target_prediction: Option<(String, String)> = sqlx::query_as(
         "SELECT m.home_team, m.away_team
@@ -599,15 +627,9 @@ pub async fn react_to_prediction(
             reactor_username.0, emoji, home_team, away_team
         );
         let tag = format!("prediction-reaction-{pool_id}-{match_id}-{target_user_id}");
-        let _ = crate::push::send_reaction_notification(
-            db,
-            &target_user_id,
-            &title,
-            &body,
-            &url,
-            &tag,
-        )
-        .await?;
+        let _ =
+            crate::push::send_reaction_notification(db, &target_user_id, &title, &body, &url, &tag)
+                .await?;
     }
 
     Ok(())
@@ -680,16 +702,27 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, invite_code, member_count, created_by, description, visible_rules, join_closed_at)| PoolSummary {
-            id,
-            name,
-            invite_code,
-            member_count,
-            created_by,
-            description,
-            visible_rules,
-            join_closed_at,
-        })
+        .map(
+            |(
+                id,
+                name,
+                invite_code,
+                member_count,
+                created_by,
+                description,
+                visible_rules,
+                join_closed_at,
+            )| PoolSummary {
+                id,
+                name,
+                invite_code,
+                member_count,
+                created_by,
+                description,
+                visible_rules,
+                join_closed_at,
+            },
+        )
         .collect())
 }
 
@@ -721,14 +754,16 @@ pub async fn list_pool_members_admin(
 
     Ok(rows
         .into_iter()
-        .map(|(id, username, email, is_admin, blocked_at, blocked_reason)| UserPublic {
-            id,
-            username,
-            email,
-            is_admin,
-            blocked_at,
-            blocked_reason,
-        })
+        .map(
+            |(id, username, email, is_admin, blocked_at, blocked_reason)| UserPublic {
+                id,
+                username,
+                email,
+                is_admin,
+                blocked_at,
+                blocked_reason,
+            },
+        )
         .collect())
 }
 
@@ -777,7 +812,12 @@ pub async fn add_pool_member_admin(
         .await
         .map_err(|e| crate::security::internal_error("add_pool_member_admin_insert", e))?;
 
-    let _ = crate::scoring::recalculate_pool_user_breakdowns(&pool_id, &user_id, Some(&session.user_id)).await?;
+    let _ = crate::scoring::recalculate_pool_user_breakdowns(
+        &pool_id,
+        &user_id,
+        Some(&session.user_id),
+    )
+    .await?;
 
     crate::security::append_audit_log(
         db,
@@ -902,7 +942,9 @@ pub async fn list_pool_adjustments(
             .await
             .map_err(|e| crate::security::internal_error("list_pool_adjustments_membership", e))?;
     if membership.is_none() {
-        return Err(crate::security::public_error("Voce nao e membro deste bolao."));
+        return Err(crate::security::public_error(
+            "Voce nao e membro deste bolao.",
+        ));
     }
 
     let rows: Vec<(String, String, String, i64, String, String)> = sqlx::query_as(
@@ -919,14 +961,16 @@ pub async fn list_pool_adjustments(
 
     Ok(rows
         .into_iter()
-        .map(|(id, user_id, username, delta, reason, created_at)| PointAdjustment {
-            id,
-            user_id,
-            username,
-            delta,
-            reason,
-            created_at,
-        })
+        .map(
+            |(id, user_id, username, delta, reason, created_at)| PointAdjustment {
+                id,
+                user_id,
+                username,
+                delta,
+                reason,
+                created_at,
+            },
+        )
         .collect())
 }
 
@@ -958,7 +1002,9 @@ pub async fn add_point_adjustment(
         return Err(crate::security::public_error("O ajuste nao pode ser zero."));
     }
     if !(-1000..=1000).contains(&delta) {
-        return Err(crate::security::public_error("Ajuste fora do limite permitido (-1000 a 1000)."));
+        return Err(crate::security::public_error(
+            "Ajuste fora do limite permitido (-1000 a 1000).",
+        ));
     }
     let reason = crate::security::normalize_optional_text(reason, 200)?;
 
@@ -971,7 +1017,9 @@ pub async fn add_point_adjustment(
             .await
             .map_err(|e| crate::security::internal_error("add_point_adjustment_member", e))?;
     if target_member.is_none() {
-        return Err(crate::security::public_error("Esse usuario nao e membro do bolao."));
+        return Err(crate::security::public_error(
+            "Esse usuario nao e membro do bolao.",
+        ));
     }
 
     let id = Uuid::new_v4().to_string();

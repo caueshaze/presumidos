@@ -49,6 +49,32 @@ function ScoreBox(props: React.InputHTMLAttributes<HTMLInputElement>) {
   );
 }
 
+function PenaltyScorePanel({
+  children,
+  note,
+  className,
+}: {
+  children: React.ReactNode;
+  note?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-md border border-mint/30 bg-card/80 p-3 shadow-[inset_0_1px_0_rgb(255_255_255/0.35)]",
+        "dark:border-mint/20 dark:bg-bg/35 dark:shadow-none",
+        className,
+      )}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <Label className="mb-0">Placar dos pênaltis</Label>
+        <ScoreInputs>{children}</ScoreInputs>
+      </div>
+      {note && <p className="mt-2 text-xs text-ink-muted">{note}</p>}
+    </div>
+  );
+}
+
 function scoreToField(value: number | null | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
@@ -541,20 +567,17 @@ export function MatchCard({
                 }}
                 className="-mt-3 overflow-hidden"
               >
-                <div className="mt-3 flex flex-col gap-2 rounded-md bg-mint/10 p-3">
-                  <Label>Placar dos pênaltis</Label>
-                  <ScoreInputs>
-                    <ScoreBox
-                      value={penHome}
-                      onChange={(e) => setPenHome(normalizeScoreField(e.target.value))}
-                    />
-                    <span className="font-heading text-xl font-bold text-ink-muted">x</span>
-                    <ScoreBox
-                      value={penAway}
-                      onChange={(e) => setPenAway(normalizeScoreField(e.target.value))}
-                    />
-                  </ScoreInputs>
-                </div>
+                <PenaltyScorePanel className="mt-3">
+                  <ScoreBox
+                    value={penHome}
+                    onChange={(e) => setPenHome(normalizeScoreField(e.target.value))}
+                  />
+                  <span className="font-heading text-xl font-bold text-ink-muted">x</span>
+                  <ScoreBox
+                    value={penAway}
+                    onChange={(e) => setPenAway(normalizeScoreField(e.target.value))}
+                  />
+                </PenaltyScorePanel>
               </motion.div>
             )}
           </AnimatePresence>
@@ -668,23 +691,19 @@ export function MatchCard({
             </ScoreInputs>
 
             {knockout && scoreValue(resultHome) === scoreValue(resultAway) && (
-              <div className="flex flex-col gap-2 rounded-md bg-sky/10 p-3">
-                <Label>Placar dos pênaltis</Label>
-                <ScoreInputs>
-                  <ScoreBox
-                    value={resultPenHome}
-                    onChange={(e) => setResultPenHome(normalizeScoreField(e.target.value))}
-                  />
-                  <span className="font-heading text-xl font-bold text-ink-muted">x</span>
-                  <ScoreBox
-                    value={resultPenAway}
-                    onChange={(e) => setResultPenAway(normalizeScoreField(e.target.value))}
-                  />
-                </ScoreInputs>
-                <p className="text-xs text-ink-muted">
-                  Empate no tempo normal: informe o placar dos pênaltis (quem fez mais se classifica).
-                </p>
-              </div>
+              <PenaltyScorePanel
+                note="Empate no tempo normal: informe o placar dos pênaltis (quem fez mais se classifica)."
+              >
+                <ScoreBox
+                  value={resultPenHome}
+                  onChange={(e) => setResultPenHome(normalizeScoreField(e.target.value))}
+                />
+                <span className="font-heading text-xl font-bold text-ink-muted">x</span>
+                <ScoreBox
+                  value={resultPenAway}
+                  onChange={(e) => setResultPenAway(normalizeScoreField(e.target.value))}
+                />
+              </PenaltyScorePanel>
             )}
 
             {resultError && <ErrorBanner>{resultError}</ErrorBanner>}

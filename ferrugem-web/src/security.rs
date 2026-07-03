@@ -351,7 +351,9 @@ fn email_format_is_valid(email: &str) -> bool {
         !label.is_empty()
             && !label.starts_with('-')
             && !label.ends_with('-')
-            && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
     });
     if !all_labels_ok {
         return false;
@@ -802,19 +804,19 @@ mod tests {
         }
 
         for bad in [
-            "a@b",          // sem TLD
-            "test@test",    // dominio sem ponto
-            "joao@gmial",   // typo, dominio sem ponto
-            "@x.com",       // local vazio
-            "a@@b.com",     // dois '@'
-            "a b@c.com",    // espaco no local
-            "a@.com",       // rotulo vazio
-            "a@b..com",     // rotulo vazio no meio
-            "a@b-.com",     // hifen no fim do rotulo
-            ".a@b.com",     // ponto no inicio do local
-            "a.@b.com",     // ponto no fim do local
-            "a@b.c",        // TLD com 1 letra
-            "a@b.c0m",      // TLD com digito
+            "a@b",        // sem TLD
+            "test@test",  // dominio sem ponto
+            "joao@gmial", // typo, dominio sem ponto
+            "@x.com",     // local vazio
+            "a@@b.com",   // dois '@'
+            "a b@c.com",  // espaco no local
+            "a@.com",     // rotulo vazio
+            "a@b..com",   // rotulo vazio no meio
+            "a@b-.com",   // hifen no fim do rotulo
+            ".a@b.com",   // ponto no inicio do local
+            "a.@b.com",   // ponto no fim do local
+            "a@b.c",      // TLD com 1 letra
+            "a@b.c0m",    // TLD com digito
         ] {
             assert!(!email_format_is_valid(bad), "deveria rejeitar: {bad}");
         }

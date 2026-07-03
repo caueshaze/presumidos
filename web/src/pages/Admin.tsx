@@ -9,6 +9,7 @@ import {
   EyeOff,
   Lock,
   RefreshCcw,
+  Send,
   ShieldAlert,
   TimerReset,
   Trophy,
@@ -24,6 +25,7 @@ import {
   useAdminPoolMembers,
   useAdminPools,
   useAdminPredictions,
+  useAdminSendPushToUser,
   useAdminSettings,
   useAdminUsers,
   useBlockUser,
@@ -421,6 +423,7 @@ export function AdminPage() {
   const unblockUser = useUnblockUser();
   const invalidateSessions = useInvalidateUserSessions();
   const triggerPasswordReset = useTriggerUserPasswordReset();
+  const sendPushToUser = useAdminSendPushToUser();
   const addPoolMember = useAddPoolMember();
   const removePoolMember = useRemovePoolMember();
   const saveSettings = useSaveAdminSettings();
@@ -473,6 +476,10 @@ export function AdminPage() {
   const [overrideExpiry, setOverrideExpiry] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [selectedPoolUserToAdd, setSelectedPoolUserToAdd] = useState("");
+  const [pushTitle, setPushTitle] = useState("Presumidos");
+  const [pushBody, setPushBody] = useState("");
+  const [pushUrl, setPushUrl] = useState("/");
+  const [pushSuccess, setPushSuccess] = useState("");
 
   // Cadastro manual de jogo de mata-mata.
   const [newMatchHome, setNewMatchHome] = useState("");
@@ -583,6 +590,12 @@ export function AdminPage() {
     return () => window.clearTimeout(timer);
   }, [knockoutToggleMsg]);
 
+  useEffect(() => {
+    if (!pushSuccess) return;
+    const timer = window.setTimeout(() => setPushSuccess(""), 7000);
+    return () => window.clearTimeout(timer);
+  }, [pushSuccess]);
+
   const runAdminAction = async <T,>(action: () => Promise<T>) => {
     setError("");
     try {
@@ -595,6 +608,45 @@ export function AdminPage() {
   };
 
   if (!loading && !isAdmin) return <Navigate to="/" replace />;
+
+  const handleSendPushToSelectedUser = async () => {
+    if (!selectedUser) return;
+    const title = pushTitle.trim();
+    const body = pushBody.trim();
+    const url = pushUrl.trim() || "/";
+    setPushSuccess("");
+
+    if (!title || !body) {
+      setError("Preencha titulo e mensagem do push.");
+      return;
+    }
+    if (!url.startsWith("/") || url.startsWith("//")) {
+      setError("O link do push deve ser um caminho interno, por exemplo /predictions.");
+      return;
+    }
+
+    try {
+      const result = await runAdminAction(() =>
+        sendPushToUser.mutateAsync({
+          userId: selectedUser.user.id,
+          payload: { title, body, url },
+        }),
+      );
+      if (!result) return;
+      if (result.successfulCount > 0) {
+        setPushSuccess(
+          `Push enviado para ${result.successfulCount} dispositivo(s).` +
+            (result.failedCount > 0 ? ` Falha em ${result.failedCount}.` : ""),
+        );
+      } else if (result.activeSubscriptionCount === 0) {
+        setPushSuccess("Nenhum dispositivo elegivel: o usuario precisa ativar notificacoes nesta conta.");
+      } else {
+        setPushSuccess("Nenhum push foi entregue. Confira se os dispositivos ainda estao validos.");
+      }
+    } catch {
+      // Erro ja exibido por runAdminAction.
+    }
+  };
 
   const handleSaveResult = async () => {
     if (!selectedMatch) return;
@@ -1757,6 +1809,66 @@ export function AdminPage() {
                   <Button variant="outline" onClick={() => runAdminAction(() => triggerPasswordReset.mutateAsync(selectedUser.user.id))}>
                     Disparar reset de senha
                   </Button>
+                </div>
+
+                <div className="mt-6 rounded-2xl border border-sky/30 bg-sky/10 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="rounded-full bg-card/80 p-2 text-mint-dark">
+                      <Send className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg">Enviar push</h3>
+                      <p className="mt-1 text-sm text-ink-muted">
+                        Destinatário: <strong>{selectedUser.user.username}</strong> ({selectedUser.user.email})
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <div>
+                      <Label>Título</Label>
+                      <Input
+                        value={pushTitle}
+                        maxLength={80}
+                        onChange={(e) => setPushTitle(e.target.value)}
+                        placeholder="Presumidos"
+                      />
+                    </div>
+                    <div>
+                      <Label>Link ao abrir</Label>
+                      <Input
+                        value={pushUrl}
+                        maxLength={256}
+                        onChange={(e) => setPushUrl(e.target.value)}
+                        placeholder="/predictions"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <Label>Mensagem</Label>
+                      <TextArea
+                        value={pushBody}
+                        maxLength={240}
+                        onChange={(e) => setPushBody(e.target.value)}
+                        placeholder="Escreva a mensagem que vai aparecer na notificação."
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <Button
+                      onClick={handleSendPushToSelectedUser}
+                      disabled={sendPushToUser.isPending}
+                    >
+                      {sendPushToUser.isPending ? "Enviando..." : "Enviar push"}
+                    </Button>
+                    <span className="text-xs text-ink-muted">
+                      Exige que a conta escolhida tenha notificações ativadas.
+                    </span>
+                  </div>
+                  {pushSuccess && (
+                    <p className="mt-3 flex items-center gap-2 text-sm font-semibold text-mint-dark">
+                      <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} />
+                      {pushSuccess}
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-6">

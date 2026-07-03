@@ -1,6 +1,17 @@
 use crate::error::ServerFnError;
 use crate::models::{NotificationPreference, NotificationStatus, WebPushSubscriptionInput};
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminPushResult {
+    pub target_user_id: String,
+    pub active_subscription_count: i64,
+    pub attempted_count: i64,
+    pub successful_count: i64,
+    pub failed_count: i64,
+    pub deactivated_count: i64,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PushCleanupSummary {
     pub inactive_subscriptions_deleted: u64,
@@ -53,6 +64,17 @@ pub async fn deactivate_push_subscription(
     _endpoint: String,
     _csrf_token: String,
 ) -> Result<StatusRegistration, ServerFnError> {
+    Err(disabled_error())
+}
+
+pub async fn send_admin_push_to_user(
+    _token: String,
+    _target_user_id: String,
+    _title: String,
+    _body: String,
+    _url: Option<String>,
+    _csrf_token: String,
+) -> Result<AdminPushResult, ServerFnError> {
     Err(disabled_error())
 }
 

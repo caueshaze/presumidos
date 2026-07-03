@@ -98,7 +98,11 @@ struct SyncRunRow {
 
 #[cfg(feature = "server")]
 fn sqlite_bool(flag: bool) -> &'static str {
-    if flag { "1" } else { "0" }
+    if flag {
+        "1"
+    } else {
+        "0"
+    }
 }
 
 #[cfg(feature = "server")]
@@ -110,7 +114,12 @@ fn kickoff_matches_brasilia_date(kickoff: &str, date: &str) -> bool {
         return false;
     };
     chrono::DateTime::parse_from_rfc3339(kickoff)
-        .map(|dt| dt.with_timezone(&brasilia_offset).format("%Y-%m-%d").to_string() == date)
+        .map(|dt| {
+            dt.with_timezone(&brasilia_offset)
+                .format("%Y-%m-%d")
+                .to_string()
+                == date
+        })
         .unwrap_or(false)
 }
 
@@ -188,7 +197,11 @@ async fn app_setting(db: &sqlx::SqlitePool, key: &str) -> Result<Option<String>,
 }
 
 #[cfg(feature = "server")]
-async fn set_app_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), ServerFnError> {
+async fn set_app_setting(
+    db: &sqlx::SqlitePool,
+    key: &str,
+    value: &str,
+) -> Result<(), ServerFnError> {
     sqlx::query(
         "INSERT INTO app_settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -204,8 +217,14 @@ async fn set_app_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Resul
 #[cfg(feature = "server")]
 pub async fn load_admin_settings() -> Result<AdminSettings, ServerFnError> {
     let db = crate::db::pool();
-    let knockout_released = app_setting(db, "knockout_released").await?.unwrap_or_else(|| "0".to_string()) == "1";
-    let auto_sync_enabled = app_setting(db, "auto_sync_enabled").await?.unwrap_or_else(|| "1".to_string()) == "1";
+    let knockout_released = app_setting(db, "knockout_released")
+        .await?
+        .unwrap_or_else(|| "0".to_string())
+        == "1";
+    let auto_sync_enabled = app_setting(db, "auto_sync_enabled")
+        .await?
+        .unwrap_or_else(|| "1".to_string())
+        == "1";
     let sync_interval_minutes = app_setting(db, "sync_interval_minutes")
         .await?
         .and_then(|v| v.parse::<i64>().ok())
@@ -214,8 +233,13 @@ pub async fn load_admin_settings() -> Result<AdminSettings, ServerFnError> {
         .await?
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(0);
-    let global_banner_enabled = app_setting(db, "global_banner_enabled").await?.unwrap_or_else(|| "0".to_string()) == "1";
-    let global_banner_text = app_setting(db, "global_banner_text").await?.unwrap_or_default();
+    let global_banner_enabled = app_setting(db, "global_banner_enabled")
+        .await?
+        .unwrap_or_else(|| "0".to_string())
+        == "1";
+    let global_banner_text = app_setting(db, "global_banner_text")
+        .await?
+        .unwrap_or_default();
 
     Ok(AdminSettings {
         knockout_released,
@@ -241,11 +265,36 @@ pub async fn save_admin_settings(
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
     let db = crate::db::pool();
-    set_app_setting(db, "knockout_released", sqlite_bool(settings.knockout_released)).await?;
-    set_app_setting(db, "auto_sync_enabled", sqlite_bool(settings.auto_sync_enabled)).await?;
-    set_app_setting(db, "sync_interval_minutes", &settings.sync_interval_minutes.to_string()).await?;
-    set_app_setting(db, "prediction_lock_minutes", &settings.prediction_lock_minutes.to_string()).await?;
-    set_app_setting(db, "global_banner_enabled", sqlite_bool(settings.global_banner_enabled)).await?;
+    set_app_setting(
+        db,
+        "knockout_released",
+        sqlite_bool(settings.knockout_released),
+    )
+    .await?;
+    set_app_setting(
+        db,
+        "auto_sync_enabled",
+        sqlite_bool(settings.auto_sync_enabled),
+    )
+    .await?;
+    set_app_setting(
+        db,
+        "sync_interval_minutes",
+        &settings.sync_interval_minutes.to_string(),
+    )
+    .await?;
+    set_app_setting(
+        db,
+        "prediction_lock_minutes",
+        &settings.prediction_lock_minutes.to_string(),
+    )
+    .await?;
+    set_app_setting(
+        db,
+        "global_banner_enabled",
+        sqlite_bool(settings.global_banner_enabled),
+    )
+    .await?;
     set_app_setting(db, "global_banner_text", &settings.global_banner_text).await?;
 
     crate::security::append_audit_log(
@@ -338,7 +387,10 @@ pub async fn list_admin_matches(
 }
 
 #[cfg(feature = "server")]
-pub async fn list_match_audit(token: String, match_id: String) -> Result<Vec<AuditLogEntry>, ServerFnError> {
+pub async fn list_match_audit(
+    token: String,
+    match_id: String,
+) -> Result<Vec<AuditLogEntry>, ServerFnError> {
     use crate::auth::require_admin;
 
     crate::security::apply_security_headers();
@@ -406,7 +458,9 @@ pub async fn run_sync_now(token: String, csrf_token: String) -> Result<SyncStatu
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
     if !crate::config::settings().football.enabled {
-        return Err(crate::security::public_error("A sincronizacao externa nao esta habilitada."));
+        return Err(crate::security::public_error(
+            "A sincronizacao externa nao esta habilitada.",
+        ));
     }
 
     let db = crate::db::pool();
@@ -423,14 +477,8 @@ pub async fn run_sync_now(token: String, csrf_token: String) -> Result<SyncStatu
 
     let result = crate::football::run_poll_cycle().await;
     let (status, summary_json) = match result {
-        Ok(active) => (
-            "completed",
-            serde_json::json!({ "active_window": active }),
-        ),
-        Err(error) => (
-            "failed",
-            serde_json::json!({ "error": error.to_string() }),
-        ),
+        Ok(active) => ("completed", serde_json::json!({ "active_window": active })),
+        Err(error) => ("failed", serde_json::json!({ "error": error.to_string() })),
     };
 
     sqlx::query(
@@ -470,7 +518,10 @@ pub async fn run_sync_now(token: String, csrf_token: String) -> Result<SyncStatu
 /// finalizados (não só a janela do poller) e aplica o resultado da fonte externa.
 /// Registra a execução em `sync_runs` com `trigger_source = 'backfill'`.
 #[cfg(feature = "server")]
-pub async fn run_backfill_now(token: String, csrf_token: String) -> Result<SyncStatus, ServerFnError> {
+pub async fn run_backfill_now(
+    token: String,
+    csrf_token: String,
+) -> Result<SyncStatus, ServerFnError> {
     use crate::auth::require_recent_admin;
 
     crate::security::apply_security_headers();
@@ -479,7 +530,9 @@ pub async fn run_backfill_now(token: String, csrf_token: String) -> Result<SyncS
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
     if !crate::config::settings().football.enabled {
-        return Err(crate::security::public_error("A sincronizacao externa nao esta habilitada."));
+        return Err(crate::security::public_error(
+            "A sincronizacao externa nao esta habilitada.",
+        ));
     }
 
     let db = crate::db::pool();
@@ -615,7 +668,9 @@ pub async fn list_admin_predictions(
                 }
             }
 
-            let kickoff = chrono::DateTime::parse_from_rfc3339(&row.kickoff).ok()?.with_timezone(&chrono::Utc);
+            let kickoff = chrono::DateTime::parse_from_rfc3339(&row.kickoff)
+                .ok()?
+                .with_timezone(&chrono::Utc);
             let locked_at = kickoff - chrono::Duration::minutes(lock_minutes);
             let locked = chrono::Utc::now() >= locked_at;
             let missing = row.home_score.is_none() || row.away_score.is_none();
@@ -706,7 +761,9 @@ pub async fn reopen_prediction(
     .await
     .map_err(|e| crate::security::internal_error("reopen_prediction_existing", e))?;
     if existing.is_some() {
-        return Err(crate::security::public_error("Ja existe uma reabertura ativa para esse palpite."));
+        return Err(crate::security::public_error(
+            "Ja existe uma reabertura ativa para esse palpite.",
+        ));
     }
 
     let override_id = uuid::Uuid::new_v4().to_string();
@@ -796,7 +853,19 @@ pub async fn active_prediction_override(
     user_id: &str,
 ) -> Result<Option<PredictionReopenOverride>, ServerFnError> {
     let db = crate::db::pool();
-    let row = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String, Option<String>)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+        ),
+    >(
         "SELECT id, reason, reopened_by, expires_at, created_at, used_at, match_id, revoked_at
          FROM prediction_admin_overrides
          WHERE match_id = ?1 AND user_id = ?2
@@ -811,19 +880,21 @@ pub async fn active_prediction_override(
     .await
     .map_err(|e| crate::security::internal_error("active_prediction_override", e))?;
 
-    Ok(row.map(|(id, reason, reopened_by, expires_at, created_at, used_at, match_id, revoked_at)| {
-        PredictionReopenOverride {
-            id,
-            match_id,
-            user_id: user_id.to_string(),
-            reason,
-            reopened_by,
-            expires_at,
-            used_at,
-            created_at,
-            revoked_at,
-        }
-    }))
+    Ok(row.map(
+        |(id, reason, reopened_by, expires_at, created_at, used_at, match_id, revoked_at)| {
+            PredictionReopenOverride {
+                id,
+                match_id,
+                user_id: user_id.to_string(),
+                reason,
+                reopened_by,
+                expires_at,
+                used_at,
+                created_at,
+                revoked_at,
+            }
+        },
+    ))
 }
 
 /// Reaberturas ativas do usuario autenticado (usado pela tela de palpites para
@@ -838,7 +909,19 @@ pub async fn list_my_prediction_overrides(
     let session = require_user(&token).await?;
     let db = crate::db::pool();
 
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String, Option<String>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+        ),
+    >(
         "SELECT id, reason, reopened_by, expires_at, created_at, used_at, match_id, revoked_at
          FROM prediction_admin_overrides
          WHERE user_id = ?1
@@ -853,19 +936,21 @@ pub async fn list_my_prediction_overrides(
 
     Ok(rows
         .into_iter()
-        .map(|(id, reason, reopened_by, expires_at, created_at, used_at, match_id, revoked_at)| {
-            PredictionReopenOverride {
-                id,
-                match_id,
-                user_id: session.user_id.clone(),
-                reason,
-                reopened_by,
-                expires_at,
-                used_at,
-                created_at,
-                revoked_at,
-            }
-        })
+        .map(
+            |(id, reason, reopened_by, expires_at, created_at, used_at, match_id, revoked_at)| {
+                PredictionReopenOverride {
+                    id,
+                    match_id,
+                    user_id: session.user_id.clone(),
+                    reason,
+                    reopened_by,
+                    expires_at,
+                    used_at,
+                    created_at,
+                    revoked_at,
+                }
+            },
+        )
         .collect())
 }
 
@@ -891,7 +976,18 @@ pub async fn list_admin_users(token: String) -> Result<Vec<AdminUserRecord>, Ser
     crate::security::apply_security_headers();
     require_admin(&token).await?;
     let db = crate::db::pool();
-    let rows = sqlx::query_as::<_, (String, String, String, bool, Option<String>, Option<String>, i64)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            bool,
+            Option<String>,
+            Option<String>,
+            i64,
+        ),
+    >(
         "SELECT u.id, u.username, u.email, u.is_admin, u.blocked_at, u.blocked_reason,
                 COUNT(pm.pool_id) AS pool_count
          FROM users u
@@ -904,29 +1000,48 @@ pub async fn list_admin_users(token: String) -> Result<Vec<AdminUserRecord>, Ser
     .map_err(|e| crate::security::internal_error("list_admin_users", e))?;
     Ok(rows
         .into_iter()
-        .map(|(id, username, email, is_admin, blocked_at, blocked_reason, pool_count)| AdminUserRecord {
-            user: UserPublic {
-                id,
-                username,
-                email,
-                is_admin,
-                blocked_at,
-                blocked_reason,
+        .map(
+            |(id, username, email, is_admin, blocked_at, blocked_reason, pool_count)| {
+                AdminUserRecord {
+                    user: UserPublic {
+                        id,
+                        username,
+                        email,
+                        is_admin,
+                        blocked_at,
+                        blocked_reason,
+                    },
+                    pool_count,
+                }
             },
-            pool_count,
-        })
+        )
         .collect())
 }
 
 #[cfg(feature = "server")]
-pub async fn list_user_pools(token: String, user_id: String) -> Result<Vec<PoolSummary>, ServerFnError> {
+pub async fn list_user_pools(
+    token: String,
+    user_id: String,
+) -> Result<Vec<PoolSummary>, ServerFnError> {
     use crate::auth::require_admin;
 
     crate::security::apply_security_headers();
     crate::security::validate_uuid("Usuario", &user_id)?;
     require_admin(&token).await?;
     let db = crate::db::pool();
-    let rows = sqlx::query_as::<_, (String, String, String, i64, String, String, String, Option<String>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            i64,
+            String,
+            String,
+            String,
+            Option<String>,
+        ),
+    >(
         "SELECT p.id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id) AS member_count,
                 p.created_by, p.description, p.visible_rules, p.join_closed_at
@@ -942,16 +1057,27 @@ pub async fn list_user_pools(token: String, user_id: String) -> Result<Vec<PoolS
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, invite_code, member_count, created_by, description, visible_rules, join_closed_at)| PoolSummary {
-            id,
-            name,
-            invite_code,
-            member_count,
-            created_by,
-            description,
-            visible_rules,
-            join_closed_at,
-        })
+        .map(
+            |(
+                id,
+                name,
+                invite_code,
+                member_count,
+                created_by,
+                description,
+                visible_rules,
+                join_closed_at,
+            )| PoolSummary {
+                id,
+                name,
+                invite_code,
+                member_count,
+                created_by,
+                description,
+                visible_rules,
+                join_closed_at,
+            },
+        )
         .collect())
 }
 
@@ -1000,7 +1126,11 @@ pub async fn block_user(
 }
 
 #[cfg(feature = "server")]
-pub async fn unblock_user(token: String, user_id: String, csrf_token: String) -> Result<(), ServerFnError> {
+pub async fn unblock_user(
+    token: String,
+    user_id: String,
+    csrf_token: String,
+) -> Result<(), ServerFnError> {
     use crate::auth::require_recent_admin;
 
     crate::security::apply_security_headers();
@@ -1127,9 +1257,21 @@ pub async fn list_audit(
     Ok(rows
         .into_iter()
         .filter(|row| action.as_ref().is_none_or(|value| row.action == *value))
-        .filter(|row| actor_user_id.as_ref().is_none_or(|value| row.actor_user_id.as_deref() == Some(value.as_str())))
-        .filter(|row| target_type.as_ref().is_none_or(|value| row.target_type == *value))
-        .filter(|row| target_id.as_ref().is_none_or(|value| row.target_id.as_deref() == Some(value.as_str())))
+        .filter(|row| {
+            actor_user_id
+                .as_ref()
+                .is_none_or(|value| row.actor_user_id.as_deref() == Some(value.as_str()))
+        })
+        .filter(|row| {
+            target_type
+                .as_ref()
+                .is_none_or(|value| row.target_type == *value)
+        })
+        .filter(|row| {
+            target_id
+                .as_ref()
+                .is_none_or(|value| row.target_id.as_deref() == Some(value.as_str()))
+        })
         .map(|row| AuditLogEntry {
             id: row.id,
             actor_user_id: row.actor_user_id,
@@ -1165,18 +1307,16 @@ pub async fn admin_overview(token: String) -> Result<AdminOverview, ServerFnErro
     .fetch_one(db)
     .await
     .map_err(|e| crate::security::internal_error("admin_overview_live", e))?;
-    let finalized_matches: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM matches WHERE finished = 1 AND result_source = 'api'",
-    )
-    .fetch_one(db)
-    .await
-    .map_err(|e| crate::security::internal_error("admin_overview_finalized", e))?;
-    let manually_corrected_matches: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM matches WHERE result_source = 'manual'",
-    )
-    .fetch_one(db)
-    .await
-    .map_err(|e| crate::security::internal_error("admin_overview_manual", e))?;
+    let finalized_matches: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM matches WHERE finished = 1 AND result_source = 'api'")
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("admin_overview_finalized", e))?;
+    let manually_corrected_matches: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM matches WHERE result_source = 'manual'")
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("admin_overview_manual", e))?;
     let overdue_matches: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM matches
          WHERE datetime(kickoff) < datetime('now')
@@ -1200,12 +1340,11 @@ pub async fn admin_overview(token: String) -> Result<AdminOverview, ServerFnErro
         .fetch_one(db)
         .await
         .map_err(|e| crate::security::internal_error("admin_overview_users", e))?;
-    let blocked_user_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM users WHERE blocked_at IS NOT NULL",
-    )
-    .fetch_one(db)
-    .await
-    .map_err(|e| crate::security::internal_error("admin_overview_blocked", e))?;
+    let blocked_user_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM users WHERE blocked_at IS NOT NULL")
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("admin_overview_blocked", e))?;
     let users_without_predictions_soon: (i64,) = sqlx::query_as(
         "SELECT COUNT(DISTINCT pm.user_id)
          FROM pool_members pm
@@ -1231,14 +1370,22 @@ pub async fn admin_overview(token: String) -> Result<AdminOverview, ServerFnErro
 
     let activity_feed = feed_rows
         .into_iter()
-        .map(|(id, action, home_team, target_id, away_team, home_score, away_score, at)| {
-            let label = if let (Some(home_score), Some(away_score)) = (home_score, away_score) {
-                format!("{home_team} {home_score}x{away_score} {away_team} atualizado")
-            } else {
-                format!("{home_team} x {away_team} atualizado")
-            };
-            AdminActivityItem { id, action, label, at, target_id }
-        })
+        .map(
+            |(id, action, home_team, target_id, away_team, home_score, away_score, at)| {
+                let label = if let (Some(home_score), Some(away_score)) = (home_score, away_score) {
+                    format!("{home_team} {home_score}x{away_score} {away_team} atualizado")
+                } else {
+                    format!("{home_team} x {away_team} atualizado")
+                };
+                AdminActivityItem {
+                    id,
+                    action,
+                    label,
+                    at,
+                    target_id,
+                }
+            },
+        )
         .collect();
 
     Ok(AdminOverview {
@@ -1273,7 +1420,10 @@ pub async fn admin_recalculate_match(
 }
 
 #[cfg(feature = "server")]
-pub async fn admin_recalculate_all(token: String, csrf_token: String) -> Result<ScoringJob, ServerFnError> {
+pub async fn admin_recalculate_all(
+    token: String,
+    csrf_token: String,
+) -> Result<ScoringJob, ServerFnError> {
     use crate::auth::require_recent_admin;
     crate::security::apply_security_headers();
     let session = require_recent_admin(&token).await?;

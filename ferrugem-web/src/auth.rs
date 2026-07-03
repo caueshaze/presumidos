@@ -267,12 +267,13 @@ async fn load_user_public(
     db: &sqlx::SqlitePool,
     user_id: &str,
 ) -> Result<UserPublic, ServerFnError> {
-    let row: UserPublicRow =
-        sqlx::query_as("SELECT id, username, email, is_admin, blocked_at, blocked_reason FROM users WHERE id = ?1")
-            .bind(user_id)
-            .fetch_one(db)
-            .await
-            .map_err(|e| crate::security::internal_error("load_user_public", e))?;
+    let row: UserPublicRow = sqlx::query_as(
+        "SELECT id, username, email, is_admin, blocked_at, blocked_reason FROM users WHERE id = ?1",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| crate::security::internal_error("load_user_public", e))?;
 
     Ok(UserPublic {
         id: row.0,
@@ -721,13 +722,11 @@ pub async fn delete_account(token: String, csrf_token: String) -> Result<(), Ser
             crate::security::internal_error("delete_account_notification_preferences", e)
         })?;
 
-    sqlx::query(
-        "DELETE FROM prediction_reaction_views WHERE user_id = ?1",
-    )
-    .bind(&session.user_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| crate::security::internal_error("delete_account_reaction_views", e))?;
+    sqlx::query("DELETE FROM prediction_reaction_views WHERE user_id = ?1")
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_account_reaction_views", e))?;
 
     sqlx::query(
         "DELETE FROM prediction_reactions
@@ -816,13 +815,15 @@ pub async fn list_all_users(
     Ok(rows
         .into_iter()
         .map(
-            |(id, username, email, is_admin, blocked_at, blocked_reason)| crate::models::UserPublic {
-                id,
-                username,
-                email,
-                is_admin,
-                blocked_at,
-                blocked_reason,
+            |(id, username, email, is_admin, blocked_at, blocked_reason)| {
+                crate::models::UserPublic {
+                    id,
+                    username,
+                    email,
+                    is_admin,
+                    blocked_at,
+                    blocked_reason,
+                }
             },
         )
         .collect())
@@ -1450,7 +1451,8 @@ pub async fn login(username: String, password: String) -> Result<AuthResult, Ser
     .await
     .map_err(|e| crate::security::internal_error("login_lookup_user", e))?;
 
-    let Some((id, username, email, password_hash, is_admin, blocked_at, blocked_reason)) = row else {
+    let Some((id, username, email, password_hash, is_admin, blocked_at, blocked_reason)) = row
+    else {
         crate::security::log_event(
             "login_failed",
             serde_json::json!({

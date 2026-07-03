@@ -57,9 +57,7 @@ async fn knockout_released_flag() -> Result<bool, ServerFnError> {
 /// Verifica se o token pertence a um admin sem retornar erro para tokens
 /// inválidos (usado apenas para decidir visibilidade).
 #[cfg(feature = "server")]
-async fn token_is_admin(
-    token: &str,
-) -> bool {
+async fn token_is_admin(token: &str) -> bool {
     crate::auth::require_admin(token).await.is_ok()
 }
 
@@ -69,9 +67,7 @@ pub async fn is_knockout_released() -> Result<bool, ServerFnError> {
 }
 
 #[cfg(feature = "server")]
-pub async fn list_matches(
-    token: String,
-) -> Result<Vec<MatchRecord>, ServerFnError> {
+pub async fn list_matches(token: String) -> Result<Vec<MatchRecord>, ServerFnError> {
     use crate::db::pool;
 
     crate::security::apply_security_headers();
@@ -136,9 +132,7 @@ pub async fn list_matches(
 }
 
 #[cfg(feature = "server")]
-pub async fn get_my_predictions(
-    token: String,
-) -> Result<Vec<PredictionRecord>, ServerFnError> {
+pub async fn get_my_predictions(token: String) -> Result<Vec<PredictionRecord>, ServerFnError> {
     use crate::auth::require_user;
     use crate::db::pool;
 
@@ -200,7 +194,11 @@ fn sanitize_knockout_input(
     let went_to_penalties = home_score == away_score;
 
     if !went_to_penalties {
-        let qualifier = if home_score > away_score { "home" } else { "away" };
+        let qualifier = if home_score > away_score {
+            "home"
+        } else {
+            "away"
+        };
         return Ok(KnockoutEntry {
             qualifier: Some(qualifier.to_string()),
             went_to_penalties: false,
@@ -231,7 +229,11 @@ fn sanitize_knockout_input(
         }
     };
 
-    let qualifier = if penalty_home > penalty_away { "home" } else { "away" };
+    let qualifier = if penalty_home > penalty_away {
+        "home"
+    } else {
+        "away"
+    };
 
     Ok(KnockoutEntry {
         qualifier: Some(qualifier.to_string()),
@@ -259,7 +261,9 @@ pub async fn submit_prediction(
     crate::security::apply_security_headers();
     crate::security::validate_match_id(&match_id)?;
     if home_score < 0 || away_score < 0 {
-        return Err(crate::security::public_error("Os placares nao podem ser negativos."));
+        return Err(crate::security::public_error(
+            "Os placares nao podem ser negativos.",
+        ));
     }
 
     let session = require_user(&token).await?;
@@ -357,7 +361,9 @@ pub async fn set_match_result(
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
     if home_score < 0 || away_score < 0 {
-        return Err(crate::security::public_error("Os placares nao podem ser negativos."));
+        return Err(crate::security::public_error(
+            "Os placares nao podem ser negativos.",
+        ));
     }
 
     let db = pool();
@@ -725,13 +731,12 @@ pub async fn update_match_schedule(
     let (phase, kickoff) = normalize_knockout_match_input(phase, kickoff)?;
 
     let db = pool();
-    let before: Option<(String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT home_team, away_team, phase, kickoff FROM matches WHERE id = ?1",
-    )
-    .bind(&match_id)
-    .fetch_optional(db)
-    .await
-    .map_err(|e| crate::security::internal_error("update_match_schedule_lookup", e))?;
+    let before: Option<(String, String, Option<String>, String)> =
+        sqlx::query_as("SELECT home_team, away_team, phase, kickoff FROM matches WHERE id = ?1")
+            .bind(&match_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("update_match_schedule_lookup", e))?;
 
     let Some((old_home, old_away, old_phase, old_kickoff)) = before else {
         return Err(crate::security::public_error("Partida nao encontrada."));
@@ -954,28 +959,40 @@ mod tests {
     #[test]
     fn draw_rejects_tied_penalties() {
         let err = sanitize_knockout_input(true, 1, 1, entry(Some(3), Some(3))).unwrap_err();
-        assert_eq!(err.message(), "O placar dos pênaltis não pode terminar empatado.");
+        assert_eq!(
+            err.message(),
+            "O placar dos pênaltis não pode terminar empatado."
+        );
     }
 
     #[test]
     fn draw_rejects_negative_penalties() {
         let err = sanitize_knockout_input(true, 0, 0, entry(Some(-1), Some(2))).unwrap_err();
-        assert_eq!(err.message(), "O placar dos pênaltis não pode ser negativo.");
+        assert_eq!(
+            err.message(),
+            "O placar dos pênaltis não pode ser negativo."
+        );
     }
 
     #[test]
     fn draw_requires_both_penalty_sides() {
         let expected = "Empate no tempo normal: informe o placar dos pênaltis dos dois lados.";
         assert_eq!(
-            sanitize_knockout_input(true, 1, 1, entry(None, None)).unwrap_err().message(),
+            sanitize_knockout_input(true, 1, 1, entry(None, None))
+                .unwrap_err()
+                .message(),
             expected
         );
         assert_eq!(
-            sanitize_knockout_input(true, 1, 1, entry(Some(4), None)).unwrap_err().message(),
+            sanitize_knockout_input(true, 1, 1, entry(Some(4), None))
+                .unwrap_err()
+                .message(),
             expected
         );
         assert_eq!(
-            sanitize_knockout_input(true, 1, 1, entry(None, Some(2))).unwrap_err().message(),
+            sanitize_knockout_input(true, 1, 1, entry(None, Some(2)))
+                .unwrap_err()
+                .message(),
             expected
         );
     }

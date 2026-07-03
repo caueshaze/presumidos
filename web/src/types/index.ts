@@ -144,6 +144,21 @@ export interface NotificationStatus {
   activeSubscriptionCount: number;
 }
 
+export interface AdminPushRequest {
+  title: string;
+  body: string;
+  url?: string;
+}
+
+export interface AdminPushResult {
+  targetUserId: string;
+  activeSubscriptionCount: number;
+  attemptedCount: number;
+  successfulCount: number;
+  failedCount: number;
+  deactivatedCount: number;
+}
+
 export interface AdminActivityItem {
   id: string;
   action: string;

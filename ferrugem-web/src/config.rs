@@ -191,7 +191,9 @@ fn validate_rate_limit_config(
         RateLimitBackendKind::Redis => {
             let redis_url = redis_url
                 .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| panic!("REDIS_URL precisa ser configurado quando RATE_LIMIT_BACKEND=redis"));
+                .unwrap_or_else(|| {
+                    panic!("REDIS_URL precisa ser configurado quando RATE_LIMIT_BACKEND=redis")
+                });
             assert!(
                 redis_url.starts_with("redis://") || redis_url.starts_with("rediss://"),
                 "REDIS_URL precisa usar esquema redis:// ou rediss://"
@@ -354,10 +356,7 @@ pub fn settings() -> &'static AppConfig {
             "ARGON2_MEMORY_KIB deve ser >= 19456"
         );
         assert!(argon2_time_cost >= 2, "ARGON2_TIME_COST deve ser >= 2");
-        assert!(
-            argon2_parallelism >= 1,
-            "ARGON2_PARALLELISM deve ser >= 1"
-        );
+        assert!(argon2_parallelism >= 1, "ARGON2_PARALLELISM deve ser >= 1");
 
         if app_env == "production" {
             assert!(

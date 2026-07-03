@@ -44,6 +44,26 @@ struct SubscriptionRow {
 }
 
 #[cfg(feature = "server")]
+#[derive(Debug, Default, Clone, Copy)]
+struct PushDeliverySummary {
+    attempted_count: i64,
+    successful_count: i64,
+    failed_count: i64,
+    deactivated_count: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminPushResult {
+    pub target_user_id: String,
+    pub active_subscription_count: i64,
+    pub attempted_count: i64,
+    pub successful_count: i64,
+    pub failed_count: i64,
+    pub deactivated_count: i64,
+}
+
+#[cfg(feature = "server")]
 #[derive(sqlx::FromRow, Clone)]
 struct MatchCandidateRow {
     id: String,
@@ -449,6 +469,23 @@ fn reminder_target_url(match_id: &str) -> String {
 }
 
 #[cfg(feature = "server")]
+fn normalize_admin_push_url(url: Option<String>) -> Result<String, ServerFnError> {
+    let Some(value) = url else {
+        return Ok("/".to_string());
+    };
+    let value = crate::security::normalize_optional_text(value, 256)?;
+    if value.is_empty() {
+        return Ok("/".to_string());
+    }
+    if !value.starts_with('/') || value.starts_with("//") {
+        return Err(crate::security::public_error(
+            "Link do push deve ser um caminho interno iniciado por /.",
+        ));
+    }
+    Ok(value)
+}
+
+#[cfg(feature = "server")]
 fn format_payload(matches: &[PendingReminder]) -> PushReminderPayload {
     let primary = &matches[0];
     let tag = if matches.len() == 1 {
@@ -585,13 +622,31 @@ async fn send_payload_to_user_subscriptions(
     subscriptions: &[SubscriptionRow],
     payload: &str,
 ) -> Result<bool, ServerFnError> {
+    Ok(
+        send_payload_to_user_subscriptions_with_summary(db, subscriptions, payload)
+            .await?
+            .successful_count
+            > 0,
+    )
+}
+
+#[cfg(feature = "server")]
+async fn send_payload_to_user_subscriptions_with_summary(
+    db: &sqlx::SqlitePool,
+    subscriptions: &[SubscriptionRow],
+    payload: &str,
+) -> Result<PushDeliverySummary, ServerFnError> {
     let client = web_push_client()?;
-    let mut any_success = false;
+    let mut summary = PushDeliverySummary {
+        attempted_count: subscriptions.len() as i64,
+        ..PushDeliverySummary::default()
+    };
 
     for subscription in subscriptions {
         let message = match build_message_for_subscription(subscription, payload) {
             Ok(message) => message,
             Err(error) => {
+                summary.failed_count += 1;
                 crate::security::log_event(
                     "web_push_message_build_failed",
                     serde_json::json!({
@@ -606,11 +661,15 @@ async fn send_payload_to_user_subscriptions(
 
         match client.send(message).await {
             Ok(()) => {
-                any_success = true;
+                summary.successful_count += 1;
                 mark_subscription_sent(db, &subscription.endpoint).await?;
             }
             Err(error) => {
                 let deactivate = is_terminal_push_error(&error);
+                summary.failed_count += 1;
+                if deactivate {
+                    summary.deactivated_count += 1;
+                }
                 mark_subscription_failure(db, &subscription.endpoint, deactivate, &error).await?;
                 crate::security::log_event(
                     "web_push_send_failed",
@@ -626,7 +685,100 @@ async fn send_payload_to_user_subscriptions(
         }
     }
 
-    Ok(any_success)
+    Ok(summary)
+}
+
+#[cfg(feature = "server")]
+pub async fn send_admin_push_to_user(
+    token: String,
+    target_user_id: String,
+    title: String,
+    body: String,
+    url: Option<String>,
+    csrf_token: String,
+) -> Result<AdminPushResult, ServerFnError> {
+    use crate::auth::require_recent_admin;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    crate::security::validate_uuid("Usuario", &target_user_id)?;
+    let title = crate::security::normalize_required_text("Titulo", title, 1, 80)?;
+    let body = crate::security::normalize_required_text("Mensagem", body, 1, 240)?;
+    let url = normalize_admin_push_url(url)?;
+    let headers = crate::security::current_headers();
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+    let db = pool();
+
+    let target_exists: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE id = ?1")
+        .bind(&target_user_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| crate::security::internal_error("admin_push_user_lookup", e))?;
+    if target_exists.is_none() {
+        return Err(crate::security::public_error("Usuario nao encontrado."));
+    }
+
+    let subscriptions: Vec<SubscriptionRow> = sqlx::query_as(
+        "SELECT ps.user_id, ps.endpoint, ps.p256dh, ps.auth, ps.user_agent
+         FROM push_subscriptions ps
+         INNER JOIN notification_preferences np ON np.user_id = ps.user_id
+         WHERE ps.user_id = ?1
+           AND ps.active = 1
+           AND np.enabled = 1",
+    )
+    .bind(&target_user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("admin_push_load_subscriptions", e))?;
+
+    let tag = format!("admin-push-{}", uuid::Uuid::new_v4());
+    let payload = serde_json::json!({
+        "title": title,
+        "body": body,
+        "url": url,
+        "tag": tag,
+    });
+    let payload = serde_json::to_string(&payload)
+        .map_err(|e| crate::security::internal_error("admin_push_payload", e))?;
+
+    let delivery = if subscriptions.is_empty() {
+        PushDeliverySummary::default()
+    } else {
+        send_payload_to_user_subscriptions_with_summary(db, &subscriptions, &payload).await?
+    };
+
+    let result = AdminPushResult {
+        target_user_id: target_user_id.clone(),
+        active_subscription_count: subscriptions.len() as i64,
+        attempted_count: delivery.attempted_count,
+        successful_count: delivery.successful_count,
+        failed_count: delivery.failed_count,
+        deactivated_count: delivery.deactivated_count,
+    };
+
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "admin_push_sent",
+        "user",
+        Some(&target_user_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({
+            "target_user_id": target_user_id,
+            "title_len": title.len(),
+            "body_len": body.len(),
+            "url": url,
+            "active_subscription_count": result.active_subscription_count,
+            "attempted_count": result.attempted_count,
+            "successful_count": result.successful_count,
+            "failed_count": result.failed_count,
+            "deactivated_count": result.deactivated_count,
+        }),
+    )
+    .await?;
+
+    Ok(result)
 }
 
 #[cfg(feature = "server")]
@@ -929,7 +1081,7 @@ pub fn spawn_reminder_worker() {
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
-    use super::{format_payload, validate_lead_time, PendingReminder};
+    use super::{format_payload, normalize_admin_push_url, validate_lead_time, PendingReminder};
     use chrono::{Duration, Utc};
 
     #[test]
@@ -938,6 +1090,17 @@ mod tests {
         assert!(validate_lead_time(20).is_ok());
         assert!(validate_lead_time(30).is_ok());
         assert!(validate_lead_time(25).is_err());
+    }
+
+    #[test]
+    fn admin_push_url_must_be_internal_path() {
+        assert_eq!(normalize_admin_push_url(None).unwrap(), "/");
+        assert_eq!(
+            normalize_admin_push_url(Some(" /predictions ".to_string())).unwrap(),
+            "/predictions"
+        );
+        assert!(normalize_admin_push_url(Some("https://example.com".to_string())).is_err());
+        assert!(normalize_admin_push_url(Some("//example.com".to_string())).is_err());
     }
 
     #[test]

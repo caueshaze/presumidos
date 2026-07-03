@@ -37,8 +37,8 @@ pub fn base_points(guess_home: i64, guess_away: i64, real_home: i64, real_away: 
     }
 
     // O bônus de +1 só conta se o time acertado fez pelo menos 1 gol.
-    let goal_bonus = (guess_home == real_home && real_home > 0)
-        || (guess_away == real_away && real_away > 0);
+    let goal_bonus =
+        (guess_home == real_home && real_home > 0) || (guess_away == real_away && real_away > 0);
 
     if goal_bonus {
         4
@@ -70,7 +70,8 @@ pub fn knockout_bonus(official: &Outcome, guess: &Outcome) -> i64 {
         return 0;
     };
 
-    let exact_base = guess.home_score == official.home_score && guess.away_score == official.away_score;
+    let exact_base =
+        guess.home_score == official.home_score && guess.away_score == official.away_score;
     let correct_winner = (gh > ga) == (oh > oa);
     let exact_penalties = gh == oh && ga == oa;
 
@@ -157,13 +158,15 @@ struct LiveOverlayRow {
 
 #[cfg(feature = "server")]
 fn breakdown_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> BreakdownPoints {
-    let exact_score_points = if guess.home_score == official.home_score && guess.away_score == official.away_score {
-        7
-    } else {
-        0
-    };
+    let exact_score_points =
+        if guess.home_score == official.home_score && guess.away_score == official.away_score {
+            7
+        } else {
+            0
+        };
 
-    let correct_outcome = (guess.home_score > guess.away_score && official.home_score > official.away_score)
+    let correct_outcome = (guess.home_score > guess.away_score
+        && official.home_score > official.away_score)
         || (guess.home_score < guess.away_score && official.home_score < official.away_score)
         || (guess.home_score == guess.away_score && official.home_score == official.away_score);
 
@@ -215,7 +218,8 @@ fn build_eligibility(row: &BreakdownRow) -> (bool, String) {
     let kickoff = chrono::DateTime::parse_from_rfc3339(&row.kickoff).ok();
     match (joined_at, kickoff) {
         (Some(joined), Some(kickoff)) => {
-            let joined = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(joined, chrono::Utc);
+            let joined =
+                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(joined, chrono::Utc);
             let kickoff = kickoff.with_timezone(&chrono::Utc);
             if kickoff >= joined {
                 (true, "eligible".to_string())
@@ -342,40 +346,41 @@ async fn recompute_breakdowns(
     let mut inserted = 0_i64;
     for row in rows {
         let (eligible, eligibility_reason) = build_eligibility(&row);
-        let (points, official_source) = if let (Some(home), Some(away)) = (row.official_home_score, row.official_away_score) {
-            let official = Outcome {
-                home_score: home,
-                away_score: away,
-                qualifier: row.official_qualifier.clone(),
-                went_to_penalties: row.official_went_to_penalties,
-                penalty_home: row.official_penalty_home_score,
-                penalty_away: row.official_penalty_away_score,
+        let (points, official_source) =
+            if let (Some(home), Some(away)) = (row.official_home_score, row.official_away_score) {
+                let official = Outcome {
+                    home_score: home,
+                    away_score: away,
+                    qualifier: row.official_qualifier.clone(),
+                    went_to_penalties: row.official_went_to_penalties,
+                    penalty_home: row.official_penalty_home_score,
+                    penalty_away: row.official_penalty_away_score,
+                };
+                let guess = Outcome {
+                    home_score: row.prediction_home_score,
+                    away_score: row.prediction_away_score,
+                    qualifier: row.prediction_qualifier.clone(),
+                    went_to_penalties: row.prediction_went_to_penalties,
+                    penalty_home: row.prediction_penalty_home_score,
+                    penalty_away: row.prediction_penalty_away_score,
+                };
+                (
+                    breakdown_points(is_knockout(row.phase.as_deref()), &official, &guess),
+                    row.result_source.clone(),
+                )
+            } else {
+                (
+                    BreakdownPoints {
+                        exact_score_points: 0,
+                        outcome_points: 0,
+                        goal_bonus_points: 0,
+                        qualifier_points: 0,
+                        penalties_points: 0,
+                        total_points: 0,
+                    },
+                    row.result_source.clone(),
+                )
             };
-            let guess = Outcome {
-                home_score: row.prediction_home_score,
-                away_score: row.prediction_away_score,
-                qualifier: row.prediction_qualifier.clone(),
-                went_to_penalties: row.prediction_went_to_penalties,
-                penalty_home: row.prediction_penalty_home_score,
-                penalty_away: row.prediction_penalty_away_score,
-            };
-            (
-                breakdown_points(is_knockout(row.phase.as_deref()), &official, &guess),
-                row.result_source.clone(),
-            )
-        } else {
-            (
-                BreakdownPoints {
-                    exact_score_points: 0,
-                    outcome_points: 0,
-                    goal_bonus_points: 0,
-                    qualifier_points: 0,
-                    penalties_points: 0,
-                    total_points: 0,
-                },
-                row.result_source.clone(),
-            )
-        };
 
         sqlx::query(
             "INSERT INTO prediction_score_breakdowns
@@ -448,7 +453,9 @@ async fn ensure_breakdowns_seeded(db: &sqlx::SqlitePool) -> Result<(), ServerFnE
         let has_predictions: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM predictions")
             .fetch_one(db)
             .await
-            .map_err(|e| crate::security::internal_error("ensure_breakdowns_seeded_predictions", e))?;
+            .map_err(|e| {
+                crate::security::internal_error("ensure_breakdowns_seeded_predictions", e)
+            })?;
         if has_predictions.0 > 0 {
             let _ = recompute_breakdowns(db, "", &[], "all", None, None).await?;
         }
@@ -474,7 +481,9 @@ pub async fn recalculate_match_breakdowns(
 }
 
 #[cfg(feature = "server")]
-pub async fn recalculate_all_breakdowns(triggered_by: Option<&str>) -> Result<ScoringJob, ServerFnError> {
+pub async fn recalculate_all_breakdowns(
+    triggered_by: Option<&str>,
+) -> Result<ScoringJob, ServerFnError> {
     let db = crate::db::pool();
     sqlx::query("DELETE FROM prediction_score_breakdowns")
         .execute(db)
@@ -555,16 +564,17 @@ pub async fn list_pool_breakdowns(
     let session = require_user("").await?;
     let db = crate::db::pool();
 
-    let membership: Option<(String,)> = sqlx::query_as(
-        "SELECT pool_id FROM pool_members WHERE pool_id = ?1 AND user_id = ?2",
-    )
-    .bind(pool_id)
-    .bind(&session.user_id)
-    .fetch_optional(db)
-    .await
-    .map_err(|e| crate::security::internal_error("list_pool_breakdowns_membership", e))?;
+    let membership: Option<(String,)> =
+        sqlx::query_as("SELECT pool_id FROM pool_members WHERE pool_id = ?1 AND user_id = ?2")
+            .bind(pool_id)
+            .bind(&session.user_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("list_pool_breakdowns_membership", e))?;
     if membership.is_none() {
-        return Err(crate::security::public_error("Voce nao e membro deste bolao."));
+        return Err(crate::security::public_error(
+            "Voce nao e membro deste bolao.",
+        ));
     }
 
     ensure_breakdowns_seeded(db).await?;
@@ -664,17 +674,18 @@ pub async fn get_leaderboard(
     let session = require_user(&token).await?;
     let db = pool();
 
-    let membership: Option<(String,)> = sqlx::query_as(
-        "SELECT pool_id FROM pool_members WHERE pool_id = ?1 AND user_id = ?2",
-    )
-    .bind(&pool_id)
-    .bind(&session.user_id)
-    .fetch_optional(db)
-    .await
-    .map_err(|e| crate::security::internal_error("get_leaderboard_membership", e))?;
+    let membership: Option<(String,)> =
+        sqlx::query_as("SELECT pool_id FROM pool_members WHERE pool_id = ?1 AND user_id = ?2")
+            .bind(&pool_id)
+            .bind(&session.user_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("get_leaderboard_membership", e))?;
 
     if membership.is_none() {
-        return Err(crate::security::public_error("Voce nao e membro deste bolao."));
+        return Err(crate::security::public_error(
+            "Voce nao e membro deste bolao.",
+        ));
     }
 
     // Todos os membros, para ranquear inclusive quem ainda não pontuou.
@@ -777,7 +788,11 @@ pub async fn get_leaderboard(
             penalty_home: row.p_pen_home,
             penalty_away: row.p_pen_away,
         };
-        let overlay = breakdown_points(crate::models::is_knockout(row.phase.as_deref()), &official, &guess);
+        let overlay = breakdown_points(
+            crate::models::is_knockout(row.phase.as_deref()),
+            &official,
+            &guess,
+        );
         let t = tallies.entry(row.user_id).or_default();
         t.points += overlay.total_points;
         if overlay.exact_score_points > 0 {
@@ -786,7 +801,8 @@ pub async fn get_leaderboard(
         if overlay.exact_score_points > 0 || overlay.outcome_points > 0 {
             t.correct_results += 1;
         }
-        t.bonus_points += overlay.goal_bonus_points + overlay.qualifier_points + overlay.penalties_points;
+        t.bonus_points +=
+            overlay.goal_bonus_points + overlay.qualifier_points + overlay.penalties_points;
     }
 
     // Ajustes manuais de pontos lançados pelo organizador (ou admin) somam ao total.
@@ -872,50 +888,35 @@ mod tests {
     // Mais pontos sempre vem primeiro, independente dos critérios de desempate.
     #[test]
     fn ranks_by_points_first() {
-        let mut entries = vec![
-            entry("ana", 10, 0, 0, 0),
-            entry("bia", 20, 0, 0, 0),
-        ];
+        let mut entries = vec![entry("ana", 10, 0, 0, 0), entry("bia", 20, 0, 0, 0)];
         assert_eq!(order(&mut entries), vec!["bia", "ana"]);
     }
 
     // Empate em pontos → quem tem mais placares exatos sobe.
     #[test]
     fn breaks_tie_by_exact_scores() {
-        let mut entries = vec![
-            entry("ana", 30, 2, 5, 1),
-            entry("bia", 30, 3, 4, 0),
-        ];
+        let mut entries = vec![entry("ana", 30, 2, 5, 1), entry("bia", 30, 3, 4, 0)];
         assert_eq!(order(&mut entries), vec!["bia", "ana"]);
     }
 
     // Empate em pontos e placares exatos → mais acertos de resultado.
     #[test]
     fn breaks_tie_by_correct_results() {
-        let mut entries = vec![
-            entry("ana", 30, 2, 4, 5),
-            entry("bia", 30, 2, 6, 0),
-        ];
+        let mut entries = vec![entry("ana", 30, 2, 4, 5), entry("bia", 30, 2, 6, 0)];
         assert_eq!(order(&mut entries), vec!["bia", "ana"]);
     }
 
     // Empate em pontos, exatos e resultados → mais bônus de precisão.
     #[test]
     fn breaks_tie_by_bonus_points() {
-        let mut entries = vec![
-            entry("ana", 30, 2, 5, 1),
-            entry("bia", 30, 2, 5, 4),
-        ];
+        let mut entries = vec![entry("ana", 30, 2, 5, 1), entry("bia", 30, 2, 5, 4)];
         assert_eq!(order(&mut entries), vec!["bia", "ana"]);
     }
 
     // Empate total → ordem alfabética determinística.
     #[test]
     fn breaks_full_tie_by_username() {
-        let mut entries = vec![
-            entry("bia", 30, 2, 5, 1),
-            entry("ana", 30, 2, 5, 1),
-        ];
+        let mut entries = vec![entry("bia", 30, 2, 5, 1), entry("ana", 30, 2, 5, 1)];
         assert_eq!(order(&mut entries), vec!["ana", "bia"]);
     }
 
@@ -981,7 +982,8 @@ mod tests {
         assert_eq!(match_points(true, &real, &ko(2, 1, "home", false, None)), 4); // vencedor + gols mandante
         assert_eq!(match_points(true, &real, &ko(1, 0, "home", false, None)), 3); // só vencedor
         assert_eq!(match_points(true, &real, &ko(1, 1, "home", false, None)), 0); // palpitou empate, deu vitória
-        assert_eq!(match_points(true, &real, &ko(0, 1, "away", false, None)), 0); // errou o vencedor
+        assert_eq!(match_points(true, &real, &ko(0, 1, "away", false, None)), 0);
+        // errou o vencedor
     }
 
     // Mata-mata — empate decidido nos pênaltis: Brasil 1x1 Argentina,
@@ -990,16 +992,34 @@ mod tests {
     fn knockout_penalties() {
         let real = ko(1, 1, "home", true, Some((5, 4)));
         // Placar exato 1x1 (7) + pênaltis exatos 5x4 (+3) = 10.
-        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((5, 4)))), 10);
+        assert_eq!(
+            match_points(true, &real, &ko(1, 1, "home", true, Some((5, 4)))),
+            10
+        );
         // Placar exato 1x1 (7) + vencedor dos pênaltis (+2) = 9.
-        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((4, 3)))), 9);
+        assert_eq!(
+            match_points(true, &real, &ko(1, 1, "home", true, Some((4, 3)))),
+            9
+        );
         // Placar exato 1x1 (7) + errou o vencedor dos pênaltis (0) = 7.
-        assert_eq!(match_points(true, &real, &ko(1, 1, "home", true, Some((3, 5)))), 7);
+        assert_eq!(
+            match_points(true, &real, &ko(1, 1, "home", true, Some((3, 5)))),
+            7
+        );
         // Empate não exato (3) + vencedor certo dos pênaltis (+1) = 4.
-        assert_eq!(match_points(true, &real, &ko(2, 2, "home", true, Some((5, 4)))), 4);
-        assert_eq!(match_points(true, &real, &ko(2, 2, "home", true, Some((4, 3)))), 4);
+        assert_eq!(
+            match_points(true, &real, &ko(2, 2, "home", true, Some((5, 4)))),
+            4
+        );
+        assert_eq!(
+            match_points(true, &real, &ko(2, 2, "home", true, Some((4, 3)))),
+            4
+        );
         // Empate não exato (3) + errou o vencedor (0) = 3.
-        assert_eq!(match_points(true, &real, &ko(2, 2, "away", true, Some((3, 5)))), 3);
+        assert_eq!(
+            match_points(true, &real, &ko(2, 2, "away", true, Some((3, 5)))),
+            3
+        );
         // Palpitou vitória: errou o resultado (era empate) = 0.
         assert_eq!(match_points(true, &real, &ko(2, 1, "home", false, None)), 0);
         assert_eq!(match_points(true, &real, &ko(2, 1, "away", false, None)), 0);

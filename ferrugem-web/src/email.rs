@@ -26,9 +26,7 @@ fn from_address(from: &str) -> &str {
 async fn send(to: &str, subject: &str, html: String) -> Result<(), ServerFnError> {
     let settings = crate::config::settings();
     if settings.disable_auth_emails {
-        eprintln!(
-            "[dev-auth-email] to={to} subject={subject} (emails desativados neste ambiente)"
-        );
+        eprintln!("[dev-auth-email] to={to} subject={subject} (emails desativados neste ambiente)");
         return Ok(());
     }
 

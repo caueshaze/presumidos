@@ -34,7 +34,9 @@ tokio::task_local! {
 
 /// Headers da requisição atual (vazio fora de um escopo de requisição).
 pub fn request_headers() -> HeaderMap {
-    REQUEST.try_with(|ctx| ctx.headers.clone()).unwrap_or_default()
+    REQUEST
+        .try_with(|ctx| ctx.headers.clone())
+        .unwrap_or_default()
 }
 
 /// IP do peer TCP (antes de qualquer resolução de proxy confiável).

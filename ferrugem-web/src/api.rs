@@ -293,6 +293,14 @@ struct BlockUserBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AdminPushBody {
+    title: String,
+    body: String,
+    url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PoolIdQuery {
     pool_id: String,
 }
@@ -766,10 +774,7 @@ async fn check_fixture(
     Ok(Json(checked))
 }
 
-async fn delete_match(
-    Path(match_id): Path<String>,
-    headers: HeaderMap,
-) -> ApiResult<StatusCode> {
+async fn delete_match(Path(match_id): Path<String>, headers: HeaderMap) -> ApiResult<StatusCode> {
     crate::matches::delete_match(String::new(), match_id, csrf_header(&headers)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -814,7 +819,9 @@ async fn admin_sync_backfill(headers: HeaderMap) -> ApiResult<impl IntoResponse>
     ))
 }
 
-async fn admin_predictions(Query(query): Query<AdminPredictionsQuery>) -> ApiResult<impl IntoResponse> {
+async fn admin_predictions(
+    Query(query): Query<AdminPredictionsQuery>,
+) -> ApiResult<impl IntoResponse> {
     Ok(Json(
         crate::admin::list_admin_predictions(
             String::new(),
@@ -917,6 +924,24 @@ async fn admin_trigger_user_password_reset(
     crate::admin::trigger_user_password_reset(String::new(), user_id, csrf_header(&headers))
         .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_send_push_to_user(
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<AdminPushBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::push::send_admin_push_to_user(
+            String::new(),
+            user_id,
+            body.title,
+            body.body,
+            body.url,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
 }
 
 async fn admin_audit(Query(query): Query<AdminAuditQuery>) -> ApiResult<impl IntoResponse> {
@@ -1041,9 +1066,18 @@ pub fn router() -> Router {
             "/admin/predictions/reopen/revoke",
             post(admin_prediction_reopen_revoke),
         )
-        .route("/admin/scoring/recalculate-match", post(admin_recalculate_match))
-        .route("/admin/scoring/recalculate-all", post(admin_recalculate_all))
-        .route("/admin/scoring/users/{id}/breakdown", get(admin_user_breakdown))
+        .route(
+            "/admin/scoring/recalculate-match",
+            post(admin_recalculate_match),
+        )
+        .route(
+            "/admin/scoring/recalculate-all",
+            post(admin_recalculate_all),
+        )
+        .route(
+            "/admin/scoring/users/{id}/breakdown",
+            get(admin_user_breakdown),
+        )
         .route("/admin/pools", get(admin_list_pools))
         .route("/admin/users", get(admin_list_users))
         .route("/admin/users/{id}/pools", get(admin_user_pools))
@@ -1057,6 +1091,7 @@ pub fn router() -> Router {
             "/admin/users/{id}/password-reset",
             post(admin_trigger_user_password_reset),
         )
+        .route("/admin/users/{id}/push", post(admin_send_push_to_user))
         .route(
             "/admin/pools/{pool_id}/members",
             get(admin_list_pool_members).post(admin_add_pool_member),
@@ -1066,7 +1101,10 @@ pub fn router() -> Router {
             post(admin_remove_pool_member),
         )
         .route("/admin/audit", get(admin_audit))
-        .route("/admin/settings", get(admin_get_settings).post(admin_save_settings))
+        .route(
+            "/admin/settings",
+            get(admin_get_settings).post(admin_save_settings),
+        )
         .route("/leaderboard", get(leaderboard))
         .fallback(api_not_found)
 }

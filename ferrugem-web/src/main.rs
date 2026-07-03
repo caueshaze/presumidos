@@ -3,8 +3,8 @@
 //! A lógica de negócio (auth, pools, matches, scoring) é exposta em [crate::api] sob `/api`.
 //! Qualquer outra rota serve o build da SPA (`index.html` como fallback de client-side routing).
 
-mod api;
 mod admin;
+mod api;
 mod auth;
 mod context;
 mod error;

@@ -4,6 +4,8 @@ import type {
   AdminMatchRecord,
   AdminOverview,
   AdminPredictionRow,
+  AdminPushRequest,
+  AdminPushResult,
   AdminSettings,
   AdminUserRecord,
   AuditLogEntry,
@@ -759,6 +761,18 @@ export function useInvalidateUserSessions() {
 export function useTriggerUserPasswordReset() {
   return useMutation({
     mutationFn: (userId: string) => api.post<void>(`/admin/users/${userId}/password-reset`),
+  });
+}
+
+export function useAdminSendPushToUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { userId: string; payload: AdminPushRequest }) =>
+      api.post<AdminPushResult>(`/admin/users/${vars.userId}/push`, vars.payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-audit"] });
+      qc.invalidateQueries({ queryKey: ["admin-users"] });
+    },
   });
 }
 

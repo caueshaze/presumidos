@@ -1052,10 +1052,20 @@ async fn load_active_subscriptions_includes_admin_accounts() {
     let suffix = uuid::Uuid::new_v4();
     let admin_email = format!("admin-push-{suffix}@teste.com");
     let user_email = format!("user-push-{suffix}@teste.com");
-    let admin_id =
-        seed_user(&format!("admin-push-{suffix}"), &admin_email, "senha-correta-123", true).await;
-    let user_id =
-        seed_user(&format!("user-push-{suffix}"), &user_email, "senha-correta-123", false).await;
+    let admin_id = seed_user(
+        &format!("admin-push-{suffix}"),
+        &admin_email,
+        "senha-correta-123",
+        true,
+    )
+    .await;
+    let user_id = seed_user(
+        &format!("user-push-{suffix}"),
+        &user_email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     for (user_id, endpoint) in [
         (&admin_id, format!("https://push.example/admin-{suffix}")),
