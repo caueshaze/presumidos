@@ -25,6 +25,7 @@ import {
   useAdminPoolMembers,
   useAdminPools,
   useAdminPredictions,
+  useAdminSendPushBroadcast,
   useAdminSendPushToUser,
   useAdminSettings,
   useAdminUsers,
@@ -424,6 +425,7 @@ export function AdminPage() {
   const invalidateSessions = useInvalidateUserSessions();
   const triggerPasswordReset = useTriggerUserPasswordReset();
   const sendPushToUser = useAdminSendPushToUser();
+  const sendPushBroadcast = useAdminSendPushBroadcast();
   const addPoolMember = useAddPoolMember();
   const removePoolMember = useRemovePoolMember();
   const saveSettings = useSaveAdminSettings();
@@ -609,8 +611,9 @@ export function AdminPage() {
 
   if (!loading && !isAdmin) return <Navigate to="/" replace />;
 
-  const handleSendPushToSelectedUser = async () => {
-    if (!selectedUser) return;
+  const adminPushPending = sendPushToUser.isPending || sendPushBroadcast.isPending;
+
+  const buildAdminPushPayload = () => {
     const title = pushTitle.trim();
     const body = pushBody.trim();
     const url = pushUrl.trim() || "/";
@@ -618,18 +621,26 @@ export function AdminPage() {
 
     if (!title || !body) {
       setError("Preencha titulo e mensagem do push.");
-      return;
+      return null;
     }
     if (!url.startsWith("/") || url.startsWith("//")) {
       setError("O link do push deve ser um caminho interno, por exemplo /predictions.");
-      return;
+      return null;
     }
+
+    return { title, body, url };
+  };
+
+  const handleSendPushToSelectedUser = async () => {
+    if (!selectedUser) return;
+    const payload = buildAdminPushPayload();
+    if (!payload) return;
 
     try {
       const result = await runAdminAction(() =>
         sendPushToUser.mutateAsync({
           userId: selectedUser.user.id,
-          payload: { title, body, url },
+          payload,
         }),
       );
       if (!result) return;
@@ -640,6 +651,35 @@ export function AdminPage() {
         );
       } else if (result.activeSubscriptionCount === 0) {
         setPushSuccess("Nenhum dispositivo elegivel: o usuario precisa ativar notificacoes nesta conta.");
+      } else {
+        setPushSuccess("Nenhum push foi entregue. Confira se os dispositivos ainda estao validos.");
+      }
+    } catch {
+      // Erro ja exibido por runAdminAction.
+    }
+  };
+
+  const handleSendPushBroadcast = async () => {
+    const payload = buildAdminPushPayload();
+    if (!payload) return;
+    if (
+      !window.confirm(
+        "Enviar este push para todos os usuarios com notificacoes ativadas? Essa acao nao pode ser desfeita.",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const result = await runAdminAction(() => sendPushBroadcast.mutateAsync(payload));
+      if (!result) return;
+      if (result.successfulCount > 0) {
+        setPushSuccess(
+          `Push em massa enviado para ${result.successfulCount} dispositivo(s) de ${result.targetUserCount} usuario(s).` +
+            (result.failedCount > 0 ? ` Falha em ${result.failedCount}.` : ""),
+        );
+      } else if (result.activeSubscriptionCount === 0) {
+        setPushSuccess("Nenhum usuario elegivel: ninguem tem notificacoes ativadas no momento.");
       } else {
         setPushSuccess("Nenhum push foi entregue. Confira se os dispositivos ainda estao validos.");
       }
@@ -1855,12 +1895,20 @@ export function AdminPage() {
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <Button
                       onClick={handleSendPushToSelectedUser}
-                      disabled={sendPushToUser.isPending}
+                      disabled={adminPushPending}
                     >
-                      {sendPushToUser.isPending ? "Enviando..." : "Enviar push"}
+                      {sendPushToUser.isPending ? "Enviando..." : "Enviar para este usuário"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="border-yellow-dark/50 text-yellow-dark hover:border-yellow-dark"
+                      onClick={handleSendPushBroadcast}
+                      disabled={adminPushPending}
+                    >
+                      {sendPushBroadcast.isPending ? "Enviando em massa..." : "Enviar para todos"}
                     </Button>
                     <span className="text-xs text-ink-muted">
-                      Exige que a conta escolhida tenha notificações ativadas.
+                      O envio em massa alcança usuários com notificações ativadas.
                     </span>
                   </div>
                   {pushSuccess && (

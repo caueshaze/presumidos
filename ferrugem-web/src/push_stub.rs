@@ -4,7 +4,8 @@ use crate::models::{NotificationPreference, NotificationStatus, WebPushSubscript
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminPushResult {
-    pub target_user_id: String,
+    pub target_user_id: Option<String>,
+    pub target_user_count: i64,
     pub active_subscription_count: i64,
     pub attempted_count: i64,
     pub successful_count: i64,
@@ -70,6 +71,16 @@ pub async fn deactivate_push_subscription(
 pub async fn send_admin_push_to_user(
     _token: String,
     _target_user_id: String,
+    _title: String,
+    _body: String,
+    _url: Option<String>,
+    _csrf_token: String,
+) -> Result<AdminPushResult, ServerFnError> {
+    Err(disabled_error())
+}
+
+pub async fn send_admin_push_broadcast(
+    _token: String,
     _title: String,
     _body: String,
     _url: Option<String>,

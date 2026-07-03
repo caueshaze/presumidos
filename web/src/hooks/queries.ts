@@ -776,6 +776,18 @@ export function useAdminSendPushToUser() {
   });
 }
 
+export function useAdminSendPushBroadcast() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AdminPushRequest) =>
+      api.post<AdminPushResult>("/admin/push/broadcast", payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-audit"] });
+      qc.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
+}
+
 export function useAdminAudit(filters: {
   action?: string;
   actorUserId?: string;

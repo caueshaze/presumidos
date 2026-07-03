@@ -151,7 +151,8 @@ export interface AdminPushRequest {
 }
 
 export interface AdminPushResult {
-  targetUserId: string;
+  targetUserId: string | null;
+  targetUserCount: number;
   activeSubscriptionCount: number;
   attemptedCount: number;
   successfulCount: number;

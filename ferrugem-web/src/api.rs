@@ -944,6 +944,22 @@ async fn admin_send_push_to_user(
     ))
 }
 
+async fn admin_send_push_broadcast(
+    headers: HeaderMap,
+    Json(body): Json<AdminPushBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::push::send_admin_push_broadcast(
+            String::new(),
+            body.title,
+            body.body,
+            body.url,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
+}
+
 async fn admin_audit(Query(query): Query<AdminAuditQuery>) -> ApiResult<impl IntoResponse> {
     Ok(Json(
         crate::admin::list_audit(
@@ -1092,6 +1108,7 @@ pub fn router() -> Router {
             post(admin_trigger_user_password_reset),
         )
         .route("/admin/users/{id}/push", post(admin_send_push_to_user))
+        .route("/admin/push/broadcast", post(admin_send_push_broadcast))
         .route(
             "/admin/pools/{pool_id}/members",
             get(admin_list_pool_members).post(admin_add_pool_member),
