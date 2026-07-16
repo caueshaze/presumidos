@@ -228,11 +228,10 @@
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    margin: 0 auto;
+    margin: 0.85rem auto 0;
     width: min(1100px, calc(100% - 2rem));
     border: 1px solid rgb(var(--color-yellow-dark) / 0.42);
-    border-top: 0;
-    border-radius: 0 0 24px 24px;
+    border-radius: 24px;
     background:
       linear-gradient(105deg, rgb(178 35 43 / 0.95), rgb(220 166 39 / 0.94) 49%, rgb(74 164 209 / 0.96));
     box-shadow: 0 14px 30px rgb(96 62 20 / 0.18);
@@ -360,7 +359,7 @@
   }
 
   @media (max-width: 460px) {
-    .finale-banner { width: 100%; border-radius: 0 0 20px 20px; }
+    .finale-banner { width: calc(100% - 1rem); margin-top: 0.5rem; border-radius: 20px; }
     .finale-banner__content { padding-inline: 0.65rem; }
     .finale-banner__caption { font-size: 0.73rem; }
   }
