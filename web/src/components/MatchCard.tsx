@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Trophy } from "lucide-react";
 import {
   useSubmitPrediction,
   useSetMatchResult,
@@ -181,6 +181,7 @@ export function MatchCard({
   points,
 }: Props) {
   const knockout = isKnockout(game.phase);
+  const isFinal = game.phase?.trim().toLocaleLowerCase("pt-BR") === "final";
   const selectionGroups = getSelectionGroups();
 
   const submit = useSubmitPrediction();
@@ -380,6 +381,7 @@ export function MatchCard({
       id={cardId}
       className={cn(
         "mb-4 scroll-mt-24 transition-shadow duration-500",
+        isFinal && "final-match-card",
         hasPrediction && "ring-2 ring-success/60",
         savedMessage && "shadow-[0_0_0_6px_rgba(95,191,159,0.18)]",
         highlighted && "ring-2 ring-sky/60 shadow-[0_0_0_6px_rgba(130,207,255,0.22)]",
@@ -387,10 +389,16 @@ export function MatchCard({
       transition={{ delay: Math.min(index * 0.03, 0.3), duration: 0.28 }}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="font-heading text-lg font-semibold">
+        <div className={cn("font-heading text-lg font-semibold", isFinal && "final-match-title")}>
           {formatSelectionLabel(game.homeTeam)} vs {formatSelectionLabel(game.awayTeam)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {isFinal && (
+            <span className="final-match-badge">
+              <Trophy className="h-3.5 w-3.5" aria-hidden="true" />
+              Grande final
+            </span>
+          )}
           {hasPrediction && (
             <span className="inline-flex items-center gap-1 rounded-pill bg-success/15 px-3 py-1 text-xs font-semibold text-mint-dark ring-1 ring-success/40">
               <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.5} />

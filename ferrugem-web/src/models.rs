@@ -338,6 +338,8 @@ pub struct AdminSettings {
     pub prediction_lock_minutes: i64,
     pub global_banner_enabled: bool,
     pub global_banner_text: String,
+    /// Edição visual global "A Grande Final: Espanha x Argentina".
+    pub final_theme_enabled: bool,
 }
 
 /// Ajuste manual de pontos aplicado a um membro de um bolão.

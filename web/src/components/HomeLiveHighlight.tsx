@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Radio, Timer } from "lucide-react";
+import { Radio, Timer, Trophy } from "lucide-react";
 import { formatSelectionLabel } from "@/lib/selections";
 import { formatKickoff, formatLiveStatus, isMatchLive } from "@/lib/utils";
 import type { MatchRecord, PredictionRecord } from "@/types";
@@ -96,6 +96,7 @@ function NextGameCard({ game, onClick }: { game: MatchRecord; onClick: () => voi
   const kickoffMs = new Date(game.kickoff).getTime();
   const msUntil = kickoffMs - now;
   const farAway = msUntil > 86_400_000; // mais de 1 dia
+  const isFinal = game.phase?.trim().toLocaleLowerCase("pt-BR") === "final";
 
   useEffect(() => {
     if (farAway) return; // sem countdown ao vivo quando falta mais de um dia
@@ -105,15 +106,17 @@ function NextGameCard({ game, onClick }: { game: MatchRecord; onClick: () => voi
 
   return (
     <Card
-      className="cursor-pointer border border-sky/20 bg-card/70 hover:shadow-card-hover"
+      className={`cursor-pointer border border-sky/20 bg-card/70 hover:shadow-card-hover ${
+        isFinal ? "final-match-card" : ""
+      }`}
       onClick={onClick}
     >
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-sky-dark">
-        <Timer className="h-4 w-4" />
-        Próximo jogo
+        {isFinal ? <Trophy className="h-4 w-4" /> : <Timer className="h-4 w-4" />}
+        {isFinal ? "A grande final" : "Próximo jogo"}
       </div>
       <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-        <span className="font-heading text-lg font-semibold leading-tight">
+        <span className={`font-heading text-lg font-semibold leading-tight ${isFinal ? "final-match-title" : ""}`}>
           {formatSelectionLabel(game.homeTeam)}
         </span>
         <span className="text-ink-muted">x</span>

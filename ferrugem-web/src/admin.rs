@@ -240,6 +240,10 @@ pub async fn load_admin_settings() -> Result<AdminSettings, ServerFnError> {
     let global_banner_text = app_setting(db, "global_banner_text")
         .await?
         .unwrap_or_default();
+    let final_theme_enabled = app_setting(db, "final_theme_enabled")
+        .await?
+        .unwrap_or_else(|| "0".to_string())
+        == "1";
 
     Ok(AdminSettings {
         knockout_released,
@@ -248,6 +252,7 @@ pub async fn load_admin_settings() -> Result<AdminSettings, ServerFnError> {
         prediction_lock_minutes,
         global_banner_enabled,
         global_banner_text,
+        final_theme_enabled,
     })
 }
 
@@ -296,6 +301,12 @@ pub async fn save_admin_settings(
     )
     .await?;
     set_app_setting(db, "global_banner_text", &settings.global_banner_text).await?;
+    set_app_setting(
+        db,
+        "final_theme_enabled",
+        sqlite_bool(settings.final_theme_enabled),
+    )
+    .await?;
 
     crate::security::append_audit_log(
         db,
@@ -310,6 +321,7 @@ pub async fn save_admin_settings(
             "sync_interval_minutes": settings.sync_interval_minutes,
             "prediction_lock_minutes": settings.prediction_lock_minutes,
             "global_banner_enabled": settings.global_banner_enabled,
+            "final_theme_enabled": settings.final_theme_enabled,
         }),
     )
     .await?;

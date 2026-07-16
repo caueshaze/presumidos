@@ -818,7 +818,10 @@ export function usePublicSettings() {
   return useQuery({
     queryKey: ["public-settings"],
     queryFn: () => api.get<AdminSettings>("/settings/public"),
-    staleTime: 60_000,
+    staleTime: 30_000,
+    // A edição da final é uma chave operacional: visitantes já abertos devem
+    // recebê-la sem precisar recarregar a página.
+    refetchInterval: 30_000,
   });
 }
 
@@ -828,6 +831,7 @@ export function useSaveAdminSettings() {
     mutationFn: (settings: AdminSettings) => api.post<AdminSettings>("/admin/settings", settings),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-settings"] });
+      qc.invalidateQueries({ queryKey: ["public-settings"] });
       qc.invalidateQueries({ queryKey: ["admin-overview"] });
     },
   });

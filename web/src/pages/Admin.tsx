@@ -2048,6 +2048,22 @@ export function AdminPage() {
                 onChange={(e) => setSettingsDraft((v) => (v ? { ...v, predictionLockMinutes: Number(e.target.value) || 0 } : v))}
               />
             </div>
+            <label className="flex items-start gap-3 rounded-2xl border border-yellow-dark/35 bg-yellow/15 px-4 py-3 text-sm text-ink md:col-span-2">
+              <input
+                type="checkbox"
+                checked={settingsDraft.finalThemeEnabled}
+                onChange={(e) =>
+                  setSettingsDraft((v) => (v ? { ...v, finalThemeEnabled: e.target.checked } : v))
+                }
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block font-heading text-base font-semibold">Ativar tema da final Espanha × Argentina</span>
+                <span className="mt-1 block text-ink-muted">
+                  Exibe a edição especial em todo o site, com as cores e bandeiras da grande final.
+                </span>
+              </span>
+            </label>
             <label className="flex items-center gap-2 text-sm font-semibold text-ink md:col-span-2">
               <input
                 type="checkbox"

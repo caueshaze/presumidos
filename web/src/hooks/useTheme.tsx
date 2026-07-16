@@ -22,6 +22,7 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 const STORAGE_KEY = "theme";
 const META_COLOR: Record<Theme, string> = { light: "#d9efe0", dark: "#0e1614" };
+const FINAL_META_COLOR: Record<Theme, string> = { light: "#f7b733", dark: "#17233d" };
 
 function systemTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -32,11 +33,21 @@ function storedTheme(): Theme | null {
   return value === "light" || value === "dark" ? value : null;
 }
 
-/** Aplica a classe .dark no <html> e ajusta o theme-color (barra do navegador). */
+/** Recalcula a cor da barra do navegador a partir do tema visual efetivo. */
+export function syncThemeColor() {
+  const root = document.documentElement;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+
+  const activeTheme: Theme = root.classList.contains("dark") ? "dark" : "light";
+  const colors = root.classList.contains("final-theme") ? FINAL_META_COLOR : META_COLOR;
+  meta.setAttribute("content", colors[activeTheme]);
+}
+
+/** Aplica a preferência claro/escuro e mantém a cor do navegador sincronizada. */
 function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", theme === "dark");
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", META_COLOR[theme]);
+  syncThemeColor();
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

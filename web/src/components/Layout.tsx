@@ -1,15 +1,25 @@
+import { useEffect } from "react";
 import { Link, Outlet } from "react-router-dom";
 import { usePublicSettings } from "@/hooks/queries";
+import { syncThemeColor } from "@/hooks/useTheme";
+import { FinaleBanner } from "./FinaleBanner";
 import { Navbar } from "./Navbar";
 
 export function Layout() {
   const settings = usePublicSettings();
   const showBanner =
     settings.data?.globalBannerEnabled && settings.data.globalBannerText.trim().length > 0;
+  const finalThemeEnabled = settings.data?.finalThemeEnabled === true;
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("final-theme", finalThemeEnabled);
+    syncThemeColor();
+  }, [finalThemeEnabled]);
 
   return (
     <div className="flex min-h-screen flex-col">
       <Navbar />
+      {finalThemeEnabled && <FinaleBanner />}
       {showBanner && (
         <div className="border-b border-yellow/40 bg-yellow/25 px-5 py-3 text-sm text-ink">
           <div className="mx-auto max-w-[1100px] font-medium">{settings.data?.globalBannerText}</div>

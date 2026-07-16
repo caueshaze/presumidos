@@ -315,4 +315,5 @@ export interface AdminSettings {
   predictionLockMinutes: number;
   globalBannerEnabled: boolean;
   globalBannerText: string;
+  finalThemeEnabled: boolean;
 }
