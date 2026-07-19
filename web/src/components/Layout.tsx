@@ -10,6 +10,7 @@ export function Layout() {
   const showBanner =
     settings.data?.globalBannerEnabled && settings.data.globalBannerText.trim().length > 0;
   const finalThemeEnabled = settings.data?.finalThemeEnabled === true;
+  const closingScreenEnabled = settings.data?.closingScreenEnabled === true;
 
   useEffect(() => {
     document.documentElement.classList.toggle("final-theme", finalThemeEnabled);
@@ -19,7 +20,7 @@ export function Layout() {
   return (
     <div className="flex min-h-screen flex-col">
       <Navbar />
-      {finalThemeEnabled && <FinaleBanner />}
+      {!closingScreenEnabled && finalThemeEnabled && <FinaleBanner />}
       {showBanner && (
         <div className="border-b border-yellow/40 bg-yellow/25 px-5 py-3 text-sm text-ink">
           <div className="mx-auto max-w-[1100px] font-medium">{settings.data?.globalBannerText}</div>

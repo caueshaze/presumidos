@@ -2064,6 +2064,22 @@ export function AdminPage() {
                 </span>
               </span>
             </label>
+            <label className="flex items-start gap-3 rounded-2xl border border-mint-dark/25 bg-mint/10 px-4 py-3 text-sm text-ink md:col-span-2">
+              <input
+                type="checkbox"
+                checked={settingsDraft.closingScreenEnabled}
+                onChange={(e) =>
+                  setSettingsDraft((v) => (v ? { ...v, closingScreenEnabled: e.target.checked } : v))
+                }
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block font-heading text-base font-semibold">Exibir encerramento da Copa</span>
+                <span className="mt-1 block text-ink-muted">
+                  Participantes verão a Espanha campeã, suas estatísticas e os rankings dos bolões.
+                </span>
+              </span>
+            </label>
             <label className="flex items-center gap-2 text-sm font-semibold text-ink md:col-span-2">
               <input
                 type="checkbox"

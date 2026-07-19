@@ -3,7 +3,7 @@ import { Navigate, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Bell, CheckCircle2, Circle, Smartphone, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { usePools, useMatches, useMyPredictions, useLeaderboard } from "@/hooks/queries";
+import { usePools, useMatches, useMyPredictions, useLeaderboard, usePublicSettings } from "@/hooks/queries";
 import { usePushReminders } from "@/hooks/usePushReminders";
 import { formatSelectionLabel } from "@/lib/selections";
 import { formatKickoff } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { PageShell } from "@/components/PageShell";
 import { HomeLiveHighlight } from "@/components/HomeLiveHighlight";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CupClosingPage } from "@/pages/CupClosing";
 
 type GreetingPeriod = "morning" | "afternoon" | "night";
 
@@ -41,7 +42,9 @@ const benefits = [
 
 export function HomePage() {
   const { user } = useAuth();
+  const settings = usePublicSettings();
   if (user?.isAdmin) return <Navigate to="/admin" replace />;
+  if (user && settings.data?.closingScreenEnabled) return <CupClosingPage />;
   return user ? <LoggedInHome user={user} /> : <MarketingHome />;
 }
 
