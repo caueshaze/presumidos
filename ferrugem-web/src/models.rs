@@ -495,6 +495,8 @@ pub struct AdminSettings {
     pub global_banner_text: String,
     /// Edição visual global "A Grande Final: Espanha x Argentina".
     pub final_theme_enabled: bool,
+    /// Tela de encerramento da Copa para participantes.
+    pub closing_screen_enabled: bool,
 }
 
 /// Ajuste manual de pontos aplicado a um membro de um bolão.

@@ -244,6 +244,10 @@ pub async fn load_admin_settings() -> Result<AdminSettings, ServerFnError> {
         .await?
         .unwrap_or_else(|| "0".to_string())
         == "1";
+    let closing_screen_enabled = app_setting(db, "closing_screen_enabled")
+        .await?
+        .unwrap_or_else(|| "0".to_string())
+        == "1";
 
     Ok(AdminSettings {
         knockout_released,
@@ -253,6 +257,7 @@ pub async fn load_admin_settings() -> Result<AdminSettings, ServerFnError> {
         global_banner_enabled,
         global_banner_text,
         final_theme_enabled,
+        closing_screen_enabled,
     })
 }
 
@@ -307,6 +312,12 @@ pub async fn save_admin_settings(
         sqlite_bool(settings.final_theme_enabled),
     )
     .await?;
+    set_app_setting(
+        db,
+        "closing_screen_enabled",
+        sqlite_bool(settings.closing_screen_enabled),
+    )
+    .await?;
 
     crate::security::append_audit_log(
         db,
@@ -322,6 +333,7 @@ pub async fn save_admin_settings(
             "prediction_lock_minutes": settings.prediction_lock_minutes,
             "global_banner_enabled": settings.global_banner_enabled,
             "final_theme_enabled": settings.final_theme_enabled,
+            "closing_screen_enabled": settings.closing_screen_enabled,
         }),
     )
     .await?;

@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "framer-
 import { Menu, X } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { usePublicSettings } from "@/hooks/queries";
 import { Button } from "./ui/button";
 import { ThemeToggle } from "./ui/ThemeToggle";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,7 @@ const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
 
 export function Navbar() {
   const { user, isAdmin, loading, logout } = useAuth();
+  const settings = usePublicSettings();
   const navigate = useNavigate();
   const location = useLocation();
   const homeTarget = user && isAdmin ? "/admin" : "/";
@@ -79,6 +81,10 @@ export function Navbar() {
               {isAdmin ? (
                 <NavLink to="/admin" className={linkClass}>
                   Admin
+                </NavLink>
+              ) : settings.data?.closingScreenEnabled ? (
+                <NavLink to="/" className={linkClass}>
+                  Resultado da Copa
                 </NavLink>
               ) : (
                 <>
@@ -146,6 +152,10 @@ export function Navbar() {
                     {isAdmin ? (
                       <NavLink to="/admin" className={mobileLinkClass}>
                         Admin
+                      </NavLink>
+                    ) : settings.data?.closingScreenEnabled ? (
+                      <NavLink to="/" className={mobileLinkClass}>
+                        Resultado da Copa
                       </NavLink>
                     ) : (
                       <>

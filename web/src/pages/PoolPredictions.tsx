@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, SmilePlus } from "lucide-react";
 import {
   useMarkPredictionReactionsSeen,
   useMatches,
+  useLeaderboard,
   usePoolBreakdowns,
   useCustomMemberPredictions,
   usePoolMemberPredictions,
@@ -285,9 +286,11 @@ export function PoolPredictionsPage() {
   const { user } = useAuth();
   const { poolId: routePoolId } = useParams();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const poolIdParam = routePoolId ?? searchParams.get("poolId");
   const memberIdParam = searchParams.get("memberId");
   const matchIdParam = searchParams.get("matchId");
+  const openedFromClosing = searchParams.get("from") === "closing";
   const [selectedPool, setSelectedPool] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [openReactionMatchId, setOpenReactionMatchId] = useState<string | null>(null);
@@ -311,6 +314,7 @@ export function PoolPredictionsPage() {
   const customMembers = useCustomMemberPredictions(currentPool?.event.kind === "custom" ? selectedPool || null : null);
   const matches = useMatches();
   const breakdowns = usePoolBreakdowns(selectedPool || null);
+  const leaderboard = useLeaderboard(selectedPool || null);
   const reactToPrediction = useReactToPrediction();
   const markSeen = useMarkPredictionReactionsSeen();
 
@@ -340,6 +344,17 @@ export function PoolPredictionsPage() {
   }, [selectedMemberId]);
 
   const selectedMember = entries.find((m) => m.userId === selectedMemberId) ?? null;
+  const selectedMemberScore = (leaderboard.data ?? []).find(
+    (entry) => entry.userId === selectedMember?.userId,
+  );
+  const settledPredictions = selectedMember
+    ? selectedMember.predictions.filter((prediction) =>
+        breakdownByKey.has(`${selectedMember.userId}:${prediction.matchId}`),
+      ).length
+    : 0;
+  const correctPercentage = selectedMemberScore && settledPredictions > 0
+    ? Math.round((selectedMemberScore.correctResults / settledPredictions) * 100)
+    : 0;
 
   useEffect(() => {
     if (!selectedPool || !selectedMember || !user) return;
@@ -410,7 +425,7 @@ export function PoolPredictionsPage() {
               <div>
                 <button
                   type="button"
-                  onClick={() => setSelectedMemberId(null)}
+                  onClick={() => navigate(`/leaderboard?poolId=${encodeURIComponent(selectedPool)}${openedFromClosing ? "&from=closing" : ""}`)}
                   className="mb-4 inline-flex items-center gap-1 text-sm font-semibold text-ink-muted transition-colors hover:text-ink"
                 >
                   <ChevronLeft className="h-4 w-4" /> Voltar
@@ -441,6 +456,34 @@ export function PoolPredictionsPage() {
                   </div>
 
                   <div className="mt-4">
+                    {selectedMemberScore && (
+                      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <div className="rounded-lg bg-mint/15 p-3">
+                          <div className="text-lg font-heading font-bold text-mint-dark">
+                            {selectedMemberScore.points}
+                          </div>
+                          <div className="text-xs text-ink-muted">pontos</div>
+                        </div>
+                        <div className="rounded-lg bg-mint/15 p-3">
+                          <div className="text-lg font-heading font-bold text-mint-dark">
+                            {selectedMemberScore.correctResults}
+                          </div>
+                          <div className="text-xs text-ink-muted">resultados corretos</div>
+                        </div>
+                        <div className="rounded-lg bg-mint/15 p-3">
+                          <div className="text-lg font-heading font-bold text-mint-dark">
+                            {selectedMemberScore.exactScores}
+                          </div>
+                          <div className="text-xs text-ink-muted">placares exatos</div>
+                        </div>
+                        <div className="rounded-lg bg-mint/15 p-3">
+                          <div className="text-lg font-heading font-bold text-mint-dark">
+                            {correctPercentage}%
+                          </div>
+                          <div className="text-xs text-ink-muted">taxa de acerto</div>
+                        </div>
+                      </div>
+                    )}
                     {selectedMember.predictions.length === 0 ? (
                       <p className="text-sm text-ink-muted">
                         Os palpites aparecem aqui assim que os jogos começam.

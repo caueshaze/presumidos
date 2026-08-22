@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Info } from "lucide-react";
+import { ArrowLeft, X, Info } from "lucide-react";
 import {
   usePools,
   useLeaderboard,
@@ -26,13 +26,20 @@ export function LeaderboardPage() {
   const { poolId: routePoolId } = useParams();
   const [searchParams] = useSearchParams();
   const pools = usePools();
-  const [selectedPool, setSelectedPool] = useState(routePoolId ?? searchParams.get("poolId") ?? "");
+  const requestedPoolId = routePoolId ?? searchParams.get("poolId");
+  const openedFromClosing = searchParams.get("from") === "closing";
+  const [selectedPool, setSelectedPool] = useState(requestedPoolId ?? "");
+  const navigate = useNavigate();
 
   useEffect(() => {
-    if (!selectedPool && pools.data && pools.data.length > 0) {
+    if (!pools.data || pools.data.length === 0) return;
+    const requestedPoolExists = requestedPoolId && pools.data.some((pool) => pool.id === requestedPoolId);
+    if (requestedPoolExists && selectedPool !== requestedPoolId) {
+      setSelectedPool(requestedPoolId);
+    } else if (!selectedPool || !pools.data.some((pool) => pool.id === selectedPool)) {
       setSelectedPool(pools.data[0].id);
     }
-  }, [pools.data, selectedPool]);
+  }, [pools.data, requestedPoolId, selectedPool]);
 
   const leaderboard = useLeaderboard(selectedPool || null);
   const matches = useMatches();
@@ -106,6 +113,10 @@ export function LeaderboardPage() {
   };
 
   const adjustmentList = adjustments.data ?? [];
+  const openMemberPredictions = (userId: string) => {
+    const from = openedFromClosing ? "&from=closing" : "";
+    navigate(`/palpites-do-bolao?poolId=${encodeURIComponent(selectedPool)}&memberId=${encodeURIComponent(userId)}${from}`);
+  };
 
   return (
     <PageShell>
@@ -121,6 +132,16 @@ export function LeaderboardPage() {
           </span>
         )}
       </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {openedFromClosing && (
+          <Button variant="outline" size="sm" onClick={() => navigate("/")}>
+            <ArrowLeft className="h-4 w-4" /> Voltar ao resumo final
+          </Button>
+        )}
+        <Button variant="outline" size="sm" onClick={() => setScoringOpen(true)}>
+          <Info className="h-4 w-4" /> Como funciona a pontuação
+        </Button>
+      </div>
       {hasLive && isFootball && (
         <p className="mt-2 max-w-3xl text-sm font-semibold text-danger">
           Há {liveMatches.length === 1 ? "1 jogo" : `${liveMatches.length} jogos`} em andamento — a
@@ -128,10 +149,6 @@ export function LeaderboardPage() {
           jogos terminam.
         </p>
       )}
-      <Button variant="outline" size="sm" className="mt-3" onClick={() => setScoringOpen(true)}>
-        <Info className="h-4 w-4" /> Como funciona a pontuação
-      </Button>
-
       {pools.isLoading ? (
         <Card className="mt-6">
           <p className="text-ink-muted">Carregando...</p>
@@ -184,12 +201,14 @@ export function LeaderboardPage() {
               <>
                 <div className="grid grid-cols-3 gap-3">
                   {podium.map((entry, i) => (
-                    <motion.div
+                    <motion.button
                       key={entry.userId}
+                      type="button"
+                      onClick={() => openMemberPredictions(entry.userId)}
                       initial={{ opacity: 0, scale: 0.92 }}
                       animate={{ opacity: 1, scale: 1 }}
                       transition={{ delay: i * 0.1, duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-                      className={`flex flex-col items-center rounded-lg bg-card p-4 shadow-card ${
+                      className={`flex flex-col items-center rounded-lg bg-card p-4 text-center shadow-card transition-shadow hover:shadow-card-hover ${
                         i === 0 ? "ring-2 ring-yellow-dark/50" : ""
                       }`}
                     >
@@ -198,8 +217,9 @@ export function LeaderboardPage() {
                       <div className="text-sm text-mint-dark">{entry.points} pts</div>
                       {isFootball ? <div className="text-xs text-ink-muted">
                         🎯 {entry.exactScores} {entry.exactScores === 1 ? "exato" : "exatos"}
-                      </div> : <div className="text-xs text-ink-muted">✓ {entry.correctResults} {entry.correctResults === 1 ? "acerto" : "acertos"}</div>}
-                    </motion.div>
+                      </div>
+                      : <div className="text-xs text-ink-muted">✓ {entry.correctResults} {entry.correctResults === 1 ? "acerto" : "acertos"}</div>}
+                    </motion.button>
                   ))}
                 </div>
 
@@ -223,7 +243,15 @@ export function LeaderboardPage() {
                         {rest.map((entry, i) => (
                           <tr key={entry.userId} className="border-t border-mint/20">
                             <td className="px-5 py-3">{i + 4}</td>
-                            <td className="px-5 py-3">{entry.username}</td>
+                            <td className="px-5 py-3">
+                              <button
+                                type="button"
+                                onClick={() => openMemberPredictions(entry.userId)}
+                                className="font-semibold text-ink underline-offset-4 hover:text-mint-dark hover:underline"
+                              >
+                                {entry.username}
+                              </button>
+                            </td>
                             <td className="px-5 py-3">{entry.points}</td>
                             {isFootball ? <td className="whitespace-nowrap px-3 py-3 text-ink-muted">{entry.exactScores}</td> : <td className="whitespace-nowrap px-3 py-3 text-ink-muted">{entry.correctResults}</td>}
                           </tr>

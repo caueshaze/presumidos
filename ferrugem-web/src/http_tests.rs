@@ -132,8 +132,13 @@ async fn final_theme_setting_is_admin_controlled_public_and_persisted() {
         !settings.final_theme_enabled,
         "a migracao deve iniciar o tema desligado"
     );
+    assert!(
+        !settings.closing_screen_enabled,
+        "a migracao deve iniciar a tela de encerramento desligada"
+    );
 
     settings.final_theme_enabled = true;
+    settings.closing_screen_enabled = true;
     let enabled: AdminSettings = admin
         .post(format!("{base}/api/admin/settings"))
         .header("X-CSRF-Token", &csrf)
@@ -145,6 +150,7 @@ async fn final_theme_setting_is_admin_controlled_public_and_persisted() {
         .await
         .expect("decodificar resposta da ativacao");
     assert!(enabled.final_theme_enabled);
+    assert!(enabled.closing_screen_enabled);
 
     let public_settings: AdminSettings = client()
         .get(format!("{base}/api/settings/public"))
@@ -155,6 +161,7 @@ async fn final_theme_setting_is_admin_controlled_public_and_persisted() {
         .await
         .expect("decodificar configuracoes publicas");
     assert!(public_settings.final_theme_enabled);
+    assert!(public_settings.closing_screen_enabled);
 
     let stored: (String,) =
         sqlx::query_as("SELECT value FROM app_settings WHERE key = 'final_theme_enabled'")
@@ -162,6 +169,13 @@ async fn final_theme_setting_is_admin_controlled_public_and_persisted() {
             .await
             .expect("ler flag persistida");
     assert_eq!(stored.0, "1");
+
+    let closing_stored: (String,) =
+        sqlx::query_as("SELECT value FROM app_settings WHERE key = 'closing_screen_enabled'")
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("ler flag de encerramento persistida");
+    assert_eq!(closing_stored.0, "1");
 
     let audit: (String,) = sqlx::query_as(
         "SELECT details_json FROM audit_logs
@@ -173,6 +187,7 @@ async fn final_theme_setting_is_admin_controlled_public_and_persisted() {
     .await
     .expect("ler auditoria de configuracoes");
     assert!(audit.0.contains("final_theme_enabled"));
+    assert!(audit.0.contains("closing_screen_enabled"));
 }
 
 fn client() -> reqwest::Client {
