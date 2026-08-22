@@ -115,6 +115,110 @@ pub async fn update_custom_item_scoring_config(
 }
 
 #[cfg(feature = "server")]
+pub async fn numeric_item_scoring_config(
+    token: String,
+    pool_id: String,
+    item_id: String,
+) -> Result<crate::models::NumericItemScoringConfig, ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    let db = crate::db::pool();
+    let row:Option<(String,String,i64,i64,i64,i64,i64)>=sqlx::query_as("SELECT s.pool_id,s.item_id,s.exact_points,s.tolerance_scaled,s.within_tolerance_points,s.incorrect_points,n.decimal_places FROM numeric_pool_item_scoring s JOIN numeric_questions n ON n.item_id=s.item_id WHERE s.pool_id=?1 AND s.item_id=?2 AND (EXISTS(SELECT 1 FROM pool_members WHERE pool_id=?1 AND user_id=?3) OR EXISTS(SELECT 1 FROM users WHERE id=?3 AND is_admin=1))").bind(&pool_id).bind(&item_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_config_load",e))?;
+    row.map(
+        |(pool_id, item_id, exact, tolerance, within, incorrect, places)| {
+            crate::models::NumericItemScoringConfig {
+                pool_id,
+                item_id,
+                exact_points: exact,
+                tolerance: crate::numeric::display_scaled(tolerance, places as u8),
+                within_tolerance_points: within,
+                incorrect_points: incorrect,
+            }
+        },
+    )
+    .ok_or_else(|| crate::security::public_error("Configuração numeric inválida."))
+}
+
+#[cfg(feature = "server")]
+pub async fn update_numeric_item_scoring_config(
+    token: String,
+    pool_id: String,
+    item_id: String,
+    exact: i64,
+    tolerance: String,
+    within: i64,
+    incorrect: i64,
+    csrf: String,
+) -> Result<(), ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    if !(0..=1000).contains(&exact)
+        || !(0..=1000).contains(&within)
+        || !(0..=1000).contains(&incorrect)
+    {
+        return Err(crate::security::public_error(
+            "Pontos devem estar entre 0 e 1000.",
+        ));
+    }
+    let db = crate::db::pool();
+    let places:Option<(i64,)>=sqlx::query_as("SELECT n.decimal_places FROM pools p JOIN prediction_items pi ON pi.event_id=p.event_id JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND (p.created_by=?2 OR u.is_admin=1) AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_config_owner",e))?;
+    let Some((places,)) = places else {
+        return Err(crate::security::public_error(
+            "Somente o dono do bolão pode alterar regras antes do lock.",
+        ));
+    };
+    let tolerance = crate::numeric::parse_scaled(&tolerance, places as u8)
+        .map_err(crate::security::public_error)?;
+    if tolerance < 0 {
+        return Err(crate::security::public_error(
+            "Tolerância não pode ser negativa.",
+        ));
+    }
+    sqlx::query("UPDATE numeric_pool_item_scoring SET exact_points=?3,tolerance_scaled=?4,within_tolerance_points=?5,incorrect_points=?6,updated_at=datetime('now') WHERE pool_id=?1 AND item_id=?2").bind(&pool_id).bind(&item_id).bind(exact).bind(tolerance).bind(within).bind(incorrect).execute(db).await.map_err(|e|crate::security::internal_error("numeric_config_update",e))?;
+    crate::scoring::recalculate_custom_breakdowns().await
+}
+
+#[cfg(feature = "server")]
+pub async fn multiple_choice_item_scoring_config(
+    token: String,
+    pool_id: String,
+    item_id: String,
+) -> Result<crate::models::MultipleChoiceItemScoringConfig, ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    let db = crate::db::pool();
+    sqlx::query_as("SELECT s.pool_id,s.item_id,s.exact_points,s.partial_points,s.incorrect_points FROM multiple_choice_pool_item_scoring s WHERE s.pool_id=?1 AND s.item_id=?2 AND (EXISTS(SELECT 1 FROM pool_members WHERE pool_id=?1 AND user_id=?3) OR EXISTS(SELECT 1 FROM users WHERE id=?3 AND is_admin=1))").bind(&pool_id).bind(&item_id).bind(&session.user_id).fetch_one(db).await.map_err(|e|crate::security::internal_error("multiple_choice_config_load",e))
+}
+#[cfg(feature = "server")]
+pub async fn update_multiple_choice_item_scoring_config(
+    token: String,
+    pool_id: String,
+    item_id: String,
+    exact: i64,
+    partial: i64,
+    incorrect: i64,
+    csrf: String,
+) -> Result<(), ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    if [exact, partial, incorrect]
+        .iter()
+        .any(|v| !(0..=1000).contains(v))
+    {
+        return Err(crate::security::public_error(
+            "Pontos devem estar entre 0 e 1000.",
+        ));
+    }
+    let db = crate::db::pool();
+    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_id=p.event_id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND pi.kind='multiple_choice' AND (p.created_by=?2 OR u.is_admin=1) AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("multiple_choice_config_owner",e))?;
+    if owner.is_none() {
+        return Err(crate::security::public_error(
+            "Somente o dono do bolão pode alterar regras antes do lock.",
+        ));
+    }
+    sqlx::query("UPDATE multiple_choice_pool_item_scoring SET exact_points=?3,partial_points=?4,incorrect_points=?5,updated_at=datetime('now') WHERE pool_id=?1 AND item_id=?2").bind(&pool_id).bind(&item_id).bind(exact).bind(partial).bind(incorrect).execute(db).await.map_err(|e|crate::security::internal_error("multiple_choice_config_update",e))?;
+    crate::scoring::recalculate_custom_breakdowns().await
+}
+
+#[cfg(feature = "server")]
 type PoolSummaryRow = (
     String,
     String,
@@ -576,12 +680,13 @@ pub async fn get_pool_member_predictions(
 
     let reaction_rows = sqlx::query_as::<_, ReactionRow>(
         "SELECT pr.target_user_id AS target_user_id,
-                pr.match_id AS match_id,
+                m.id AS match_id,
                 pr.emoji AS emoji,
                 pr.reactor_user_id AS reactor_user_id,
                 pr.updated_at AS updated_at
          FROM prediction_reactions pr
-         JOIN matches m ON m.id = pr.match_id
+         JOIN predictions p ON p.id = pr.prediction_id
+         JOIN matches m ON m.id = p.match_id
          JOIN prediction_items pi ON pi.id = m.prediction_item_id
          JOIN pool_members pm ON pm.pool_id = pr.pool_id AND pm.user_id = pr.target_user_id
          WHERE pr.pool_id = ?1
@@ -679,7 +784,8 @@ pub async fn react_to_prediction(
     token: String,
     pool_id: String,
     target_user_id: String,
-    match_id: String,
+    prediction_id: Option<String>,
+    match_id: Option<String>,
     emoji: String,
     csrf_token: String,
 ) -> Result<(), ServerFnError> {
@@ -690,7 +796,15 @@ pub async fn react_to_prediction(
     let headers = crate::security::current_headers();
     crate::security::validate_uuid("Bolao", &pool_id)?;
     crate::security::validate_uuid("Usuario", &target_user_id)?;
-    crate::security::validate_match_id(&match_id)?;
+    if prediction_id.is_none() && match_id.is_none() {
+        return Err(crate::security::public_error("Prediction obrigatória."));
+    }
+    if let Some(id) = &prediction_id {
+        crate::security::validate_uuid("Prediction", id)?;
+    }
+    if let Some(id) = &match_id {
+        crate::security::validate_match_id(id)?;
+    }
     let emoji = normalize_reaction_emoji(emoji)?;
     let session = require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
@@ -711,25 +825,27 @@ pub async fn react_to_prediction(
     .await?;
 
     let target_prediction: Option<(String, String)> = sqlx::query_as(
-        "SELECT m.home_team, m.away_team
+        "SELECT p.id, COALESCE(m.home_team || ' x ' || m.away_team, pi.title)
          FROM pool_members pm
-         JOIN predictions p ON p.user_id = pm.user_id AND p.pool_id = pm.pool_id AND p.match_id = ?2
-         JOIN matches m ON m.id = p.match_id AND m.prediction_item_id = p.item_id
+         JOIN predictions p ON p.user_id = pm.user_id AND p.pool_id = pm.pool_id
+         LEFT JOIN matches m ON m.id = p.match_id AND m.prediction_item_id = p.item_id
          JOIN prediction_items pi ON pi.id = p.item_id
          WHERE pm.pool_id = ?1
            AND pm.user_id = ?3
+           AND (p.id = ?2 OR (?5 IS NOT NULL AND p.match_id = ?5))
            AND datetime(pi.reveal_at) <= datetime(?4)
            AND datetime(pi.lock_at) >= datetime(pm.joined_at)",
     )
     .bind(&pool_id)
-    .bind(&match_id)
+    .bind(prediction_id.as_deref().unwrap_or(""))
     .bind(&target_user_id)
     .bind(chrono::Utc::now().to_rfc3339())
+    .bind(&match_id)
     .fetch_optional(db)
     .await
     .map_err(|e| crate::security::internal_error("react_to_prediction_target", e))?;
 
-    let Some((home_team, away_team)) = target_prediction else {
+    let Some((prediction_id, prediction_label)) = target_prediction else {
         return Err(crate::security::public_error(
             "Esse palpite nao esta disponivel para reacao.",
         ));
@@ -744,10 +860,10 @@ pub async fn react_to_prediction(
     let existing: Option<(String, String)> = sqlx::query_as(
         "SELECT id, emoji
          FROM prediction_reactions
-         WHERE pool_id = ?1 AND match_id = ?2 AND target_user_id = ?3 AND reactor_user_id = ?4",
+         WHERE pool_id = ?1 AND prediction_id = ?2 AND target_user_id = ?3 AND reactor_user_id = ?4",
     )
     .bind(&pool_id)
-    .bind(&match_id)
+    .bind(&prediction_id)
     .bind(&target_user_id)
     .bind(&session.user_id)
     .fetch_optional(db)
@@ -759,12 +875,12 @@ pub async fn react_to_prediction(
         None => {
             sqlx::query(
                 "INSERT INTO prediction_reactions
-                    (id, pool_id, match_id, target_user_id, reactor_user_id, emoji, created_at, updated_at)
+                    (id, pool_id, prediction_id, target_user_id, reactor_user_id, emoji, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
             )
             .bind(uuid::Uuid::new_v4().to_string())
             .bind(&pool_id)
-            .bind(&match_id)
+            .bind(&prediction_id)
             .bind(&target_user_id)
             .bind(&session.user_id)
             .bind(&emoji)
@@ -807,7 +923,7 @@ pub async fn react_to_prediction(
         Some(&crate::security::client_ip(&headers)),
         serde_json::json!({
             "pool_id": pool_id,
-            "match_id": match_id,
+            "prediction_id": prediction_id,
             "target_user_id": target_user_id,
             "emoji": emoji,
         }),
@@ -815,15 +931,13 @@ pub async fn react_to_prediction(
     .await?;
 
     if action != "prediction_reaction_removed" {
-        let url = format!(
-            "/palpites-do-bolao?poolId={pool_id}&memberId={target_user_id}&matchId={match_id}"
-        );
+        let url = format!("/palpites-do-bolao?poolId={pool_id}&memberId={target_user_id}");
         let title = format!("{} reagiu ao seu palpite", reactor_username.0);
         let body = format!(
-            "{} reagiu com {} em {} x {}.",
-            reactor_username.0, emoji, home_team, away_team
+            "{} reagiu com {} em {}.",
+            reactor_username.0, emoji, prediction_label
         );
-        let tag = format!("prediction-reaction-{pool_id}-{match_id}-{target_user_id}");
+        let tag = format!("prediction-reaction-{pool_id}-{prediction_id}-{target_user_id}");
         let _ =
             crate::push::send_reaction_notification(db, &target_user_id, &title, &body, &url, &tag)
                 .await?;

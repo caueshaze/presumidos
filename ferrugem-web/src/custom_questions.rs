@@ -2,6 +2,37 @@ use crate::error::ServerFnError;
 use crate::models::{CustomPredictionValue, CustomQuestion, CustomQuestionOption};
 
 #[cfg(feature = "server")]
+#[derive(sqlx::FromRow)]
+struct QuestionRow {
+    item_id: String,
+    kind: String,
+    title: String,
+    lock_at: String,
+    reveal_at: String,
+    sort_order: i64,
+    stored_status: String,
+    current_option_id: Option<String>,
+    correct_option_id: Option<String>,
+    decimal_places: Option<i64>,
+    unit_label: Option<String>,
+    min_scaled: Option<i64>,
+    max_scaled: Option<i64>,
+    current_scaled: Option<i64>,
+    result_scaled: Option<i64>,
+    correct_points: Option<i64>,
+    incorrect_points: Option<i64>,
+    exact_points: Option<i64>,
+    tolerance_scaled: Option<i64>,
+    within_tolerance_points: Option<i64>,
+    min_selections: Option<i64>,
+    max_selections: Option<i64>,
+    multiple_exact_points: Option<i64>,
+    partial_points: Option<i64>,
+    multiple_incorrect_points: Option<i64>,
+    multiple_resolved: i64,
+}
+
+#[cfg(feature = "server")]
 pub async fn submit_single_choice_prediction(
     token: String,
     pool_id: String,
@@ -111,17 +142,44 @@ pub async fn list_custom_member_predictions(
     }
     let members: Vec<(String, String)> = sqlx::query_as("SELECT u.id,u.username FROM pool_members pm JOIN users u ON u.id=pm.user_id WHERE pm.pool_id=?1 ORDER BY u.username COLLATE NOCASE")
         .bind(&pool_id).fetch_all(db).await.map_err(|e| crate::security::internal_error("custom_member_predictions_members", e))?;
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT pr.user_id, pi.id, pi.title, o.label FROM predictions pr
-         JOIN prediction_items pi ON pi.id=pr.item_id
-         JOIN custom_prediction_values cpv ON cpv.prediction_id=pr.id
-         JOIN custom_question_options o ON o.id=cpv.option_id
-         WHERE pr.pool_id=?1 AND datetime(pi.reveal_at)<=datetime('now') ORDER BY pi.sort_order",
+    let mut rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT pr.user_id,pi.id,pi.title,o.label FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id JOIN custom_prediction_values cpv ON cpv.prediction_id=pr.id JOIN custom_question_options o ON o.id=cpv.option_id WHERE pr.pool_id=?1 AND datetime(pi.reveal_at)<=datetime('now')
+         ORDER BY pi.sort_order",
     )
     .bind(&pool_id)
     .fetch_all(db)
     .await
     .map_err(|e| crate::security::internal_error("custom_member_predictions_load", e))?;
+    let numeric: Vec<(String,String,String,i64,i64,Option<String>)> = sqlx::query_as(
+        "SELECT pr.user_id,pi.id,pi.title,v.value_scaled,n.decimal_places,n.unit_label FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id JOIN numeric_prediction_values v ON v.prediction_id=pr.id JOIN numeric_questions n ON n.item_id=pi.id WHERE pr.pool_id=?1 AND datetime(pi.reveal_at)<=datetime('now') ORDER BY pi.sort_order"
+    ).bind(&pool_id).fetch_all(db).await.map_err(|e|crate::security::internal_error("numeric_member_predictions_load",e))?;
+    rows.extend(
+        numeric
+            .into_iter()
+            .map(|(user, item, title, value, places, unit)| {
+                (
+                    user,
+                    item,
+                    title,
+                    format!(
+                        "{}{}",
+                        crate::numeric::display_scaled(value, places as u8),
+                        unit.map(|v| format!(" {v}")).unwrap_or_default()
+                    ),
+                )
+            }),
+    );
+    let multiple: Vec<(String,String,String,String)> = sqlx::query_as(
+        "SELECT p.user_id,p.item_id,p.title,GROUP_CONCAT(p.label, ' • ') FROM (
+           SELECT pr.user_id,pi.id AS item_id,pi.title,o.label,pi.sort_order,o.sort_order AS option_sort
+           FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id
+           JOIN multiple_choice_prediction_options v ON v.prediction_id=pr.id
+           JOIN custom_question_options o ON o.id=v.option_id
+           WHERE pr.pool_id=?1 AND datetime(pi.reveal_at)<=datetime('now') AND pi.kind='multiple_choice'
+           ORDER BY pi.sort_order,o.sort_order
+         ) p GROUP BY p.user_id,p.item_id,p.title ORDER BY MIN(p.sort_order)"
+    ).bind(&pool_id).fetch_all(db).await.map_err(|e|crate::security::internal_error("multiple_choice_member_predictions_load",e))?;
+    rows.extend(multiple);
     let mut by_user: BTreeMap<String, Vec<crate::models::CustomMemberPrediction>> = BTreeMap::new();
     for (user_id, item_id, title, option_label) in rows {
         by_user
@@ -165,48 +223,89 @@ pub async fn list_custom_questions(
             "Voce nao participa deste bolao.",
         ));
     }
-    let rows: Vec<(String,String,String,String,i64,String,Option<String>,Option<String>,i64,i64)> = sqlx::query_as(
-        "SELECT pi.id, pi.title, pi.lock_at, pi.reveal_at, pi.sort_order, pi.status, cpv.option_id,
-                CASE WHEN datetime(pi.reveal_at) <= datetime('now') THEN q.correct_option_id ELSE NULL END,
-                s.correct_points, s.incorrect_points
-         FROM prediction_items pi
-         JOIN pools p ON p.event_id=pi.event_id
-         JOIN custom_questions q ON q.item_id=pi.id
-         JOIN custom_pool_item_scoring s ON s.pool_id=p.id AND s.item_id=pi.id
+    let rows: Vec<QuestionRow> = sqlx::query_as(
+        "SELECT pi.id AS item_id,pi.kind,pi.title,pi.lock_at,pi.reveal_at,pi.sort_order,pi.status AS stored_status,cpv.option_id AS current_option_id,
+                CASE WHEN datetime(pi.reveal_at)<=datetime('now') THEN q.correct_option_id ELSE NULL END AS correct_option_id,
+                n.decimal_places,n.unit_label,n.min_value_scaled AS min_scaled,n.max_value_scaled AS max_scaled,npv.value_scaled AS current_scaled,
+                CASE WHEN datetime(pi.reveal_at)<=datetime('now') THEN n.result_value_scaled ELSE NULL END AS result_scaled,
+                s.correct_points,s.incorrect_points,ns.exact_points,ns.tolerance_scaled,ns.within_tolerance_points,
+                mq.min_selections,mq.max_selections,ms.exact_points AS multiple_exact_points,ms.partial_points,ms.incorrect_points AS multiple_incorrect_points,
+                EXISTS(SELECT 1 FROM multiple_choice_results mr WHERE mr.item_id=pi.id) AS multiple_resolved
+         FROM prediction_items pi JOIN pools p ON p.event_id=pi.event_id
+         LEFT JOIN custom_questions q ON q.item_id=pi.id LEFT JOIN custom_pool_item_scoring s ON s.pool_id=p.id AND s.item_id=pi.id
+         LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN numeric_pool_item_scoring ns ON ns.pool_id=p.id AND ns.item_id=pi.id
+         LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id LEFT JOIN multiple_choice_pool_item_scoring ms ON ms.pool_id=p.id AND ms.item_id=pi.id
          LEFT JOIN predictions pr ON pr.pool_id=p.id AND pr.user_id=?2 AND pr.item_id=pi.id
-         LEFT JOIN custom_prediction_values cpv ON cpv.prediction_id=pr.id
-         WHERE p.id=?1 ORDER BY pi.sort_order")
+         LEFT JOIN custom_prediction_values cpv ON cpv.prediction_id=pr.id LEFT JOIN numeric_prediction_values npv ON npv.prediction_id=pr.id
+         WHERE p.id=?1 AND pi.kind IN ('single_choice','numeric','multiple_choice') ORDER BY pi.sort_order")
         .bind(&pool_id).bind(&session.user_id).fetch_all(db).await.map_err(|e| crate::security::internal_error("list_custom_questions", e))?;
     let mut out = Vec::new();
-    for (
-        item_id,
-        title,
-        lock_at,
-        reveal_at,
-        sort_order,
-        stored_status,
-        current_option_id,
-        correct_option_id,
-        correct_points,
-        incorrect_points,
-    ) in rows
-    {
-        let options=sqlx::query_as::<_,(String,String,i64)>("SELECT id,label,sort_order FROM custom_question_options WHERE item_id=?1 ORDER BY sort_order")
-        .bind(&item_id).fetch_all(db).await.map_err(|e| crate::security::internal_error("list_custom_options", e))?
-        .into_iter().map(|(id,label,sort_order)| CustomQuestionOption{id,label,sort_order}).collect();
-        let status = if correct_option_id.is_some() {
-            crate::models::PredictionItemStatus::Resolved
-        } else if chrono::DateTime::parse_from_rfc3339(&lock_at)
-            .map(|value| value <= chrono::Utc::now())
-            .unwrap_or(stored_status == "locked")
-        {
-            crate::models::PredictionItemStatus::Locked
+    for row in rows {
+        let QuestionRow {
+            item_id,
+            kind,
+            title,
+            lock_at,
+            reveal_at,
+            sort_order,
+            stored_status,
+            current_option_id,
+            correct_option_id,
+            decimal_places,
+            unit_label,
+            min_scaled,
+            max_scaled,
+            current_scaled,
+            result_scaled,
+            correct_points,
+            incorrect_points,
+            exact_points,
+            tolerance_scaled,
+            within_tolerance_points,
+            min_selections,
+            max_selections,
+            multiple_exact_points,
+            partial_points,
+            multiple_incorrect_points,
+            multiple_resolved,
+        } = row;
+        let options = if kind == "single_choice" || kind == "multiple_choice" {
+            sqlx::query_as::<_,(String,String,i64)>("SELECT id,label,sort_order FROM custom_question_options WHERE item_id=?1 ORDER BY sort_order")
+            .bind(&item_id).fetch_all(db).await.map_err(|e| crate::security::internal_error("list_custom_options", e))?
+            .into_iter().map(|(id,label,sort_order)| CustomQuestionOption{id,label,sort_order}).collect()
         } else {
-            crate::models::PredictionItemStatus::Open
+            Vec::new()
         };
+        let current_option_ids = if kind == "multiple_choice" {
+            sqlx::query_as::<_, (String,)>("SELECT o.id FROM multiple_choice_prediction_options v JOIN custom_question_options o ON o.id=v.option_id JOIN predictions p ON p.id=v.prediction_id WHERE p.pool_id=?1 AND p.user_id=?2 AND p.item_id=?3 ORDER BY o.sort_order")
+                .bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_all(db).await.map_err(|e|crate::security::internal_error("list_multiple_choice_current",e))?.into_iter().map(|(id,)|id).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let correct_option_ids = if kind == "multiple_choice" && multiple_resolved != 0 {
+            sqlx::query_as::<_, (String,)>("SELECT o.id FROM multiple_choice_results r JOIN custom_question_options o ON o.id=r.option_id WHERE r.item_id=?1 ORDER BY o.sort_order")
+                .bind(&item_id).fetch_all(db).await.map_err(|e|crate::security::internal_error("list_multiple_choice_result",e))?.into_iter().map(|(id,)|id).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let status =
+            if correct_option_id.is_some() || result_scaled.is_some() || multiple_resolved != 0 {
+                crate::models::PredictionItemStatus::Resolved
+            } else if chrono::DateTime::parse_from_rfc3339(&lock_at)
+                .map(|value| value <= chrono::Utc::now())
+                .unwrap_or(stored_status == "locked")
+            {
+                crate::models::PredictionItemStatus::Locked
+            } else {
+                crate::models::PredictionItemStatus::Open
+            };
         out.push(CustomQuestion {
             item_id,
-            kind: crate::models::PredictionItemKind::SingleChoice,
+            kind: match kind.as_str() {
+                "numeric" => crate::models::PredictionItemKind::Numeric,
+                "multiple_choice" => crate::models::PredictionItemKind::MultipleChoice,
+                _ => crate::models::PredictionItemKind::SingleChoice,
+            },
             title,
             lock_at,
             reveal_at,
@@ -214,9 +313,46 @@ pub async fn list_custom_questions(
             status,
             current_option_id,
             correct_option_id,
-            correct_points,
-            incorrect_points,
+            correct_points: if kind == "multiple_choice" {
+                multiple_exact_points.unwrap_or(0)
+            } else {
+                correct_points.unwrap_or(0)
+            },
+            incorrect_points: if kind == "multiple_choice" {
+                multiple_incorrect_points.unwrap_or(0)
+            } else {
+                incorrect_points.unwrap_or(0)
+            },
             options,
+            decimal_places,
+            unit_label,
+            min_value: min_scaled
+                .zip(decimal_places)
+                .map(|(v, p)| crate::numeric::display_scaled(v, p as u8)),
+            max_value: max_scaled
+                .zip(decimal_places)
+                .map(|(v, p)| crate::numeric::display_scaled(v, p as u8)),
+            current_value: current_scaled
+                .zip(decimal_places)
+                .map(|(v, p)| crate::numeric::display_scaled(v, p as u8)),
+            result_value: result_scaled
+                .zip(decimal_places)
+                .map(|(v, p)| crate::numeric::display_scaled(v, p as u8)),
+            exact_points: if kind == "multiple_choice" {
+                multiple_exact_points
+            } else {
+                exact_points
+            },
+            tolerance: tolerance_scaled
+                .zip(decimal_places)
+                .map(|(v, p)| crate::numeric::display_scaled(v, p as u8)),
+            within_tolerance_points,
+            min_selections,
+            max_selections,
+            current_option_ids: (kind == "multiple_choice").then_some(current_option_ids),
+            correct_option_ids: (kind == "multiple_choice" && multiple_resolved != 0)
+                .then_some(correct_option_ids),
+            partial_points,
         });
     }
     Ok(out)

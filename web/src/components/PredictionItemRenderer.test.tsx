@@ -9,6 +9,7 @@ vi.mock("./SingleChoicePredictionCard", () => ({
     <div data-testid="single-choice-card">{question.title}</div>
   ),
 }));
+vi.mock("./NumericPredictionCard", () => ({ NumericPredictionCard: ({ question }: { question: { title: string } }) => <div data-testid="numeric-card">{question.title}</div> }));
 
 import { PredictionItemRenderer } from "./PredictionItemRenderer";
 
@@ -55,5 +56,9 @@ describe("PredictionItemRenderer", () => {
       />,
     );
     expect(screen.getByTestId("single-choice-card").textContent).toContain("Pergunta genérica");
+  });
+  it("dispatches numeric to the numeric card", () => {
+    render(<PredictionItemRenderer item={{kind:"numeric",poolId:"pool-a",index:0,question:{itemId:"n",kind:"numeric",title:"Quantidade",lockAt:"2099-01-01T00:00:00Z",revealAt:"2099-01-02T00:00:00Z",sortOrder:0,status:"open",currentOptionId:null,correctOptionId:null,correctPoints:0,incorrectPoints:0,options:[],decimalPlaces:0}}}/>);
+    expect(screen.getByTestId("numeric-card").textContent).toContain("Quantidade");
   });
 });

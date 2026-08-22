@@ -22,6 +22,8 @@ mod custom_questions;
 mod db;
 mod email;
 mod events;
+mod multiple_choice;
+mod numeric;
 mod security;
 
 #[cfg(feature = "web-push")]

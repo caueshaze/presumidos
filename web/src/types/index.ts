@@ -49,7 +49,7 @@ export interface CustomQuestionOption {
 
 export interface CustomQuestion {
   itemId: string;
-  kind: "single_choice";
+  kind: "single_choice" | "numeric" | "multiple_choice";
   title: string;
   lockAt: string;
   revealAt: string;
@@ -60,6 +60,20 @@ export interface CustomQuestion {
   correctPoints: number;
   incorrectPoints: number;
   options: CustomQuestionOption[];
+  decimalPlaces?: number;
+  unitLabel?: string | null;
+  minValue?: string | null;
+  maxValue?: string | null;
+  currentValue?: string | null;
+  resultValue?: string | null;
+  exactPoints?: number;
+  tolerance?: string;
+  withinTolerancePoints?: number;
+  minSelections?: number;
+  maxSelections?: number | null;
+  currentOptionIds?: string[];
+  correctOptionIds?: string[];
+  partialPoints?: number;
 }
 export interface CustomMemberPredictions { userId: string; username: string; predictions: { itemId: string; title: string; optionLabel: string }[]; }
 

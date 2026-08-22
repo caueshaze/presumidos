@@ -31,7 +31,9 @@ import type {
   UserPublic,
 } from "@/types";
 
-function normalizeAdminUserRecord(input: AdminUserRecord | UserPublic): AdminUserRecord {
+function normalizeAdminUserRecord(
+  input: AdminUserRecord | UserPublic,
+): AdminUserRecord {
   if ("user" in input) return input;
   return {
     user: input,
@@ -41,7 +43,9 @@ function normalizeAdminUserRecord(input: AdminUserRecord | UserPublic): AdminUse
 
 type FlatAdminMatchRecord = MatchRecord & Omit<AdminMatchRecord, "matchRecord">;
 
-function normalizeAdminMatchRecord(input: AdminMatchRecord | FlatAdminMatchRecord | MatchRecord): AdminMatchRecord {
+function normalizeAdminMatchRecord(
+  input: AdminMatchRecord | FlatAdminMatchRecord | MatchRecord,
+): AdminMatchRecord {
   if ("matchRecord" in input) return input;
 
   const matchRecord: MatchRecord = {
@@ -135,7 +139,8 @@ export function useRegisterConfirm() {
 
 export function usePasswordResetRequest() {
   return useMutation({
-    mutationFn: (vars: { email: string }) => api.postPublic<void>("/auth/password-reset", vars),
+    mutationFn: (vars: { email: string }) =>
+      api.postPublic<void>("/auth/password-reset", vars),
   });
 }
 
@@ -149,19 +154,34 @@ export function usePasswordResetConfirm() {
 // ---- Pools ----------------------------------------------------------------
 
 export function usePools() {
-  return useQuery({ queryKey: ["pools"], queryFn: () => api.get<PoolSummary[]>("/pools") });
+  return useQuery({
+    queryKey: ["pools"],
+    queryFn: () => api.get<PoolSummary[]>("/pools"),
+  });
 }
 
-export type MyEvent = { id: string; name: string; status: "draft" | "active"; startsAt: string | null; endsAt: string | null };
+export type MyEvent = {
+  id: string;
+  name: string;
+  status: "draft" | "active";
+  startsAt: string | null;
+  endsAt: string | null;
+};
 export function useMyEvents() {
-  return useQuery({ queryKey: ["custom-events", "mine"], queryFn: () => api.get<MyEvent[]>("/custom/events/mine") });
+  return useQuery({
+    queryKey: ["custom-events", "mine"],
+    queryFn: () => api.get<MyEvent[]>("/custom/events/mine"),
+  });
 }
 
 export function useCreatePool() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: string | { name: string; eventId?: string }) =>
-      api.post<PoolSummary>("/pools", typeof input === "string" ? { name: input } : input),
+      api.post<PoolSummary>(
+        "/pools",
+        typeof input === "string" ? { name: input } : input,
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pools"] }),
   });
 }
@@ -169,7 +189,8 @@ export function useCreatePool() {
 export function useJoinPool() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (inviteCode: string) => api.post<PoolSummary>("/pools/join", { inviteCode }),
+    mutationFn: (inviteCode: string) =>
+      api.post<PoolSummary>("/pools/join", { inviteCode }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pools"] }),
   });
 }
@@ -235,7 +256,8 @@ export interface PredictionInput {
 export function useSubmitPrediction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: PredictionInput) => api.post<void>("/predictions", input),
+    mutationFn: (input: PredictionInput) =>
+      api.post<void>("/predictions", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["predictions"] }),
   });
 }
@@ -243,12 +265,40 @@ export function useSubmitPrediction() {
 export function useCustomQuestions(poolId: string | null) {
   return useQuery({
     queryKey: ["custom-questions", poolId],
-    queryFn: () => api.get<CustomQuestion[]>(`/custom/questions?poolId=${encodeURIComponent(poolId ?? "")}`),
+    queryFn: () =>
+      api.get<CustomQuestion[]>(
+        `/custom/questions?poolId=${encodeURIComponent(poolId ?? "")}`,
+      ),
     enabled: !!poolId,
   });
 }
 export function useCustomMemberPredictions(poolId: string | null) {
-  return useQuery({ queryKey: ["custom-member-predictions", poolId], queryFn: () => api.get<CustomMemberPredictions[]>(`/pools/${encodeURIComponent(poolId ?? "")}/custom-member-predictions`), enabled: !!poolId });
+  return useQuery({
+    queryKey: ["custom-member-predictions", poolId],
+    queryFn: () =>
+      api.get<CustomMemberPredictions[]>(
+        `/pools/${encodeURIComponent(poolId ?? "")}/custom-member-predictions`,
+      ),
+    enabled: !!poolId,
+  });
+}
+
+function updateCurrentCustomPrediction(
+  qc: ReturnType<typeof useQueryClient>,
+  poolId: string,
+  itemId: string,
+  patch: Partial<
+    Pick<
+      CustomQuestion,
+      "currentOptionId" | "currentOptionIds" | "currentValue"
+    >
+  >,
+) {
+  qc.setQueryData<CustomQuestion[]>(["custom-questions", poolId], (questions) =>
+    questions?.map((question) =>
+      question.itemId === itemId ? { ...question, ...patch } : question,
+    ),
+  );
 }
 
 export function useSubmitCustomPrediction() {
@@ -257,16 +307,46 @@ export function useSubmitCustomPrediction() {
     mutationFn: (vars: { poolId: string; itemId: string; optionId: string }) =>
       api.post<void>("/custom/predictions", vars),
     onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
-      qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] });
+      updateCurrentCustomPrediction(qc, vars.poolId, vars.itemId, {
+        currentOptionId: vars.optionId,
+      });
     },
+  });
+}
+export function useSubmitNumericPrediction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; itemId: string; value: string }) =>
+      api.post<void>("/custom/numeric-predictions", vars),
+    onSuccess: (_data, vars) => {
+      updateCurrentCustomPrediction(qc, vars.poolId, vars.itemId, {
+        currentValue: vars.value,
+      });
+    },
+  });
+}
+export function useSubmitMultipleChoicePrediction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      poolId: string;
+      itemId: string;
+      optionIds: string[];
+    }) => api.post<void>("/custom/multiple-choice-predictions", vars),
+    onSuccess: (_data, vars) =>
+      updateCurrentCustomPrediction(qc, vars.poolId, vars.itemId, {
+        currentOptionIds: vars.optionIds,
+      }),
   });
 }
 
 export function useFootballScoring(poolId: string | null) {
   return useQuery({
     queryKey: ["pool-scoring", poolId, "football"],
-    queryFn: () => api.get<FootballScoringConfig>(`/pools/${encodeURIComponent(poolId ?? "")}/scoring/football`),
+    queryFn: () =>
+      api.get<FootballScoringConfig>(
+        `/pools/${encodeURIComponent(poolId ?? "")}/scoring/football`,
+      ),
     enabled: !!poolId,
   });
 }
@@ -276,16 +356,26 @@ export function useUpdateFootballScoring() {
   return useMutation({
     mutationFn: (vars: { poolId: string } & FootballScoringConfig) =>
       api.post<void>(`/pools/${vars.poolId}/scoring/football`, vars),
-    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ["pool-scoring", vars.poolId] }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["pool-scoring", vars.poolId] }),
   });
 }
 
 export function useUpdateCustomScoring() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { poolId: string; itemId: string; correctPoints: number; incorrectPoints: number }) =>
-      api.post<void>(`/pools/${vars.poolId}/scoring/items/${vars.itemId}`, vars),
-    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] }),
+    mutationFn: (vars: {
+      poolId: string;
+      itemId: string;
+      correctPoints: number;
+      incorrectPoints: number;
+    }) =>
+      api.post<void>(
+        `/pools/${vars.poolId}/scoring/items/${vars.itemId}`,
+        vars,
+      ),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] }),
   });
 }
 
@@ -293,7 +383,76 @@ export function useSetCustomResult() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { itemId: string; optionId: string; poolId: string }) =>
-      api.post<void>(`/admin/custom/questions/${vars.itemId}/result`, { optionId: vars.optionId }),
+      api.post<void>(`/admin/custom/questions/${vars.itemId}/result`, {
+        optionId: vars.optionId,
+      }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
+      qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] });
+    },
+  });
+}
+export function useUpdateNumericScoring() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      poolId: string;
+      itemId: string;
+      exactPoints: number;
+      tolerance: string;
+      withinTolerancePoints: number;
+      incorrectPoints: number;
+    }) =>
+      api.post<void>(
+        `/pools/${vars.poolId}/scoring/numeric/${vars.itemId}`,
+        vars,
+      ),
+    onSuccess: (_d, vars) =>
+      qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] }),
+  });
+}
+export function useSetNumericResult() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; itemId: string; value: string }) =>
+      api.post<void>(`/admin/custom/numeric/${vars.itemId}/result`, {
+        value: vars.value,
+      }),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
+      qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] });
+    },
+  });
+}
+export function useUpdateMultipleChoiceScoring() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      poolId: string;
+      itemId: string;
+      exactPoints: number;
+      partialPoints: number;
+      incorrectPoints: number;
+    }) =>
+      api.post<void>(
+        `/pools/${vars.poolId}/scoring/multiple-choice/${vars.itemId}`,
+        vars,
+      ),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] }),
+  });
+}
+export function useSetMultipleChoiceResult() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      poolId: string;
+      itemId: string;
+      optionIds: string[];
+    }) =>
+      api.post<void>(`/admin/custom/multiple-choice/${vars.itemId}/result`, {
+        optionIds: vars.optionIds,
+      }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
       qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] });
@@ -306,7 +465,8 @@ export function useSetCustomResult() {
 export function useSetKnockoutReleased() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (released: boolean) => api.post<void>("/admin/knockout-released", { released }),
+    mutationFn: (released: boolean) =>
+      api.post<void>("/admin/knockout-released", { released }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["knockout-released"] });
       qc.invalidateQueries({ queryKey: ["matches"] });
@@ -345,7 +505,9 @@ export function useSetMatchFinished() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { matchId: string; finished: boolean }) =>
-      api.post<void>(`/admin/matches/${vars.matchId}/finished`, { finished: vars.finished }),
+      api.post<void>(`/admin/matches/${vars.matchId}/finished`, {
+        finished: vars.finished,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["matches"] });
       qc.invalidateQueries({ queryKey: ["admin-matches"] });
@@ -356,7 +518,11 @@ export function useSetMatchFinished() {
 export function useUpdateMatchTeams() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { matchId: string; homeTeam: string; awayTeam: string }) =>
+    mutationFn: (vars: {
+      matchId: string;
+      homeTeam: string;
+      awayTeam: string;
+    }) =>
       api.post<void>(`/admin/matches/${vars.matchId}/teams`, {
         homeTeam: vars.homeTeam,
         awayTeam: vars.awayTeam,
@@ -417,12 +583,14 @@ export function useSetMatchFixture() {
         externalFixtureId: vars.externalFixtureId,
       }),
     onSuccess: (_updated, vars) => {
-      qc.setQueriesData<AdminMatchRecord[]>({ queryKey: ["admin-matches"] }, (old) =>
-        old?.map((item) =>
-          item.matchRecord.id === vars.matchId
-            ? { ...item, externalFixtureId: vars.externalFixtureId }
-            : item,
-        ),
+      qc.setQueriesData<AdminMatchRecord[]>(
+        { queryKey: ["admin-matches"] },
+        (old) =>
+          old?.map((item) =>
+            item.matchRecord.id === vars.matchId
+              ? { ...item, externalFixtureId: vars.externalFixtureId }
+              : item,
+          ),
       );
       qc.invalidateQueries({ queryKey: ["admin-matches"] });
     },
@@ -432,14 +600,17 @@ export function useSetMatchFixture() {
 export function useCheckFixture() {
   return useMutation({
     mutationFn: (externalFixtureId: number) =>
-      api.post<FixtureCheckResult>("/admin/fixtures/check", { externalFixtureId }),
+      api.post<FixtureCheckResult>("/admin/fixtures/check", {
+        externalFixtureId,
+      }),
   });
 }
 
 export function useDeleteMatch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (matchId: string) => api.post<void>(`/admin/matches/${matchId}/delete`),
+    mutationFn: (matchId: string) =>
+      api.post<void>(`/admin/matches/${matchId}/delete`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["matches"] });
       qc.invalidateQueries({ queryKey: ["admin-matches"] });
@@ -451,14 +622,16 @@ export function useDeleteMatch() {
 
 export function useReauth() {
   return useMutation({
-    mutationFn: (password: string) => api.post<void>("/auth/reauth", { password }),
+    mutationFn: (password: string) =>
+      api.post<void>("/auth/reauth", { password }),
   });
 }
 
 export function useChangeUsername() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (username: string) => api.post<UserPublic>("/auth/username", { username }),
+    mutationFn: (username: string) =>
+      api.post<UserPublic>("/auth/username", { username }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["current-user"] }),
   });
 }
@@ -481,7 +654,8 @@ export function useUpdateNotificationPreference() {
   return useMutation({
     mutationFn: (vars: NotificationPreference) =>
       api.post<NotificationPreference>("/notifications/preferences", vars),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notification-status"] }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["notification-status"] }),
   });
 }
 
@@ -500,7 +674,9 @@ export function useReactToPrediction() {
         emoji: vars.emoji,
       }),
     onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ["pool-member-predictions", vars.poolId] });
+      qc.invalidateQueries({
+        queryKey: ["pool-member-predictions", vars.poolId],
+      });
     },
   });
 }
@@ -509,7 +685,9 @@ export function useMarkPredictionReactionsSeen() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (poolId: string) =>
-      api.post<void>(`/pools/${encodeURIComponent(poolId)}/prediction-reactions/mark-seen`),
+      api.post<void>(
+        `/pools/${encodeURIComponent(poolId)}/prediction-reactions/mark-seen`,
+      ),
     onSuccess: (_data, poolId) => {
       qc.invalidateQueries({ queryKey: ["pool-member-predictions", poolId] });
     },
@@ -522,7 +700,9 @@ export function useLeaderboard(poolId: string | null) {
   return useQuery({
     queryKey: ["leaderboard", poolId],
     queryFn: () =>
-      api.get<LeaderboardEntry[]>(`/leaderboard?poolId=${encodeURIComponent(poolId ?? "")}`),
+      api.get<LeaderboardEntry[]>(
+        `/leaderboard?poolId=${encodeURIComponent(poolId ?? "")}`,
+      ),
     enabled: !!poolId,
     // Revalida sozinho para refletir a pontuação ao vivo (provisória) durante os jogos.
     refetchInterval: 60_000,
@@ -535,7 +715,9 @@ export function usePoolAdjustments(poolId: string | null) {
   return useQuery({
     queryKey: ["pool-adjustments", poolId],
     queryFn: () =>
-      api.get<PointAdjustment[]>(`/pools/${encodeURIComponent(poolId ?? "")}/adjustments`),
+      api.get<PointAdjustment[]>(
+        `/pools/${encodeURIComponent(poolId ?? "")}/adjustments`,
+      ),
     enabled: !!poolId,
   });
 }
@@ -543,7 +725,12 @@ export function usePoolAdjustments(poolId: string | null) {
 export function useAddAdjustment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { poolId: string; userId: string; delta: number; reason: string }) =>
+    mutationFn: (vars: {
+      poolId: string;
+      userId: string;
+      delta: number;
+      reason: string;
+    }) =>
       api.post<void>(`/pools/${vars.poolId}/adjustments`, {
         userId: vars.userId,
         delta: vars.delta,
@@ -599,14 +786,18 @@ export function usePoolBreakdowns(poolId: string | null) {
 // ---- Admin: gestão de membros de bolões -----------------------------------
 
 export function useAdminPools() {
-  return useQuery({ queryKey: ["admin-pools"], queryFn: () => api.get<PoolSummary[]>("/admin/pools") });
+  return useQuery({
+    queryKey: ["admin-pools"],
+    queryFn: () => api.get<PoolSummary[]>("/admin/pools"),
+  });
 }
 
 export function useAdminUsers() {
   return useQuery({
     queryKey: ["admin-users"],
     queryFn: async () => {
-      const data = await api.get<Array<AdminUserRecord | UserPublic>>("/admin/users");
+      const data =
+        await api.get<Array<AdminUserRecord | UserPublic>>("/admin/users");
       return data.map(normalizeAdminUserRecord);
     },
   });
@@ -616,7 +807,9 @@ export function useAdminPoolMembers(poolId: string | null) {
   return useQuery({
     queryKey: ["admin-pool-members", poolId],
     queryFn: () =>
-      api.get<UserPublic[]>(`/admin/pools/${encodeURIComponent(poolId ?? "")}/members`),
+      api.get<UserPublic[]>(
+        `/admin/pools/${encodeURIComponent(poolId ?? "")}/members`,
+      ),
     enabled: !!poolId,
   });
 }
@@ -625,7 +818,9 @@ export function useAddPoolMember() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { poolId: string; userId: string }) =>
-      api.post<void>(`/admin/pools/${vars.poolId}/members`, { userId: vars.userId }),
+      api.post<void>(`/admin/pools/${vars.poolId}/members`, {
+        userId: vars.userId,
+      }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["admin-pool-members", vars.poolId] });
       qc.invalidateQueries({ queryKey: ["admin-pools"] });
@@ -638,7 +833,9 @@ export function useRemovePoolMember() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { poolId: string; userId: string }) =>
-      api.post<void>(`/admin/pools/${vars.poolId}/members/remove`, { userId: vars.userId }),
+      api.post<void>(`/admin/pools/${vars.poolId}/members/remove`, {
+        userId: vars.userId,
+      }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["admin-pool-members", vars.poolId] });
       qc.invalidateQueries({ queryKey: ["admin-pools"] });
@@ -682,7 +879,10 @@ export function useAdminMatches(filters: {
 export function useAdminMatchAudit(matchId: string | null) {
   return useQuery({
     queryKey: ["admin-match-audit", matchId],
-    queryFn: () => api.get<AuditLogEntry[]>(`/admin/matches/${encodeURIComponent(matchId ?? "")}/audit`),
+    queryFn: () =>
+      api.get<AuditLogEntry[]>(
+        `/admin/matches/${encodeURIComponent(matchId ?? "")}/audit`,
+      ),
     enabled: !!matchId,
   });
 }
@@ -800,7 +1000,10 @@ export function useUserBreakdown(userId: string | null, poolId: string | null) {
 export function useUserPools(userId: string | null) {
   return useQuery({
     queryKey: ["admin-user-pools", userId],
-    queryFn: () => api.get<PoolSummary[]>(`/admin/users/${encodeURIComponent(userId ?? "")}/pools`),
+    queryFn: () =>
+      api.get<PoolSummary[]>(
+        `/admin/users/${encodeURIComponent(userId ?? "")}/pools`,
+      ),
     enabled: !!userId,
   });
 }
@@ -809,7 +1012,9 @@ export function useBlockUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { userId: string; reason: string }) =>
-      api.post<void>(`/admin/users/${vars.userId}/block`, { reason: vars.reason }),
+      api.post<void>(`/admin/users/${vars.userId}/block`, {
+        reason: vars.reason,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
   });
 }
@@ -817,20 +1022,23 @@ export function useBlockUser() {
 export function useUnblockUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (userId: string) => api.post<void>(`/admin/users/${userId}/unblock`),
+    mutationFn: (userId: string) =>
+      api.post<void>(`/admin/users/${userId}/unblock`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
   });
 }
 
 export function useInvalidateUserSessions() {
   return useMutation({
-    mutationFn: (userId: string) => api.post<void>(`/admin/users/${userId}/invalidate-sessions`),
+    mutationFn: (userId: string) =>
+      api.post<void>(`/admin/users/${userId}/invalidate-sessions`),
   });
 }
 
 export function useTriggerUserPasswordReset() {
   return useMutation({
-    mutationFn: (userId: string) => api.post<void>(`/admin/users/${userId}/password-reset`),
+    mutationFn: (userId: string) =>
+      api.post<void>(`/admin/users/${userId}/password-reset`),
   });
 }
 
@@ -838,7 +1046,10 @@ export function useAdminSendPushToUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { userId: string; payload: AdminPushRequest }) =>
-      api.post<AdminPushResult>(`/admin/users/${vars.userId}/push`, vars.payload),
+      api.post<AdminPushResult>(
+        `/admin/users/${vars.userId}/push`,
+        vars.payload,
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-audit"] });
       qc.invalidateQueries({ queryKey: ["admin-users"] });
@@ -873,7 +1084,9 @@ export function useAdminAudit(filters: {
   return useQuery({
     queryKey: ["admin-audit", filters],
     queryFn: () =>
-      api.get<AuditLogEntry[]>(`/admin/audit${params.toString() ? `?${params.toString()}` : ""}`),
+      api.get<AuditLogEntry[]>(
+        `/admin/audit${params.toString() ? `?${params.toString()}` : ""}`,
+      ),
   });
 }
 
@@ -898,7 +1111,8 @@ export function usePublicSettings() {
 export function useSaveAdminSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (settings: AdminSettings) => api.post<AdminSettings>("/admin/settings", settings),
+    mutationFn: (settings: AdminSettings) =>
+      api.post<AdminSettings>("/admin/settings", settings),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-settings"] });
       qc.invalidateQueries({ queryKey: ["public-settings"] });

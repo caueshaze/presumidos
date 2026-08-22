@@ -176,7 +176,7 @@ export function PredictionsPage() {
 
   if (currentPool?.event.kind === "custom") {
     const questions = customQuestions.data ?? [];
-    const answered = questions.filter((question) => question.currentOptionId).length;
+    const answered = questions.filter((question) => question.kind === "numeric" ? question.currentValue != null : question.kind === "multiple_choice" ? (question.currentOptionIds?.length ?? 0) > 0 : question.currentOptionId != null).length;
     return (
       <PageShell>
         <Button variant="link" size="sm" onClick={() => navigate("/dashboard")}>
@@ -199,11 +199,12 @@ export function PredictionsPage() {
               Erro ao carregar categorias: {(customQuestions.error as Error).message}
             </ErrorBanner>
           ) : (
-            questions.map((question, index) => (
-              <PredictionItemRenderer
-                key={question.itemId}
-                item={{ kind: question.kind, question, poolId: poolId!, index }}
-              />
+            questions.map((question, index) => question.kind === "numeric" ? (
+              <PredictionItemRenderer key={question.itemId} item={{ kind: "numeric", question, poolId: poolId!, index }} />
+            ) : question.kind === "multiple_choice" ? (
+              <PredictionItemRenderer key={question.itemId} item={{ kind: "multiple_choice", question, poolId: poolId!, index }} />
+            ) : (
+              <PredictionItemRenderer key={question.itemId} item={{ kind: "single_choice", question, poolId: poolId!, index }} />
             ))
           )}
         </div>

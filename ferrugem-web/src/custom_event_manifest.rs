@@ -20,7 +20,14 @@ pub struct CustomEventManifestItem {
     pub description: Option<String>,
     pub lock_at: String,
     pub reveal_at: String,
+    #[serde(default)]
     pub options: Vec<CustomEventManifestOption>,
+    pub decimal_places: Option<i64>,
+    pub unit_label: Option<String>,
+    pub min_value: Option<String>,
+    pub max_value: Option<String>,
+    pub min_selections: Option<i64>,
+    pub max_selections: Option<i64>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,10 +87,11 @@ pub fn parse_and_validate(bytes: &str) -> Result<CustomEventManifest, String> {
     }
     let mut keys = std::collections::HashSet::new();
     for item in &m.items {
-        if item.kind != "single_choice"
-            || item.external_key.trim().is_empty()
+        if !matches!(
+            item.kind.as_str(),
+            "single_choice" | "numeric" | "multiple_choice"
+        ) || item.external_key.trim().is_empty()
             || item.title.trim().is_empty()
-            || item.options.len() < 2
             || !keys.insert(&item.external_key)
         {
             return Err("item inválido ou externalKey duplicada".into());
@@ -94,13 +102,56 @@ pub fn parse_and_validate(bytes: &str) -> Result<CustomEventManifest, String> {
             &item.lock_at,
             &item.reveal_at,
         )?;
-        let mut options = std::collections::HashSet::new();
-        for o in &item.options {
-            if o.external_key.trim().is_empty()
-                || o.label.trim().is_empty()
-                || !options.insert(&o.external_key)
+        if item.kind == "single_choice" || item.kind == "multiple_choice" {
+            if item.options.len() < 2 {
+                return Err("pergunta baseada em opções requer pelo menos duas options".into());
+            }
+            let mut options = std::collections::HashSet::new();
+            for o in &item.options {
+                if o.external_key.trim().is_empty()
+                    || o.label.trim().is_empty()
+                    || !options.insert(&o.external_key)
+                {
+                    return Err("option inválida ou externalKey duplicada".into());
+                }
+            }
+            if item.kind == "multiple_choice" {
+                let min = item.min_selections.unwrap_or(1);
+                let max = item.max_selections.unwrap_or(item.options.len() as i64);
+                if min < 1 || max < min || max > item.options.len() as i64 {
+                    return Err("min/max multiple_choice inválido".into());
+                }
+                if item.decimal_places.is_some()
+                    || item.unit_label.is_some()
+                    || item.min_value.is_some()
+                    || item.max_value.is_some()
+                {
+                    return Err("multiple_choice não aceita campos numeric".into());
+                }
+            }
+        } else {
+            if !item.options.is_empty() {
+                return Err("numeric não aceita options".into());
+            }
+            let places =
+                crate::numeric::validate_question(item.decimal_places.unwrap_or(-1), None, None)?;
+            let min = item
+                .min_value
+                .as_ref()
+                .map(|v| crate::numeric::parse_scaled(v, places))
+                .transpose()?;
+            let max = item
+                .max_value
+                .as_ref()
+                .map(|v| crate::numeric::parse_scaled(v, places))
+                .transpose()?;
+            crate::numeric::validate_question(places as i64, min, max)?;
+            if item
+                .unit_label
+                .as_ref()
+                .is_some_and(|v| v.trim().is_empty())
             {
-                return Err("option inválida ou externalKey duplicada".into());
+                return Err("unidade inválida".into());
             }
         }
     }
@@ -153,14 +204,36 @@ pub async fn import(
     sqlx::query("INSERT INTO events(id,name,slug,kind,status,starts_at,ends_at) VALUES(?1,?2,?3,'custom','active',?4,?5)").bind(&event_id).bind(&manifest.name).bind(&manifest.slug).bind(&manifest.starts_at).bind(&manifest.ends_at).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_event",e))?;
     for (order, item) in manifest.items.iter().enumerate() {
         let item_id = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO prediction_items(id,event_id,external_key,kind,title,description,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,'single_choice',?4,?5,?6,?7,?8,'open')").bind(&item_id).bind(&event_id).bind(&item.external_key).bind(&item.title).bind(&item.description).bind(&item.lock_at).bind(&item.reveal_at).bind(order as i64).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_item",e))?;
-        sqlx::query("INSERT INTO custom_questions(item_id,points) VALUES(?1,1)")
-            .bind(&item_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| crate::security::internal_error("manifest_question", e))?;
-        for (sort, o) in item.options.iter().enumerate() {
-            sqlx::query("INSERT INTO custom_question_options(id,item_id,external_key,label,sort_order) VALUES(?1,?2,?3,?4,?5)").bind(uuid::Uuid::new_v4().to_string()).bind(&item_id).bind(&o.external_key).bind(&o.label).bind(sort as i64).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_option",e))?;
+        sqlx::query("INSERT INTO prediction_items(id,event_id,external_key,kind,title,description,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'open')").bind(&item_id).bind(&event_id).bind(&item.external_key).bind(&item.kind).bind(&item.title).bind(&item.description).bind(&item.lock_at).bind(&item.reveal_at).bind(order as i64).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_item",e))?;
+        if item.kind == "single_choice" {
+            sqlx::query("INSERT INTO custom_questions(item_id,points) VALUES(?1,1)")
+                .bind(&item_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| crate::security::internal_error("manifest_question", e))?;
+            for (sort, o) in item.options.iter().enumerate() {
+                sqlx::query("INSERT INTO custom_question_options(id,item_id,external_key,label,sort_order) VALUES(?1,?2,?3,?4,?5)").bind(uuid::Uuid::new_v4().to_string()).bind(&item_id).bind(&o.external_key).bind(&o.label).bind(sort as i64).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_option",e))?;
+            }
+        } else if item.kind == "multiple_choice" {
+            sqlx::query("INSERT INTO multiple_choice_questions(item_id,min_selections,max_selections) VALUES(?1,?2,?3)").bind(&item_id).bind(item.min_selections.unwrap_or(1)).bind(item.max_selections).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_multiple_choice",e))?;
+            for (sort, o) in item.options.iter().enumerate() {
+                sqlx::query("INSERT INTO custom_question_options(id,item_id,external_key,label,sort_order) VALUES(?1,?2,?3,?4,?5)").bind(uuid::Uuid::new_v4().to_string()).bind(&item_id).bind(&o.external_key).bind(&o.label).bind(sort as i64).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_multiple_option",e))?;
+            }
+        } else {
+            let places = item.decimal_places.expect("validated") as u8;
+            let min = item
+                .min_value
+                .as_ref()
+                .map(|v| crate::numeric::parse_scaled(v, places))
+                .transpose()
+                .map_err(crate::security::public_error)?;
+            let max = item
+                .max_value
+                .as_ref()
+                .map(|v| crate::numeric::parse_scaled(v, places))
+                .transpose()
+                .map_err(crate::security::public_error)?;
+            sqlx::query("INSERT INTO numeric_questions(item_id,decimal_places,unit_label,min_value_scaled,max_value_scaled) VALUES(?1,?2,?3,?4,?5)").bind(&item_id).bind(places).bind(&item.unit_label).bind(min).bind(max).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_numeric",e))?;
         }
     }
     tx.commit()
@@ -177,6 +250,17 @@ mod tests {
         let manifest = r#"{"name":"Premiação Teste","slug":"premiacao-teste","kind":"custom","startsAt":"2026-09-27T19:30:00-04:00","endsAt":"2026-09-27T21:30:00-04:00","items":[{"externalKey":"melhor-filme","kind":"single_choice","title":"Melhor Filme","description":null,"lockAt":"2026-09-27T19:30:00-04:00","revealAt":"2026-09-27T19:30:00-04:00","options":[{"externalKey":"a","label":"A"},{"externalKey":"b","label":"B"}]}]}"#;
         let parsed = parse_and_validate(manifest).unwrap();
         assert_eq!(parsed.items.len(), 1);
+    }
+
+    #[test]
+    fn accepts_exact_numeric_manifest_and_rejects_options() {
+        let valid = r#"{"name":"N","slug":"n","kind":"custom","items":[{"externalKey":"awards","kind":"numeric","title":"Quantos?","lockAt":"2026-09-27T19:30:00-04:00","revealAt":"2026-09-27T20:30:00-04:00","decimalPlaces":2,"minValue":"0","maxValue":"19.50","unitLabel":"prêmios"}]}"#;
+        assert!(parse_and_validate(valid).is_ok());
+        let invalid = valid.replace(
+            "\"unitLabel\":\"prêmios\"",
+            "\"options\":[{\"externalKey\":\"x\",\"label\":\"x\"}]",
+        );
+        assert!(parse_and_validate(&invalid).is_err());
     }
     #[test]
     fn rejects_duplicate_option_keys_before_database_write() {

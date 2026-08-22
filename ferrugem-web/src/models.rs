@@ -95,6 +95,8 @@ pub enum PredictionItemKind {
     FootballMatch,
     /// Reservado para a fase de perguntas customizadas.
     SingleChoice,
+    Numeric,
+    MultipleChoice,
 }
 
 #[allow(dead_code)]
@@ -168,6 +170,52 @@ pub struct CustomQuestion {
     pub correct_points: i64,
     pub incorrect_points: i64,
     pub options: Vec<CustomQuestionOption>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decimal_places: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exact_points: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub within_tolerance_points: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_selections: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_selections: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_option_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correct_option_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial_points: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultipleChoiceScoreOutcome {
+    Exact,
+    Partial,
+    Incorrect,
+}
+
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MultipleChoiceItemScoringConfig {
+    pub pool_id: String,
+    pub item_id: String,
+    pub exact_points: i64,
+    pub partial_points: i64,
+    pub incorrect_points: i64,
 }
 
 #[allow(dead_code)]
@@ -176,6 +224,18 @@ pub struct CustomQuestion {
 pub struct CustomPredictionValue {
     pub prediction_id: String,
     pub option_id: String,
+}
+
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NumericItemScoringConfig {
+    pub pool_id: String,
+    pub item_id: String,
+    pub exact_points: i64,
+    pub tolerance: String,
+    pub within_tolerance_points: i64,
+    pub incorrect_points: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

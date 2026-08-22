@@ -18,7 +18,7 @@ pub async fn init() {
     // backfill, combinação que o SQLite não permite com FKs já ativadas.
     let migration_pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect_with(options.clone())
+        .connect_with(options.clone().foreign_keys(false))
         .await
         .expect("falha ao conectar ao banco para migrations");
 

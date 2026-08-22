@@ -517,8 +517,12 @@ async fn ensure_breakdowns_seeded(db: &sqlx::SqlitePool) -> Result<(), ServerFnE
 
 #[cfg(feature = "server")]
 async fn recompute_custom_breakdowns(db: &sqlx::SqlitePool) -> Result<(), ServerFnError> {
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("custom_scoring_begin", e))?;
     sqlx::query("DELETE FROM custom_prediction_score_breakdowns")
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("custom_scoring_clear", e))?;
     sqlx::query(
@@ -534,7 +538,50 @@ async fn recompute_custom_breakdowns(db: &sqlx::SqlitePool) -> Result<(), Server
          JOIN custom_pool_item_scoring c ON c.pool_id=p.pool_id AND c.item_id=p.item_id
          JOIN pool_members pm ON pm.pool_id=p.pool_id AND pm.user_id=p.user_id
          WHERE q.correct_option_id IS NOT NULL",
-    ).execute(db).await.map_err(|e| crate::security::internal_error("custom_scoring_insert", e))?;
+    ).execute(&mut *tx).await.map_err(|e| crate::security::internal_error("custom_scoring_insert", e))?;
+    sqlx::query("DELETE FROM numeric_prediction_score_breakdowns")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("numeric_scoring_clear", e))?;
+    sqlx::query(
+        "INSERT INTO numeric_prediction_score_breakdowns (id,pool_id,user_id,item_id,predicted_value_scaled,official_value_scaled,difference_scaled,outcome,exact_points,tolerance_scaled,within_tolerance_points,incorrect_points,total_points,eligible,eligibility_reason)
+         SELECT lower(hex(randomblob(16))),p.pool_id,p.user_id,p.item_id,v.value_scaled,q.result_value_scaled,abs(v.value_scaled-q.result_value_scaled),
+           CASE WHEN v.value_scaled=q.result_value_scaled THEN 'exact' WHEN abs(v.value_scaled-q.result_value_scaled)<=c.tolerance_scaled THEN 'within_tolerance' ELSE 'incorrect' END,
+           c.exact_points,c.tolerance_scaled,c.within_tolerance_points,c.incorrect_points,
+           CASE WHEN v.value_scaled=q.result_value_scaled THEN c.exact_points WHEN abs(v.value_scaled-q.result_value_scaled)<=c.tolerance_scaled THEN c.within_tolerance_points ELSE c.incorrect_points END,
+           CASE WHEN datetime(pi.lock_at)>=datetime(pm.joined_at) THEN 1 ELSE 0 END,
+           CASE WHEN datetime(pi.lock_at)>=datetime(pm.joined_at) THEN 'eligible' ELSE 'joined_after_lock' END
+         FROM predictions p JOIN numeric_prediction_values v ON v.prediction_id=p.id
+         JOIN numeric_questions q ON q.item_id=p.item_id JOIN prediction_items pi ON pi.id=p.item_id
+         JOIN numeric_pool_item_scoring c ON c.pool_id=p.pool_id AND c.item_id=p.item_id
+         JOIN pool_members pm ON pm.pool_id=p.pool_id AND pm.user_id=p.user_id
+         WHERE q.result_value_scaled IS NOT NULL"
+    ).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("numeric_scoring_insert",e))?;
+    sqlx::query("DELETE FROM multiple_choice_prediction_score_breakdowns")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("multiple_choice_scoring_clear", e))?;
+    sqlx::query(
+        "INSERT INTO multiple_choice_prediction_score_breakdowns (id,pool_id,user_id,item_id,outcome,selected_count,correct_count,intersection_count,exact_points,partial_points,incorrect_points,total_points,eligible,eligibility_reason)
+         SELECT lower(hex(randomblob(16))),p.pool_id,p.user_id,p.item_id,
+           CASE WHEN COUNT(sel.option_id)=(SELECT COUNT(*) FROM multiple_choice_results all_res WHERE all_res.item_id=p.item_id) AND COUNT(sel.option_id)=SUM(CASE WHEN res.option_id IS NOT NULL THEN 1 ELSE 0 END) THEN 'exact'
+                WHEN COUNT(sel.option_id)>0 AND COUNT(sel.option_id)=SUM(CASE WHEN res.option_id IS NOT NULL THEN 1 ELSE 0 END) THEN 'partial' ELSE 'incorrect' END,
+           COUNT(sel.option_id),(SELECT COUNT(*) FROM multiple_choice_results all_res WHERE all_res.item_id=p.item_id),SUM(CASE WHEN res.option_id IS NOT NULL THEN 1 ELSE 0 END),
+           c.exact_points,c.partial_points,c.incorrect_points,
+           CASE WHEN COUNT(sel.option_id)=(SELECT COUNT(*) FROM multiple_choice_results all_res WHERE all_res.item_id=p.item_id) AND COUNT(sel.option_id)=SUM(CASE WHEN res.option_id IS NOT NULL THEN 1 ELSE 0 END) THEN c.exact_points
+                WHEN COUNT(sel.option_id)>0 AND COUNT(sel.option_id)=SUM(CASE WHEN res.option_id IS NOT NULL THEN 1 ELSE 0 END) THEN c.partial_points ELSE c.incorrect_points END,
+           CASE WHEN datetime(pi.lock_at)>=datetime(pm.joined_at) THEN 1 ELSE 0 END,
+           CASE WHEN datetime(pi.lock_at)>=datetime(pm.joined_at) THEN 'eligible' ELSE 'joined_after_lock' END
+         FROM predictions p JOIN multiple_choice_prediction_options sel ON sel.prediction_id=p.id
+         JOIN prediction_items pi ON pi.id=p.item_id JOIN multiple_choice_pool_item_scoring c ON c.pool_id=p.pool_id AND c.item_id=p.item_id
+         JOIN pool_members pm ON pm.pool_id=p.pool_id AND pm.user_id=p.user_id
+         LEFT JOIN multiple_choice_results res ON res.item_id=p.item_id AND res.option_id=sel.option_id
+         WHERE EXISTS(SELECT 1 FROM multiple_choice_results r WHERE r.item_id=p.item_id)
+         GROUP BY p.id,c.pool_id,c.item_id"
+    ).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("multiple_choice_scoring_insert",e))?;
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("custom_scoring_commit", e))?;
     Ok(())
 }
 
@@ -819,6 +866,18 @@ pub async fn get_leaderboard(
         let t = tallies.entry(user_id).or_default();
         t.points += total;
         t.correct_results += correct;
+    }
+    let numeric: Vec<(String,i64,i64)>=sqlx::query_as("SELECT user_id,COALESCE(SUM(total_points),0),COALESCE(SUM(CASE WHEN outcome='exact' THEN 1 ELSE 0 END),0) FROM numeric_prediction_score_breakdowns WHERE pool_id=?1 AND eligible=1 GROUP BY user_id").bind(&pool_id).fetch_all(db).await.map_err(|e|crate::security::internal_error("get_leaderboard_numeric",e))?;
+    for (user_id, total, exact) in numeric {
+        let t = tallies.entry(user_id).or_default();
+        t.points += total;
+        t.correct_results += exact;
+    }
+    let multiple: Vec<(String,i64,i64)>=sqlx::query_as("SELECT user_id,COALESCE(SUM(total_points),0),COALESCE(SUM(CASE WHEN outcome='exact' THEN 1 ELSE 0 END),0) FROM multiple_choice_prediction_score_breakdowns WHERE pool_id=?1 AND eligible=1 GROUP BY user_id").bind(&pool_id).fetch_all(db).await.map_err(|e|crate::security::internal_error("get_leaderboard_multiple_choice",e))?;
+    for (user_id, total, exact) in multiple {
+        let t = tallies.entry(user_id).or_default();
+        t.points += total;
+        t.correct_results += exact;
     }
 
     // Overlay provisório: jogos ao vivo sem resultado oficial ainda não entram

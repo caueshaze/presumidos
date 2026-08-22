@@ -168,6 +168,26 @@ struct CreateItemBody {
     reveal_at: String,
 }
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateNumericItemBody {
+    title: String,
+    lock_at: String,
+    reveal_at: String,
+    decimal_places: i64,
+    unit_label: Option<String>,
+    min_value: Option<String>,
+    max_value: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateMultipleChoiceItemBody {
+    title: String,
+    lock_at: String,
+    reveal_at: String,
+    min_selections: i64,
+    max_selections: Option<i64>,
+}
+#[derive(Deserialize)]
 struct CreateOptionBody {
     label: String,
 }
@@ -213,6 +233,25 @@ struct SingleChoicePredictionBody {
     item_id: String,
     option_id: String,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NumericPredictionBody {
+    pool_id: String,
+    item_id: String,
+    value: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultipleChoicePredictionBody {
+    pool_id: String,
+    item_id: String,
+    option_ids: Vec<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultipleChoiceResultBody {
+    option_ids: Vec<String>,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -241,6 +280,25 @@ struct CustomScoringBody {
 #[serde(rename_all = "camelCase")]
 struct CustomResultBody {
     option_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NumericScoringBody {
+    exact_points: i64,
+    tolerance: String,
+    within_tolerance_points: i64,
+    incorrect_points: i64,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultipleChoiceScoringBody {
+    exact_points: i64,
+    partial_points: i64,
+    incorrect_points: i64,
+}
+#[derive(Deserialize)]
+struct NumericResultBody {
+    value: String,
 }
 
 #[derive(Deserialize)]
@@ -398,7 +456,8 @@ struct SubscriptionRemoveBody {
 #[serde(rename_all = "camelCase")]
 struct PredictionReactionBody {
     target_user_id: String,
-    match_id: String,
+    prediction_id: Option<String>,
+    match_id: Option<String>,
     emoji: String,
 }
 
@@ -606,6 +665,24 @@ async fn custom_event_add_item(
         json!({"id":crate::custom_events::add_item(String::new(),id,body.title,body.lock_at,body.reveal_at,csrf_header(&headers)).await?}),
     ))
 }
+async fn custom_event_add_numeric_item(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<CreateNumericItemBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        json!({"id":crate::custom_events::add_numeric_item(String::new(),id,body.title,body.lock_at,body.reveal_at,body.decimal_places,body.unit_label,body.min_value,body.max_value,csrf_header(&headers)).await?}),
+    ))
+}
+async fn custom_event_add_multiple_choice_item(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<CreateMultipleChoiceItemBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        json!({"id":crate::custom_events::add_multiple_choice_item(String::new(),id,body.title,body.lock_at,body.reveal_at,body.min_selections,body.max_selections,csrf_header(&headers)).await?}),
+    ))
+}
 async fn custom_event_add_option(
     Path((id, item_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -729,6 +806,7 @@ async fn react_to_prediction(
         String::new(),
         pool_id,
         body.target_user_id,
+        body.prediction_id,
         body.match_id,
         body.emoji,
         csrf_header(&headers),
@@ -902,6 +980,48 @@ async fn submit_single_choice_prediction(
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
+async fn submit_numeric_prediction(
+    headers: HeaderMap,
+    Json(body): Json<NumericPredictionBody>,
+) -> ApiResult<StatusCode> {
+    crate::numeric::submit_prediction(
+        String::new(),
+        body.pool_id,
+        body.item_id,
+        body.value,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn submit_multiple_choice_prediction(
+    headers: HeaderMap,
+    Json(body): Json<MultipleChoicePredictionBody>,
+) -> ApiResult<StatusCode> {
+    crate::multiple_choice::submit_prediction(
+        String::new(),
+        body.pool_id,
+        body.item_id,
+        body.option_ids,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn set_multiple_choice_result(
+    Path(item_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<MultipleChoiceResultBody>,
+) -> ApiResult<StatusCode> {
+    crate::multiple_choice::set_result_authorized(
+        String::new(),
+        item_id,
+        body.option_ids,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
 async fn custom_questions(
     Query(query): Query<CustomQuestionsQuery>,
@@ -977,6 +1097,69 @@ async fn set_custom_question_result(
         String::new(),
         item_id,
         body.option_id,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn set_numeric_question_result(
+    Path(item_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<NumericResultBody>,
+) -> ApiResult<StatusCode> {
+    crate::numeric::set_result_authorized(
+        String::new(),
+        item_id,
+        body.value,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn pool_numeric_scoring(
+    Path((pool_id, item_id)): Path<(String, String)>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::numeric_item_scoring_config(String::new(), pool_id, item_id).await?,
+    ))
+}
+async fn pool_multiple_choice_scoring(
+    Path((pool_id, item_id)): Path<(String, String)>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::multiple_choice_item_scoring_config(String::new(), pool_id, item_id).await?,
+    ))
+}
+async fn update_pool_multiple_choice_scoring(
+    Path((pool_id, item_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<MultipleChoiceScoringBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::update_multiple_choice_item_scoring_config(
+        String::new(),
+        pool_id,
+        item_id,
+        body.exact_points,
+        body.partial_points,
+        body.incorrect_points,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn update_pool_numeric_scoring(
+    Path((pool_id, item_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<NumericScoringBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::update_numeric_item_scoring_config(
+        String::new(),
+        pool_id,
+        item_id,
+        body.exact_points,
+        body.tolerance,
+        body.within_tolerance_points,
+        body.incorrect_points,
         csrf_header(&headers),
     )
     .await?;
@@ -1371,6 +1554,14 @@ pub fn router() -> Router {
         .route("/custom/events/{id}/delete", post(custom_event_delete))
         .route("/custom/events/{id}/items", post(custom_event_add_item))
         .route(
+            "/custom/events/{id}/items/numeric",
+            post(custom_event_add_numeric_item),
+        )
+        .route(
+            "/custom/events/{id}/items/multiple-choice",
+            post(custom_event_add_multiple_choice_item),
+        )
+        .route(
             "/custom/events/{id}/items/{item_id}/update",
             post(custom_event_update_item),
         )
@@ -1432,8 +1623,24 @@ pub fn router() -> Router {
         )
         .route("/custom/predictions", post(submit_single_choice_prediction))
         .route(
+            "/custom/numeric-predictions",
+            post(submit_numeric_prediction),
+        )
+        .route(
+            "/custom/multiple-choice-predictions",
+            post(submit_multiple_choice_prediction),
+        )
+        .route(
             "/admin/custom/questions/{item_id}/result",
             post(set_custom_question_result),
+        )
+        .route(
+            "/admin/custom/numeric/{item_id}/result",
+            post(set_numeric_question_result),
+        )
+        .route(
+            "/admin/custom/multiple-choice/{item_id}/result",
+            post(set_multiple_choice_result),
         )
         .route(
             "/pools/{pool_id}/scoring/football",
@@ -1442,6 +1649,14 @@ pub fn router() -> Router {
         .route(
             "/pools/{pool_id}/scoring/items/{item_id}",
             get(pool_custom_scoring).post(update_pool_custom_scoring),
+        )
+        .route(
+            "/pools/{pool_id}/scoring/numeric/{item_id}",
+            get(pool_numeric_scoring).post(update_pool_numeric_scoring),
+        )
+        .route(
+            "/pools/{pool_id}/scoring/multiple-choice/{item_id}",
+            get(pool_multiple_choice_scoring).post(update_pool_multiple_choice_scoring),
         )
         .route("/predictions/reopened", get(my_prediction_overrides))
         .route("/scoring/my-points", get(my_match_points))

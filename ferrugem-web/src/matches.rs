@@ -942,7 +942,7 @@ pub async fn delete_match(
         .await
         .map_err(|e| crate::security::internal_error("delete_match_breakdowns", e))?;
 
-    sqlx::query("DELETE FROM prediction_reactions WHERE match_id = ?1")
+    sqlx::query("DELETE FROM prediction_reactions WHERE prediction_id IN (SELECT id FROM predictions WHERE match_id=?1)")
         .bind(&match_id)
         .execute(&mut *tx)
         .await
