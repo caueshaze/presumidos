@@ -316,4 +316,5 @@ export interface AdminSettings {
   globalBannerEnabled: boolean;
   globalBannerText: string;
   finalThemeEnabled: boolean;
+  closingScreenEnabled: boolean;
 }
