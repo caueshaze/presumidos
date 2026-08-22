@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -8,6 +8,8 @@ import {
   useMyPredictionOverrides,
   useMyMatchPoints,
   useKnockoutReleased,
+  useCustomQuestions,
+  usePools,
 } from "@/hooks/queries";
 import { cn, formatKnockoutPhase, isMatchLocked } from "@/lib/utils";
 import { formatSelectionLabel } from "@/lib/selections";
@@ -17,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ErrorBanner } from "@/components/ui/field";
 import { KnockoutControl } from "@/components/KnockoutControl";
-import { MatchCard } from "@/components/MatchCard";
+import { PredictionItemRenderer } from "@/components/PredictionItemRenderer";
 import type { MatchPointsSummary, MatchRecord } from "@/types";
 
 // Ordem natural das fases de uma Copa; fases desconhecidas vão para o fim.
@@ -83,7 +85,13 @@ function Chip({
 
 export function PredictionsPage() {
   const { isAdmin } = useAuth();
+  const navigate = useNavigate();
+  const { poolId: routePoolId } = useParams();
   const [searchParams] = useSearchParams();
+  const pools = usePools();
+  const poolId = routePoolId ?? searchParams.get("poolId") ?? pools.data?.[0]?.id ?? null;
+  const currentPool = pools.data?.find((pool) => pool.id === poolId);
+  const customQuestions = useCustomQuestions(currentPool?.event.kind === "custom" ? poolId : null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [phaseFilter, setPhaseFilter] = useState<string | null>(null);
@@ -166,9 +174,47 @@ export function PredictionsPage() {
     return () => window.clearTimeout(timer);
   }, [targetMatchId, visibleMatches]);
 
+  if (currentPool?.event.kind === "custom") {
+    const questions = customQuestions.data ?? [];
+    const answered = questions.filter((question) => question.currentOptionId).length;
+    return (
+      <PageShell>
+        <Button variant="link" size="sm" onClick={() => navigate("/dashboard")}>
+          ← Meus bolões
+        </Button>
+        <h1 className="mt-3 text-3xl">Palpites</h1>
+        <p className="mt-1 text-ink-muted">
+          {currentPool.name} · {currentPool.event.name}
+        </p>
+        {!customQuestions.isLoading && (
+          <p className="mt-3 text-sm font-semibold text-mint-dark">
+            {answered} de {questions.length} categorias respondidas
+          </p>
+        )}
+        <div className="mt-6 space-y-4">
+          {customQuestions.isLoading ? (
+            <Card><p className="text-ink-muted">Carregando categorias...</p></Card>
+          ) : customQuestions.isError ? (
+            <ErrorBanner>
+              Erro ao carregar categorias: {(customQuestions.error as Error).message}
+            </ErrorBanner>
+          ) : (
+            questions.map((question, index) => (
+              <PredictionItemRenderer
+                key={question.itemId}
+                item={{ kind: question.kind, question, poolId: poolId!, index }}
+              />
+            ))
+          )}
+        </div>
+      </PageShell>
+    );
+  }
+
   return (
     <PageShell>
       <h1 className="text-3xl">Palpites</h1>
+      {currentPool && <p className="mt-1 text-ink-muted">{currentPool.name} · {currentPool.event.name}</p>}
       <p className="mt-1 text-ink-muted">
         Dê seu palpite de placar para cada partida antes do apito inicial.
       </p>
@@ -330,16 +376,21 @@ export function PredictionsPage() {
                 </Card>
               ) : (
                 visibleMatches.map((game, i) => (
-                  <MatchCard
+                  <PredictionItemRenderer
                     key={game.id}
-                    index={i}
-                    game={game}
-                    prediction={predictions.data?.find((p) => p.matchId === game.id)}
-                    locked={isMatchLocked(game.kickoff) && !reopenedMatchIds.has(game.id)}
-                    isAdmin={isAdmin}
-                    cardId={`match-card-${game.id}`}
-                    highlighted={game.id === targetMatchId}
-                    points={pointsByMatch.get(game.id)}
+                    item={{
+                      kind: "football_match",
+                      match: {
+                        index: i,
+                        game,
+                        prediction: predictions.data?.find((p) => p.matchId === game.id),
+                        locked: isMatchLocked(game.kickoff) && !reopenedMatchIds.has(game.id),
+                        isAdmin,
+                        cardId: `match-card-${game.id}`,
+                        highlighted: game.id === targetMatchId,
+                        points: pointsByMatch.get(game.id),
+                      },
+                    }}
                   />
                 ))
               )}

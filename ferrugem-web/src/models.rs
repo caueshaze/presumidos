@@ -30,6 +30,9 @@ pub struct SessionState {
 #[serde(rename_all = "camelCase")]
 pub struct PoolSummary {
     pub id: String,
+    /// Evento sobre o qual este bolão compete. A UI ainda não o seleciona.
+    pub event_id: String,
+    pub event: EventSummary,
     pub name: String,
     pub invite_code: String,
     pub member_count: i64,
@@ -38,6 +41,157 @@ pub struct PoolSummary {
     pub description: String,
     pub visible_rules: String,
     pub join_closed_at: Option<String>,
+}
+
+/// Dados leves do evento necessários para contextualizar um bolão.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EventSummary {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub kind: EventKind,
+    pub status: EventStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EventKind {
+    Football,
+    /// Reservado para a futura Fase de eventos customizados.
+    Custom,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EventStatus {
+    Draft,
+    Active,
+    Finished,
+}
+
+/// Entidade de domínio que define o conteúdo previsto, independente dos pools.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Event {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub kind: EventKind,
+    pub status: EventStatus,
+    pub created_by: Option<String>,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictionItemKind {
+    FootballMatch,
+    /// Reservado para a fase de perguntas customizadas.
+    SingleChoice,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictionItemStatus {
+    Draft,
+    Open,
+    Locked,
+    Resolved,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PredictionItem {
+    pub id: String,
+    pub event_id: String,
+    pub kind: PredictionItemKind,
+    pub title: String,
+    pub description: Option<String>,
+    pub lock_at: String,
+    pub reveal_at: String,
+    pub sort_order: i64,
+    pub status: PredictionItemStatus,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FootballScoringConfig {
+    pub exact_score_points: i64,
+    pub correct_result_exact_side_points: i64,
+    pub correct_result_points: i64,
+    pub incorrect_result_points: i64,
+    pub knockout_bonus_points: i64,
+}
+
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomItemScoringConfig {
+    pub pool_id: String,
+    pub item_id: String,
+    pub correct_points: i64,
+    pub incorrect_points: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomQuestionOption {
+    pub id: String,
+    pub label: String,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomQuestion {
+    pub item_id: String,
+    pub kind: PredictionItemKind,
+    pub title: String,
+    pub lock_at: String,
+    pub reveal_at: String,
+    pub sort_order: i64,
+    pub status: PredictionItemStatus,
+    pub current_option_id: Option<String>,
+    pub correct_option_id: Option<String>,
+    pub correct_points: i64,
+    pub incorrect_points: i64,
+    pub options: Vec<CustomQuestionOption>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomPredictionValue {
+    pub prediction_id: String,
+    pub option_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomMemberPrediction {
+    pub item_id: String,
+    pub title: String,
+    pub option_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomMemberPredictions {
+    pub user_id: String,
+    pub username: String,
+    pub predictions: Vec<CustomMemberPrediction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -76,6 +230,7 @@ pub struct MatchRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PredictionRecord {
+    pub item_id: String,
     pub match_id: String,
     pub home_score: i64,
     pub away_score: i64,

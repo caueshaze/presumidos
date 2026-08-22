@@ -647,7 +647,7 @@ pub async fn list_admin_predictions(
          JOIN users u ON u.id = pm.user_id
          JOIN pools p ON p.id = pm.pool_id
          JOIN matches m
-         LEFT JOIN predictions pr ON pr.user_id = u.id AND pr.match_id = m.id
+         LEFT JOIN predictions pr ON pr.user_id = u.id AND pr.pool_id = p.id AND pr.match_id = m.id
          LEFT JOIN prediction_admin_overrides o
                 ON o.user_id = u.id
                AND o.match_id = m.id
@@ -704,6 +704,7 @@ pub async fn list_admin_predictions(
                     (row.home_score, row.away_score, row.went_to_penalties)
                 {
                     Some(PredictionRecord {
+                        item_id: String::new(),
                         match_id: String::new(),
                         home_score,
                         away_score,
@@ -1047,17 +1048,24 @@ pub async fn list_user_pools(
             String,
             String,
             String,
+            String,
             i64,
             String,
             String,
             String,
             Option<String>,
+            String,
+            String,
+            String,
+            String,
         ),
     >(
-        "SELECT p.id, p.name, p.invite_code,
+        "SELECT p.id, p.event_id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id) AS member_count,
-                p.created_by, p.description, p.visible_rules, p.join_closed_at
+                p.created_by, p.description, p.visible_rules, p.join_closed_at,
+                e.name, e.slug, e.kind, e.status
          FROM pools p
+         JOIN events e ON e.id=p.event_id
          JOIN pool_members pm ON pm.pool_id = p.id
          WHERE pm.user_id = ?1
          ORDER BY p.name COLLATE NOCASE",
@@ -1072,6 +1080,7 @@ pub async fn list_user_pools(
         .map(
             |(
                 id,
+                event_id,
                 name,
                 invite_code,
                 member_count,
@@ -1079,8 +1088,20 @@ pub async fn list_user_pools(
                 description,
                 visible_rules,
                 join_closed_at,
+                event_name,
+                event_slug,
+                event_kind,
+                event_status,
             )| PoolSummary {
                 id,
+                event: crate::pools::event_summary(
+                    event_id.clone(),
+                    event_name,
+                    event_slug,
+                    event_kind,
+                    event_status,
+                ),
+                event_id,
                 name,
                 invite_code,
                 member_count,
@@ -1361,7 +1382,7 @@ pub async fn admin_overview(token: String) -> Result<AdminOverview, ServerFnErro
         "SELECT COUNT(DISTINCT pm.user_id)
          FROM pool_members pm
          JOIN matches m ON datetime(m.kickoff) BETWEEN datetime('now') AND datetime('now', '+6 hours')
-         LEFT JOIN predictions pr ON pr.user_id = pm.user_id AND pr.match_id = m.id
+         LEFT JOIN predictions pr ON pr.user_id = pm.user_id AND pr.pool_id = pm.pool_id AND pr.match_id = m.id
          WHERE pr.id IS NULL",
     )
     .fetch_one(db)

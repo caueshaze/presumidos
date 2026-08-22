@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, SmilePlus } from "lucide-react";
 import {
   useMarkPredictionReactionsSeen,
   useMatches,
   usePoolBreakdowns,
+  useCustomMemberPredictions,
   usePoolMemberPredictions,
   usePools,
   useReactToPrediction,
@@ -282,8 +283,9 @@ function PredictionDetail({
 export function PoolPredictionsPage() {
   const pools = usePools();
   const { user } = useAuth();
+  const { poolId: routePoolId } = useParams();
   const [searchParams] = useSearchParams();
-  const poolIdParam = searchParams.get("poolId");
+  const poolIdParam = routePoolId ?? searchParams.get("poolId");
   const memberIdParam = searchParams.get("memberId");
   const matchIdParam = searchParams.get("matchId");
   const [selectedPool, setSelectedPool] = useState("");
@@ -305,6 +307,8 @@ export function PoolPredictionsPage() {
   }, [selectedPool]);
 
   const members = usePoolMemberPredictions(selectedPool || null);
+  const currentPool = pools.data?.find((pool) => pool.id === selectedPool);
+  const customMembers = useCustomMemberPredictions(currentPool?.event.kind === "custom" ? selectedPool || null : null);
   const matches = useMatches();
   const breakdowns = usePoolBreakdowns(selectedPool || null);
   const reactToPrediction = useReactToPrediction();
@@ -347,6 +351,10 @@ export function PoolPredictionsPage() {
     setLastSeenKey(seenKey);
     markSeen.mutate(selectedPool);
   }, [lastSeenKey, markSeen, selectedMember, selectedPool, user]);
+
+  if (currentPool?.event.kind === "custom") {
+    return <PageShell><h1 className="text-3xl">Palpites do Bolão</h1><p className="mt-1 text-ink-muted">{currentPool.name} · {currentPool.event.name}</p><Card className="mt-6 max-w-sm"><Label htmlFor="custom-pool-select">Bolão</Label><Select id="custom-pool-select" value={selectedPool} onChange={(e) => setSelectedPool(e.target.value)}>{pools.data?.map((pool) => <option key={pool.id} value={pool.id}>{pool.name} · {pool.event.name}</option>)}</Select></Card><div className="mt-5 space-y-4">{customMembers.isLoading ? <Card><p className="text-ink-muted">Carregando...</p></Card> : customMembers.data?.map((member) => <Card key={member.userId}><h2 className="text-lg">{member.username}</h2>{member.predictions.length === 0 ? <p className="mt-2 text-sm text-ink-muted">Palpites ainda ocultos.</p> : <div className="mt-3 space-y-3">{member.predictions.map((prediction) => <div key={prediction.itemId} className="border-t border-mint/15 pt-3 first:border-0 first:pt-0"><p className="text-sm text-ink-muted">{prediction.title}</p><p className="font-semibold">{prediction.optionLabel}</p></div>)}</div>}</Card>)}</div></PageShell>;
+  }
 
   return (
     <PageShell>

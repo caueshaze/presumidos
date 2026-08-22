@@ -1385,6 +1385,7 @@ pub async fn sync_fixtures(mode: SyncMode) -> Result<(), ServerFnError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     fn event(state: &str, completed: bool, hs: &str, aws: &str, clock: &str) -> Event {
         // `winner` derivado do placar (empate ⇒ ninguém vence no tempo normal).
@@ -1601,5 +1602,86 @@ mod tests {
         // 02:00Z do dia 15 é, em ET (UTC−4), 22:00 do dia 14.
         assert_eq!(et_date("2026-06-15T02:00:00Z").as_deref(), Some("20260614"));
         assert_eq!(et_date("2026-06-14T19:00:00Z").as_deref(), Some("20260614"));
+    }
+
+    #[tokio::test]
+    async fn manual_group_result_is_not_overwritten_by_external_final() {
+        // Exercita a aplicação do poller, mas com um banco isolado e um evento
+        // construído localmente: este contrato não pode depender da rede.
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("criar sqlite em memoria");
+        sqlx::query(
+            "CREATE TABLE matches (
+                id TEXT PRIMARY KEY,
+                home_score INTEGER,
+                away_score INTEGER,
+                finished INTEGER,
+                result_source TEXT
+            )",
+        )
+        .execute(&db)
+        .await
+        .expect("criar matches de teste");
+        sqlx::query(
+            "CREATE TABLE audit_logs (
+                id TEXT PRIMARY KEY,
+                actor_user_id TEXT,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT,
+                ip_address TEXT,
+                details_json TEXT NOT NULL
+            )",
+        )
+        .execute(&db)
+        .await
+        .expect("criar audit_logs de teste");
+        sqlx::query(
+            "INSERT INTO matches (id, home_score, away_score, finished, result_source)
+             VALUES ('manual-match', 2, 1, 1, 'manual')",
+        )
+        .execute(&db)
+        .await
+        .expect("inserir resultado manual");
+
+        let candidate = PollCandidate {
+            id: "manual-match".into(),
+            kickoff: "2026-06-11T19:00:00Z".into(),
+            external_fixture_id: Some(760415),
+            phase: Some("Fase de grupos".into()),
+            result_source: Some("manual".into()),
+            home_score: Some(2),
+            away_score: Some(1),
+            home_team: "México".into(),
+            away_team: "África do Sul".into(),
+            source_last_payload_hash: None,
+        };
+        let raw_event = RawEvent {
+            event: event("post", true, "0", "3", ""),
+            raw: serde_json::json!({ "id": "760415", "status": "post", "home": 0, "away": 3 }),
+        };
+
+        assert_eq!(
+            apply_event(&db, &candidate, &raw_event)
+                .await
+                .expect("aplicar final externo"),
+            ApplyOutcome::Noop
+        );
+        let stored: (i64, i64, String) = sqlx::query_as(
+            "SELECT home_score, away_score, result_source FROM matches WHERE id = 'manual-match'",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("ler resultado preservado");
+        assert_eq!(stored, (2, 1, "manual".into()));
+        let audit: (String,) =
+            sqlx::query_as("SELECT action FROM audit_logs WHERE target_id = 'manual-match'")
+                .fetch_one(&db)
+                .await
+                .expect("registrar conflito da fonte");
+        assert_eq!(audit.0, "match_result_api_conflict");
     }
 }
