@@ -152,10 +152,16 @@ export function usePools() {
   return useQuery({ queryKey: ["pools"], queryFn: () => api.get<PoolSummary[]>("/pools") });
 }
 
+export type MyEvent = { id: string; name: string; status: "draft" | "active"; startsAt: string | null; endsAt: string | null };
+export function useMyEvents() {
+  return useQuery({ queryKey: ["custom-events", "mine"], queryFn: () => api.get<MyEvent[]>("/custom/events/mine") });
+}
+
 export function useCreatePool() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => api.post<PoolSummary>("/pools", { name }),
+    mutationFn: (input: string | { name: string; eventId?: string }) =>
+      api.post<PoolSummary>("/pools", typeof input === "string" ? { name: input } : input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pools"] }),
   });
 }

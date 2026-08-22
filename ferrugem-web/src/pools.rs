@@ -291,9 +291,10 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
 }
 
 #[cfg(feature = "server")]
-pub async fn create_pool(
+pub async fn create_pool_for_event(
     token: String,
     name: String,
+    requested_event_id: Option<String>,
     csrf_token: String,
 ) -> Result<PoolSummary, ServerFnError> {
     use crate::auth::require_user;
@@ -307,7 +308,16 @@ pub async fn create_pool(
     let name = crate::security::normalize_required_text("Nome do bolao", name, 3, 80)?;
 
     let db = pool();
-    let event_id = crate::events::world_cup_2026_event_id(db).await?;
+    let event_id = match requested_event_id {
+        Some(id) => {
+            let allowed: Option<(String,)> = sqlx::query_as("SELECT id FROM events WHERE id=?1 AND status='active' AND (kind='football' OR kind='custom')")
+                .bind(&id).fetch_optional(db).await.map_err(|e| crate::security::internal_error("create_pool_event_allowed", e))?;
+            allowed.map(|v| v.0).ok_or_else(|| {
+                crate::security::public_error("Evento indisponível para criar bolão.")
+            })?
+        }
+        None => crate::events::world_cup_2026_event_id(db).await?,
+    };
     let pool_id = Uuid::new_v4().to_string();
     let invite_code = generate_invite_code(db).await?;
     let mut tx = db

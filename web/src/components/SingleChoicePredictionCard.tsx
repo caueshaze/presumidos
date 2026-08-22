@@ -5,7 +5,7 @@ import type { CustomQuestion } from "@/types";
 import { MotionCard } from "./ui/card";
 import { ErrorBanner } from "./ui/field";
 
-export function SingleChoicePredictionCard({ question, poolId, index }: { question: CustomQuestion; poolId: string; index: number }) {
+export function SingleChoicePredictionCard({ question, poolId, index, preview = false }: { question: CustomQuestion; poolId: string; index: number; preview?: boolean }) {
   const submit = useSubmitCustomPrediction();
   const [selected, setSelected] = useState(question.currentOptionId ?? "");
   const [message, setMessage] = useState("");
@@ -19,6 +19,7 @@ export function SingleChoicePredictionCard({ question, poolId, index }: { questi
     if (locked || submit.isPending) return;
     setSelected(optionId);
     setError("");
+    if (preview) return;
     try {
       await submit.mutateAsync({ poolId, itemId: question.itemId, optionId });
       setMessage("Palpite salvo.");

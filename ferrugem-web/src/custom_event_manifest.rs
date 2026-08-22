@@ -29,6 +29,45 @@ pub struct CustomEventManifestOption {
     pub label: String,
 }
 
+/// Invariantes compartilhadas pelo importador e pelo Builder; o Builder pode
+/// salvar rascunhos incompletos, mas não pode aceitar tempos inválidos.
+pub fn validate_event_window(
+    starts_at: &Option<String>,
+    ends_at: &Option<String>,
+) -> Result<(), String> {
+    if let Some(value) = starts_at {
+        chrono::DateTime::parse_from_rfc3339(value).map_err(|_| "startsAt inválido")?;
+    }
+    if let Some(value) = ends_at {
+        chrono::DateTime::parse_from_rfc3339(value).map_err(|_| "endsAt inválido")?;
+    }
+    if let (Some(a), Some(b)) = (starts_at, ends_at) {
+        if chrono::DateTime::parse_from_rfc3339(a).map_err(|_| "startsAt inválido")?
+            >= chrono::DateTime::parse_from_rfc3339(b).map_err(|_| "endsAt inválido")?
+        {
+            return Err("startsAt deve preceder endsAt".into());
+        }
+    }
+    Ok(())
+}
+pub fn validate_single_choice_timing(
+    title: &str,
+    external_key: &str,
+    lock_at: &str,
+    reveal_at: &str,
+) -> Result<(), String> {
+    if title.trim().is_empty() || external_key.trim().is_empty() {
+        return Err("item inválido".into());
+    }
+    let lock = chrono::DateTime::parse_from_rfc3339(lock_at).map_err(|_| "lockAt inválido")?;
+    let reveal =
+        chrono::DateTime::parse_from_rfc3339(reveal_at).map_err(|_| "revealAt inválido")?;
+    if lock > reveal {
+        return Err("lockAt deve preceder ou igualar revealAt".into());
+    }
+    Ok(())
+}
+
 pub fn parse_and_validate(bytes: &str) -> Result<CustomEventManifest, String> {
     let m: CustomEventManifest =
         serde_json::from_str(bytes).map_err(|e| format!("JSON inválido: {e}"))?;
@@ -49,8 +88,12 @@ pub fn parse_and_validate(bytes: &str) -> Result<CustomEventManifest, String> {
         {
             return Err("item inválido ou externalKey duplicada".into());
         }
-        chrono::DateTime::parse_from_rfc3339(&item.lock_at).map_err(|_| "lockAt inválido")?;
-        chrono::DateTime::parse_from_rfc3339(&item.reveal_at).map_err(|_| "revealAt inválido")?;
+        validate_single_choice_timing(
+            &item.title,
+            &item.external_key,
+            &item.lock_at,
+            &item.reveal_at,
+        )?;
         let mut options = std::collections::HashSet::new();
         for o in &item.options {
             if o.external_key.trim().is_empty()
@@ -61,13 +104,7 @@ pub fn parse_and_validate(bytes: &str) -> Result<CustomEventManifest, String> {
             }
         }
     }
-    if let (Some(a), Some(b)) = (&m.starts_at, &m.ends_at) {
-        if chrono::DateTime::parse_from_rfc3339(a).map_err(|_| "startsAt inválido")?
-            >= chrono::DateTime::parse_from_rfc3339(b).map_err(|_| "endsAt inválido")?
-        {
-            return Err("startsAt deve preceder endsAt".into());
-        }
-    }
+    validate_event_window(&m.starts_at, &m.ends_at)?;
     Ok(m)
 }
 
@@ -134,7 +171,7 @@ pub async fn import(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_and_validate;
+    use super::{parse_and_validate, validate_event_window, validate_single_choice_timing};
     #[test]
     fn accepts_generic_single_choice_manifest() {
         let manifest = r#"{"name":"Premiação Teste","slug":"premiacao-teste","kind":"custom","startsAt":"2026-09-27T19:30:00-04:00","endsAt":"2026-09-27T21:30:00-04:00","items":[{"externalKey":"melhor-filme","kind":"single_choice","title":"Melhor Filme","description":null,"lockAt":"2026-09-27T19:30:00-04:00","revealAt":"2026-09-27T19:30:00-04:00","options":[{"externalKey":"a","label":"A"},{"externalKey":"b","label":"B"}]}]}"#;
@@ -145,5 +182,20 @@ mod tests {
     fn rejects_duplicate_option_keys_before_database_write() {
         let manifest = r#"{"name":"X","slug":"x","kind":"custom","items":[{"externalKey":"a","kind":"single_choice","title":"A","lockAt":"2026-09-27T19:30:00-04:00","revealAt":"2026-09-27T19:30:00-04:00","options":[{"externalKey":"same","label":"A"},{"externalKey":"same","label":"B"}]}]}"#;
         assert!(parse_and_validate(manifest).is_err());
+    }
+    #[test]
+    fn shared_timing_invariants_reject_reversed_windows() {
+        assert!(validate_event_window(
+            &Some("2026-10-02T00:00:00Z".into()),
+            &Some("2026-10-01T00:00:00Z".into()),
+        )
+        .is_err());
+        assert!(validate_single_choice_timing(
+            "Categoria",
+            "builder-key",
+            "2026-10-02T00:00:00Z",
+            "2026-10-01T00:00:00Z",
+        )
+        .is_err());
     }
 }

@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, X, Trash2, Ticket } from "lucide-react";
-import { usePools, useCreatePool, useJoinPool, useDeletePool } from "@/hooks/queries";
+import { usePools, useCreatePool, useJoinPool, useDeletePool, useMyEvents } from "@/hooks/queries";
 import { useAuth } from "@/hooks/useAuth";
 import { PageShell } from "@/components/PageShell";
 import { Card, MotionCard } from "@/components/ui/card";
@@ -15,8 +15,11 @@ type Mode = "create" | "join" | null;
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const [search] = useSearchParams();
+  const selectedEventId = search.get("eventId") ?? undefined;
   const { user, isAdmin } = useAuth();
   const pools = usePools();
+  const events = useMyEvents();
   const createPool = useCreatePool();
   const joinPool = useJoinPool();
   const deletePool = useDeletePool();
@@ -46,7 +49,7 @@ export function DashboardPage() {
     e.preventDefault();
     setError("");
     try {
-      await createPool.mutateAsync(newPoolName);
+      await createPool.mutateAsync({ name: newPoolName, eventId: selectedEventId });
       setNewPoolName("");
       setMode(null);
     } catch (err) {
@@ -71,6 +74,9 @@ export function DashboardPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl">Seus bolões</h1>
         <div className="flex flex-col gap-2 sm:flex-row">
+          <Button variant="secondary" size="sm" onClick={() => navigate("/events/new")}>
+            <Plus className="h-4 w-4" /> Criar evento
+          </Button>
           <Button
             variant="primary"
             size="sm"
@@ -116,6 +122,7 @@ export function DashboardPage() {
                   <p className="mt-1 text-sm text-ink-muted">
                     Você vira o dono e convida a galera com o código que o app gera.
                   </p>
+                  {selectedEventId && <p className="mt-1 text-sm text-mint-dark">Você está criando um bolão para o evento publicado selecionado.</p>}
                 </div>
                 <CloseButton onClick={() => setMode(null)} />
               </div>
@@ -182,6 +189,11 @@ export function DashboardPage() {
           <ErrorBanner>{error}</ErrorBanner>
         </div>
       )}
+
+      <section className="mt-6">
+        <h2 className="text-2xl">Meus eventos</h2>
+        {events.data && events.data.length > 0 ? <div className="mt-3 grid gap-3 sm:grid-cols-2">{events.data.map((event) => <Card key={event.id}><h3 className="text-lg">{event.name}</h3><p className="mt-1 text-sm text-ink-muted">{event.status === "draft" ? "Rascunho" : "Publicado"}</p><Button size="sm" className="mt-3" variant="outline" onClick={() => navigate(`/events/${event.id}`)}>{event.status === "draft" ? "Editar" : "Visualizar"}</Button></Card>)}</div> : <p className="mt-2 text-sm text-ink-muted">Crie um evento para montar perguntas e opções próprias.</p>}
+      </section>
 
       <div className="mt-6">
         {pools.isLoading ? (

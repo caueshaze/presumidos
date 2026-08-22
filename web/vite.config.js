@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig(() => {
   const contactEmail = (process.env.VITE_CONTACT_EMAIL ?? process.env.WEB_PUSH_CONTACT_EMAIL ?? "")
     .trim();
+  const apiTarget = process.env.VITE_API_TARGET ?? "http://127.0.0.1:8080";
 
   return {
     root: __dirname,
@@ -25,7 +26,7 @@ export default defineConfig(() => {
       port: 5173,
       proxy: {
         "/api": {
-          target: "http://127.0.0.1:8080",
+          target: apiTarget,
           changeOrigin: true,
         },
       },

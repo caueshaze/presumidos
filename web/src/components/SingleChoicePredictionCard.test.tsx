@@ -64,4 +64,14 @@ describe("SingleChoicePredictionCard", () => {
     expect(screen.getByRole("radio", { name: "Opção A" }).closest("fieldset")?.disabled).toBe(true);
     expect(screen.getByText("Palpites encerrados")).toBeTruthy();
   });
+
+  it("keeps builder preview interactions local", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><SingleChoicePredictionCard question={question} poolId="preview" index={0} preview /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("radio", { name: "Opção B" }));
+    await waitFor(() => expect((screen.getByRole("radio", { name: "Opção B" }) as HTMLInputElement).checked).toBe(true));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

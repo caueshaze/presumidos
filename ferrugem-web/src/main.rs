@@ -17,6 +17,7 @@ mod scoring;
 
 mod config;
 mod custom_event_manifest;
+mod custom_events;
 mod custom_questions;
 mod db;
 mod email;

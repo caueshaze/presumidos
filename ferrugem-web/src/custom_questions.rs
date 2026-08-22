@@ -263,3 +263,32 @@ pub async fn set_correct_option(item_id: &str, option_id: &str) -> Result<(), Se
     crate::scoring::recalculate_custom_breakdowns().await?;
     Ok(())
 }
+
+#[cfg(feature = "server")]
+pub async fn set_correct_option_authorized(
+    token: String,
+    item_id: String,
+    option_id: String,
+    csrf: String,
+) -> Result<(), ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    let allowed:Option<(String,)>=sqlx::query_as("SELECT pi.id FROM prediction_items pi JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)")
+        .bind(&item_id).bind(&session.user_id).fetch_optional(crate::db::pool()).await.map_err(|e|crate::security::internal_error("custom_result_authorization",e))?;
+    if allowed.is_none() {
+        return Err(crate::security::public_error(
+            "Somente o dono do evento ou admin pode definir o resultado.",
+        ));
+    }
+    set_correct_option(&item_id, &option_id).await?;
+    crate::security::append_audit_log(
+        crate::db::pool(),
+        Some(&session.user_id),
+        "event_official_result_changed",
+        "prediction_item",
+        Some(&item_id),
+        None,
+        serde_json::json!({ "option_id": option_id }),
+    )
+    .await
+}

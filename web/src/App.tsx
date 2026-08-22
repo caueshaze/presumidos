@@ -16,6 +16,7 @@ import { TermsPage } from "@/pages/Terms";
 import { PrivacyPage } from "@/pages/Privacy";
 import { ContactPage } from "@/pages/Contact";
 import { PoolScoringPage } from "@/pages/PoolScoring";
+import { EventBuilderPage } from "@/pages/EventBuilder";
 
 export function App() {
   return (
@@ -30,6 +31,11 @@ export function App() {
             <Route path="/terms" element={<TermsPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/contact" element={<ContactPage />} />
+            <Route
+              path="/events/new"
+              element={<AuthGuard><EventBuilderPage /></AuthGuard>}
+            />
+            <Route path="/events/:eventId" element={<AuthGuard><EventBuilderPage /></AuthGuard>} />
             <Route
               path="/dashboard"
               element={

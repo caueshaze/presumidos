@@ -147,8 +147,47 @@ struct ReauthBody {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreatePoolBody {
     name: String,
+    #[serde(default)]
+    event_id: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateEventBody {
+    name: String,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateItemBody {
+    title: String,
+    lock_at: String,
+    reveal_at: String,
+}
+#[derive(Deserialize)]
+struct CreateOptionBody {
+    label: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateEventBody {
+    name: String,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateItemBody {
+    title: String,
+    lock_at: String,
+    reveal_at: String,
+}
+#[derive(Deserialize)]
+struct MoveBody {
+    direction: i64,
 }
 
 #[derive(Deserialize)]
@@ -504,8 +543,166 @@ async fn create_pool(
     headers: HeaderMap,
     Json(body): Json<CreatePoolBody>,
 ) -> ApiResult<impl IntoResponse> {
-    let pool = crate::pools::create_pool(String::new(), body.name, csrf_header(&headers)).await?;
+    let pool = crate::pools::create_pool_for_event(
+        String::new(),
+        body.name,
+        body.event_id,
+        csrf_header(&headers),
+    )
+    .await?;
     Ok(Json(pool))
+}
+
+async fn custom_events_mine() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::custom_events::mine(String::new()).await?))
+}
+async fn custom_event_create(
+    headers: HeaderMap,
+    Json(body): Json<CreateEventBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::custom_events::create(
+            String::new(),
+            body.name,
+            body.starts_at,
+            body.ends_at,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
+}
+async fn custom_event_get(Path(id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::custom_events::get(String::new(), id).await?))
+}
+async fn custom_event_draft(Path(id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::custom_events::draft(String::new(), id).await?))
+}
+async fn custom_event_update(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateEventBody>,
+) -> ApiResult<StatusCode> {
+    crate::custom_events::update_metadata(
+        String::new(),
+        id,
+        body.name,
+        body.starts_at,
+        body.ends_at,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn custom_event_delete(Path(id): Path<String>, headers: HeaderMap) -> ApiResult<StatusCode> {
+    crate::custom_events::delete(String::new(), id, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn custom_event_add_item(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<CreateItemBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        json!({"id":crate::custom_events::add_item(String::new(),id,body.title,body.lock_at,body.reveal_at,csrf_header(&headers)).await?}),
+    ))
+}
+async fn custom_event_add_option(
+    Path((id, item_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<CreateOptionBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        json!({"id":crate::custom_events::add_option(String::new(),id,item_id,body.label,csrf_header(&headers)).await?}),
+    ))
+}
+async fn custom_event_update_item(
+    Path((id, item_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateItemBody>,
+) -> ApiResult<StatusCode> {
+    crate::custom_events::update_item(
+        String::new(),
+        id,
+        item_id,
+        body.title,
+        body.lock_at,
+        body.reveal_at,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn custom_event_delete_item(
+    Path((id, item_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::custom_events::delete_item(String::new(), id, item_id, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn custom_event_move_item(
+    Path((id, item_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<MoveBody>,
+) -> ApiResult<StatusCode> {
+    crate::custom_events::move_item(
+        String::new(),
+        id,
+        item_id,
+        body.direction,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn custom_event_update_option(
+    Path((id, item_id, option_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<CreateOptionBody>,
+) -> ApiResult<StatusCode> {
+    crate::custom_events::update_option(
+        String::new(),
+        id,
+        item_id,
+        option_id,
+        body.label,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn custom_event_delete_option(
+    Path((id, item_id, option_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::custom_events::delete_option(
+        String::new(),
+        id,
+        item_id,
+        option_id,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn custom_event_move_option(
+    Path((id, item_id, option_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<MoveBody>,
+) -> ApiResult<StatusCode> {
+    crate::custom_events::move_option(
+        String::new(),
+        id,
+        item_id,
+        option_id,
+        body.direction,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn custom_event_publish(Path(id): Path<String>, headers: HeaderMap) -> ApiResult<StatusCode> {
+    crate::custom_events::publish(String::new(), id, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn join_pool(
@@ -776,9 +973,13 @@ async fn set_custom_question_result(
     headers: HeaderMap,
     Json(body): Json<CustomResultBody>,
 ) -> ApiResult<StatusCode> {
-    let session = crate::auth::require_admin("").await?;
-    crate::security::require_csrf(&session.csrf_token, &csrf_header(&headers))?;
-    crate::custom_questions::set_correct_option(&item_id, &body.option_id).await?;
+    crate::custom_questions::set_correct_option_authorized(
+        String::new(),
+        item_id,
+        body.option_id,
+        csrf_header(&headers),
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1162,6 +1363,42 @@ pub fn router() -> Router {
             post(remove_push_subscription_handler),
         )
         .route("/pools", get(list_pools).post(create_pool))
+        .route("/custom/events/mine", get(custom_events_mine))
+        .route("/custom/events", post(custom_event_create))
+        .route("/custom/events/{id}", get(custom_event_get))
+        .route("/custom/events/{id}/draft", get(custom_event_draft))
+        .route("/custom/events/{id}/update", post(custom_event_update))
+        .route("/custom/events/{id}/delete", post(custom_event_delete))
+        .route("/custom/events/{id}/items", post(custom_event_add_item))
+        .route(
+            "/custom/events/{id}/items/{item_id}/update",
+            post(custom_event_update_item),
+        )
+        .route(
+            "/custom/events/{id}/items/{item_id}/delete",
+            post(custom_event_delete_item),
+        )
+        .route(
+            "/custom/events/{id}/items/{item_id}/move",
+            post(custom_event_move_item),
+        )
+        .route(
+            "/custom/events/{id}/items/{item_id}/options",
+            post(custom_event_add_option),
+        )
+        .route(
+            "/custom/events/{id}/items/{item_id}/options/{option_id}/update",
+            post(custom_event_update_option),
+        )
+        .route(
+            "/custom/events/{id}/items/{item_id}/options/{option_id}/delete",
+            post(custom_event_delete_option),
+        )
+        .route(
+            "/custom/events/{id}/items/{item_id}/options/{option_id}/move",
+            post(custom_event_move_option),
+        )
+        .route("/custom/events/{id}/publish", post(custom_event_publish))
         .route("/pools/join", post(join_pool))
         .route(
             "/pools/{pool_id}/member-predictions",
