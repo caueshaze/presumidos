@@ -10,6 +10,9 @@ import type {
   AdminUserRecord,
   AuditLogEntry,
   AuthResult,
+  CustomQuestion,
+  CustomMemberPredictions,
+  FootballScoringConfig,
   FixtureCheckResult,
   KnockoutEntry,
   LeaderboardEntry,
@@ -228,6 +231,67 @@ export function useSubmitPrediction() {
   return useMutation({
     mutationFn: (input: PredictionInput) => api.post<void>("/predictions", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["predictions"] }),
+  });
+}
+
+export function useCustomQuestions(poolId: string | null) {
+  return useQuery({
+    queryKey: ["custom-questions", poolId],
+    queryFn: () => api.get<CustomQuestion[]>(`/custom/questions?poolId=${encodeURIComponent(poolId ?? "")}`),
+    enabled: !!poolId,
+  });
+}
+export function useCustomMemberPredictions(poolId: string | null) {
+  return useQuery({ queryKey: ["custom-member-predictions", poolId], queryFn: () => api.get<CustomMemberPredictions[]>(`/pools/${encodeURIComponent(poolId ?? "")}/custom-member-predictions`), enabled: !!poolId });
+}
+
+export function useSubmitCustomPrediction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; itemId: string; optionId: string }) =>
+      api.post<void>("/custom/predictions", vars),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
+      qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] });
+    },
+  });
+}
+
+export function useFootballScoring(poolId: string | null) {
+  return useQuery({
+    queryKey: ["pool-scoring", poolId, "football"],
+    queryFn: () => api.get<FootballScoringConfig>(`/pools/${encodeURIComponent(poolId ?? "")}/scoring/football`),
+    enabled: !!poolId,
+  });
+}
+
+export function useUpdateFootballScoring() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string } & FootballScoringConfig) =>
+      api.post<void>(`/pools/${vars.poolId}/scoring/football`, vars),
+    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ["pool-scoring", vars.poolId] }),
+  });
+}
+
+export function useUpdateCustomScoring() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; itemId: string; correctPoints: number; incorrectPoints: number }) =>
+      api.post<void>(`/pools/${vars.poolId}/scoring/items/${vars.itemId}`, vars),
+    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] }),
+  });
+}
+
+export function useSetCustomResult() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { itemId: string; optionId: string; poolId: string }) =>
+      api.post<void>(`/admin/custom/questions/${vars.itemId}/result`, { optionId: vars.optionId }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
+      qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] });
+    },
   });
 }
 

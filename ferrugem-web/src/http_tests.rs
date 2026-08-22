@@ -238,8 +238,14 @@ async fn insert_pool(name: &str, created_by: &str) -> String {
     let id = uuid::Uuid::new_v4().to_string();
     let code = uuid::Uuid::new_v4().simple().to_string();
     let code = code[..8].to_uppercase();
-    sqlx::query("INSERT INTO pools (id, name, invite_code, created_by) VALUES (?1, ?2, ?3, ?4)")
+    let event_id: (String,) = sqlx::query_as("SELECT id FROM events WHERE slug = ?1")
+        .bind(crate::events::WORLD_CUP_2026_SLUG)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("evento da Copa seedado para fixture");
+    sqlx::query("INSERT INTO pools (id, event_id, name, invite_code, created_by) VALUES (?1, ?2, ?3, ?4, ?5)")
         .bind(&id)
+        .bind(&event_id.0)
         .bind(name)
         .bind(&code)
         .bind(created_by)
@@ -280,12 +286,14 @@ async fn insert_finished_match(
     away_score: i64,
 ) -> String {
     let id = uuid::Uuid::new_v4().to_string();
+    let prediction_item_id = insert_prediction_item(home, away, kickoff).await;
     sqlx::query(
-        "INSERT INTO matches (id, home_team, away_team, kickoff, group_name, phase,
+        "INSERT INTO matches (id, prediction_item_id, home_team, away_team, kickoff, group_name, phase,
                               home_score, away_score, finished)
-         VALUES (?1, ?2, ?3, ?4, 'A', 'Fase de grupos', ?5, ?6, 1)",
+         VALUES (?1, ?2, ?3, ?4, ?5, 'A', 'Fase de grupos', ?6, ?7, 1)",
     )
     .bind(&id)
+    .bind(&prediction_item_id)
     .bind(home)
     .bind(away)
     .bind(kickoff)
@@ -299,11 +307,13 @@ async fn insert_finished_match(
 
 async fn insert_match(home: &str, away: &str, kickoff: &str) -> String {
     let id = uuid::Uuid::new_v4().to_string();
+    let prediction_item_id = insert_prediction_item(home, away, kickoff).await;
     sqlx::query(
-        "INSERT INTO matches (id, home_team, away_team, kickoff, group_name, phase)
-         VALUES (?1, ?2, ?3, ?4, 'A', 'Fase de grupos')",
+        "INSERT INTO matches (id, prediction_item_id, home_team, away_team, kickoff, group_name, phase)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'A', 'Fase de grupos')",
     )
     .bind(&id)
+    .bind(&prediction_item_id)
     .bind(home)
     .bind(away)
     .bind(kickoff)
@@ -311,6 +321,585 @@ async fn insert_match(home: &str, away: &str, kickoff: &str) -> String {
     .await
     .expect("inserir partida de teste");
     id
+}
+
+async fn insert_custom_question(
+    event_id: &str,
+    title: &str,
+    lock_at: &str,
+    reveal_at: &str,
+    labels: &[&str],
+) -> (String, Vec<String>) {
+    assert!(
+        labels.len() >= 2,
+        "pergunta single choice exige duas opções"
+    );
+    let item_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO prediction_items (id,event_id,kind,title,lock_at,reveal_at,sort_order,status) VALUES (?1,?2,'single_choice',?3,?4,?5,999,'open')")
+        .bind(&item_id).bind(event_id).bind(title).bind(lock_at).bind(reveal_at).execute(crate::db::pool()).await.expect("item custom");
+    sqlx::query("INSERT INTO custom_questions (item_id,points) VALUES (?1,1)")
+        .bind(&item_id)
+        .execute(crate::db::pool())
+        .await
+        .expect("pergunta custom");
+    let mut ids = Vec::new();
+    for (sort_order, label) in labels.iter().enumerate() {
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO custom_question_options (id,item_id,label,sort_order) VALUES (?1,?2,?3,?4)").bind(&id).bind(&item_id).bind(label).bind(sort_order as i64).execute(crate::db::pool()).await.expect("opção custom");
+        ids.push(id);
+    }
+    (item_id, ids)
+}
+
+async fn insert_custom_event_pool(owner: &str, name: &str) -> (String, String) {
+    let event_id = uuid::Uuid::new_v4().to_string();
+    let pool_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO events (id,name,slug,kind,status) VALUES (?1,?2,?3,'custom','active')",
+    )
+    .bind(&event_id)
+    .bind(name)
+    .bind(format!("event-{event_id}"))
+    .execute(crate::db::pool())
+    .await
+    .expect("evento custom");
+    sqlx::query(
+        "INSERT INTO pools (id,event_id,name,invite_code,created_by) VALUES (?1,?2,?3,?4,?5)",
+    )
+    .bind(&pool_id)
+    .bind(&event_id)
+    .bind(name)
+    .bind(uuid::Uuid::new_v4().simple().to_string())
+    .bind(owner)
+    .execute(crate::db::pool())
+    .await
+    .expect("pool custom");
+    add_membership(&pool_id, owner).await;
+    (event_id, pool_id)
+}
+
+async fn insert_prediction_item(home: &str, away: &str, kickoff: &str) -> String {
+    let id = uuid::Uuid::new_v4().to_string();
+    let event_id: (String,) = sqlx::query_as("SELECT id FROM events WHERE slug = ?1")
+        .bind(crate::events::WORLD_CUP_2026_SLUG)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("evento Copa para fixture");
+    sqlx::query(
+        "INSERT INTO prediction_items
+            (id, event_id, kind, title, lock_at, reveal_at, sort_order, status)
+         VALUES (?1, ?2, 'football_match', ?3, ?4, ?4, 0, 'open')",
+    )
+    .bind(&id)
+    .bind(&event_id.0)
+    .bind(format!("{home} x {away}"))
+    .bind(kickoff)
+    .execute(crate::db::pool())
+    .await
+    .expect("prediction item para fixture");
+    id
+}
+
+#[tokio::test]
+async fn prediction_items_backfill_matches_with_world_cup_lock_and_reveal() {
+    test_server().await;
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT COUNT(*) FROM matches),
+            (SELECT COUNT(*) FROM matches m
+             JOIN prediction_items pi ON pi.id = m.prediction_item_id
+             JOIN events e ON e.id = pi.event_id
+             WHERE pi.kind = 'football_match'
+               AND e.slug = 'world-cup-2026'
+               AND pi.lock_at = m.kickoff
+               AND pi.reveal_at = m.kickoff)",
+    )
+    .fetch_one(crate::db::pool())
+    .await
+    .expect("validar backfill de prediction items");
+    assert!(counts.0 > 0, "seed atual deve conter partidas");
+    assert_eq!(
+        counts.0, counts.1,
+        "cada match deve ter um item football da Copa"
+    );
+}
+
+#[tokio::test]
+async fn single_choice_is_a_real_prediction_without_match_and_respects_identity_lock_and_event() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let user = seed_user(
+        &format!("custom-{suffix}"),
+        &format!("custom-{suffix}@test"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let (event, pool) = insert_custom_event_pool(&user, "Premios").await;
+    let (item, options) = insert_custom_question(
+        &event,
+        "Video of the Year",
+        "2999-01-01T00:00:00Z",
+        "2999-01-01T00:00:00Z",
+        &["Artist A", "Artist B"],
+    )
+    .await;
+    let (other_item, other_options) = insert_custom_question(
+        &event,
+        "Album",
+        "2999-01-01T00:00:00Z",
+        "2999-01-01T00:00:00Z",
+        &["C", "D"],
+    )
+    .await;
+    let (token, csrf) = seed_session(&user).await;
+    let client = client_with_session(base, &token);
+    let url = format!("{base}/api/custom/predictions");
+    let submit = |option_id: &String| {
+        client
+            .post(&url)
+            .header("X-CSRF-Token", &csrf)
+            .json(&json!({"poolId":pool,"itemId":item,"optionId":option_id}))
+    };
+    assert_eq!(
+        submit(&options[0])
+            .send()
+            .await
+            .expect("responder")
+            .status()
+            .as_u16(),
+        204
+    );
+    let stored: (String, Option<String>, Option<i64>,) = sqlx::query_as("SELECT id,match_id,home_score FROM predictions WHERE pool_id=?1 AND user_id=?2 AND item_id=?3").bind(&pool).bind(&user).bind(&item).fetch_one(crate::db::pool()).await.expect("prediction custom");
+    assert!(
+        stored.1.is_none() && stored.2.is_none(),
+        "custom não possui Match nem placar"
+    );
+    let value: (String,) =
+        sqlx::query_as("SELECT option_id FROM custom_prediction_values WHERE prediction_id=?1")
+            .bind(&stored.0)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("valor custom");
+    assert_eq!(value.0, options[0]);
+    assert_eq!(
+        crate::custom_questions::custom_prediction_value(&stored.0)
+            .await
+            .unwrap()
+            .unwrap()
+            .option_id,
+        options[0]
+    );
+    assert_eq!(
+        submit(&options[1])
+            .send()
+            .await
+            .expect("editar")
+            .status()
+            .as_u16(),
+        204
+    );
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM predictions WHERE pool_id=?1 AND user_id=?2 AND item_id=?3",
+    )
+    .bind(&pool)
+    .bind(&user)
+    .bind(&item)
+    .fetch_one(crate::db::pool())
+    .await
+    .unwrap();
+    assert_eq!(count.0, 1);
+    let changed: (String,) =
+        sqlx::query_as("SELECT option_id FROM custom_prediction_values WHERE prediction_id=?1")
+            .bind(&stored.0)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap();
+    assert_eq!(changed.0, options[1]);
+    assert!(!submit(&other_options[0])
+        .send()
+        .await
+        .expect("opção errada")
+        .status()
+        .is_success());
+    let questions: Vec<crate::models::CustomQuestion> = client
+        .get(format!("{base}/api/custom/questions?poolId={pool}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(questions
+        .iter()
+        .any(|q| q.item_id == item && q.options.len() == 2));
+    sqlx::query("UPDATE prediction_items SET lock_at='2020-01-01T00:00:00Z' WHERE id=?1")
+        .bind(&item)
+        .execute(crate::db::pool())
+        .await
+        .unwrap();
+    assert!(!submit(&options[0])
+        .send()
+        .await
+        .expect("lock")
+        .status()
+        .is_success());
+    let football = insert_match("Brasil", "Japao", "2999-01-01T00:00:00Z").await;
+    let football_item: (String,) =
+        sqlx::query_as("SELECT prediction_item_id FROM matches WHERE id=?1")
+            .bind(&football)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap();
+    assert!(!client
+        .post(&url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({"poolId":pool,"itemId":football_item.0,"optionId":options[0]}))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    crate::custom_questions::set_correct_option(&item, &options[1])
+        .await
+        .expect("resultado correto da própria pergunta");
+    assert!(
+        crate::custom_questions::set_correct_option(&item, &other_options[0])
+            .await
+            .is_err()
+    );
+    let correct: (String,) =
+        sqlx::query_as("SELECT correct_option_id FROM custom_questions WHERE item_id=?1")
+            .bind(&item)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap();
+    assert_eq!(correct.0, options[1]);
+    let awarded: (i64,) = sqlx::query_as(
+        "SELECT total_points FROM custom_prediction_score_breakdowns WHERE pool_id=?1 AND user_id=?2 AND item_id=?3",
+    )
+    .bind(&pool)
+    .bind(&user)
+    .bind(&item)
+    .fetch_one(crate::db::pool())
+    .await
+    .unwrap();
+    assert_eq!(awarded.0, 1, "single choice resolvida participa do score");
+    assert_ne!(item, other_item);
+}
+
+#[tokio::test]
+async fn football_scoring_is_persisted_and_isolated_per_pool() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let user = seed_user(
+        &format!("scoring-{suffix}"),
+        &format!("scoring-{suffix}@test"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let pool_a = insert_pool(&format!("A-{suffix}"), &user).await;
+    let pool_b = insert_pool(&format!("B-{suffix}"), &user).await;
+    add_membership(&pool_a, &user).await;
+    add_membership(&pool_b, &user).await;
+    let default:(i64,i64,i64,i64,i64)=sqlx::query_as("SELECT exact_score_points,correct_result_exact_side_points,correct_result_points,incorrect_result_points,knockout_bonus_points FROM football_pool_scoring WHERE pool_id=?1").bind(&pool_a).fetch_one(crate::db::pool()).await.unwrap();
+    assert_eq!(default, (7, 4, 3, 0, 3));
+    sqlx::query("UPDATE football_pool_scoring SET exact_score_points=15 WHERE pool_id=?1")
+        .bind(&pool_b)
+        .execute(crate::db::pool())
+        .await
+        .unwrap();
+    let match_id = insert_finished_match("Brasil", "Japao", "2020-01-01T00:00:00Z", 2, 1).await;
+    let item: (String,) = sqlx::query_as("SELECT prediction_item_id FROM matches WHERE id=?1")
+        .bind(&match_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .unwrap();
+    for pool in [&pool_a, &pool_b] {
+        sqlx::query("INSERT INTO predictions (id,pool_id,user_id,item_id,match_id,home_score,away_score) VALUES (?1,?2,?3,?4,?5,2,1)").bind(uuid::Uuid::new_v4().to_string()).bind(pool).bind(&user).bind(&item.0).bind(&match_id).execute(crate::db::pool()).await.unwrap();
+    }
+    crate::scoring::recalculate_all_breakdowns(None)
+        .await
+        .unwrap();
+    let a:(i64,)=sqlx::query_as("SELECT total_points FROM prediction_score_breakdowns WHERE pool_id=?1 AND user_id=?2 AND match_id=?3").bind(&pool_a).bind(&user).bind(&match_id).fetch_one(crate::db::pool()).await.unwrap();
+    let b:(i64,)=sqlx::query_as("SELECT total_points FROM prediction_score_breakdowns WHERE pool_id=?1 AND user_id=?2 AND match_id=?3").bind(&pool_b).bind(&user).bind(&match_id).fetch_one(crate::db::pool()).await.unwrap();
+    assert_eq!((a.0, b.0), (7, 15));
+    let (token, _csrf) = seed_session(&user).await;
+    let client = client_with_session(base, &token);
+    let read: crate::models::FootballScoringConfig = client
+        .get(format!("{base}/api/pools/{pool_a}/scoring/football"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(read.exact_score_points, 7);
+}
+
+#[tokio::test]
+async fn custom_scoring_owner_can_edit_before_lock_and_is_frozen_after() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let owner = seed_user(
+        &format!("custom-score-{suffix}"),
+        &format!("custom-score-{suffix}@test"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let (event, pool) = insert_custom_event_pool(&owner, "Custom score").await;
+    let (item, options) = insert_custom_question(
+        &event,
+        "Questão",
+        "2999-01-01T00:00:00Z",
+        "2999-01-01T00:00:00Z",
+        &["A", "B"],
+    )
+    .await;
+    let (token, csrf) = seed_session(&owner).await;
+    let client = client_with_session(base, &token);
+    let url = format!("{base}/api/pools/{pool}/scoring/items/{item}");
+    assert_eq!(
+        client
+            .post(&url)
+            .header("X-CSRF-Token", &csrf)
+            .json(&json!({"correctPoints":5,"incorrectPoints":2}))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        204
+    );
+    assert_eq!(
+        client
+            .post(format!("{base}/api/custom/predictions"))
+            .header("X-CSRF-Token", &csrf)
+            .json(&json!({"poolId":pool,"itemId":item,"optionId":options[0]}))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        204
+    );
+    crate::custom_questions::set_correct_option(&item, &options[0])
+        .await
+        .unwrap();
+    let points:(i64,)=sqlx::query_as("SELECT total_points FROM custom_prediction_score_breakdowns WHERE pool_id=?1 AND user_id=?2 AND item_id=?3").bind(&pool).bind(&owner).bind(&item).fetch_one(crate::db::pool()).await.unwrap();
+    assert_eq!(points.0, 5);
+    sqlx::query("UPDATE prediction_items SET lock_at='2020-01-01T00:00:00Z' WHERE id=?1")
+        .bind(&item)
+        .execute(crate::db::pool())
+        .await
+        .unwrap();
+    assert!(!client
+        .post(&url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({"correctPoints":9,"incorrectPoints":0}))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+}
+
+#[tokio::test]
+async fn vma_manifest_imports_as_generic_custom_event_without_matches() {
+    let base = test_server().await;
+    let manifest = crate::custom_event_manifest::parse_and_validate(include_str!(
+        "../data/events/vma-2026.json"
+    ))
+    .expect("manifesto VMA válido");
+    let summary = crate::custom_event_manifest::import(manifest, true)
+        .await
+        .expect("importação VMA idempotente");
+    assert_eq!(summary, (19, 121));
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT COUNT(*) FROM prediction_items pi JOIN events e ON e.id=pi.event_id WHERE e.slug='vma-2026'),
+           (SELECT COUNT(*) FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id JOIN events e ON e.id=pi.event_id WHERE e.slug='vma-2026'),
+           (SELECT COUNT(*) FROM matches m JOIN prediction_items pi ON pi.id=m.prediction_item_id JOIN events e ON e.id=pi.event_id WHERE e.slug='vma-2026')",
+    )
+    .fetch_one(crate::db::pool())
+    .await
+    .unwrap();
+    assert_eq!(counts, (19, 121, 0));
+    let suffix = uuid::Uuid::new_v4();
+    let user = seed_user(
+        &format!("vma-{suffix}"),
+        &format!("vma-{suffix}@test"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let event: (String,) = sqlx::query_as("SELECT id FROM events WHERE slug='vma-2026'")
+        .fetch_one(crate::db::pool())
+        .await
+        .unwrap();
+    let pool_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO pools(id,event_id,name,invite_code,created_by) VALUES(?1,?2,?3,?4,?5)",
+    )
+    .bind(&pool_id)
+    .bind(&event.0)
+    .bind("VMA smoke")
+    .bind(uuid::Uuid::new_v4().simple().to_string())
+    .bind(&user)
+    .execute(crate::db::pool())
+    .await
+    .unwrap();
+    add_membership(&pool_id, &user).await;
+    let configs: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM custom_pool_item_scoring WHERE pool_id=?1")
+            .bind(&pool_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap();
+    assert_eq!(configs.0, 19, "pool novo materializa scoring por item");
+
+    let (token, _) = seed_session(&user).await;
+    let client = client_with_session(base, &token);
+    let pools: Vec<crate::models::PoolSummary> = client
+        .get(format!("{base}/api/pools"))
+        .send()
+        .await
+        .expect("listar pools VMA")
+        .json()
+        .await
+        .expect("JSON de pools VMA");
+    let vma_pool = pools
+        .iter()
+        .find(|pool| pool.id == pool_id)
+        .expect("pool VMA");
+    assert_eq!(vma_pool.event.kind, crate::models::EventKind::Custom);
+    assert_eq!(vma_pool.event.slug, "vma-2026");
+
+    let questions: Vec<crate::models::CustomQuestion> = client
+        .get(format!("{base}/api/custom/questions?poolId={pool_id}"))
+        .send()
+        .await
+        .expect("carregar perguntas VMA")
+        .json()
+        .await
+        .expect("JSON de perguntas VMA");
+    assert_eq!(questions.len(), 19);
+    assert_eq!(
+        questions
+            .iter()
+            .map(|question| question.options.len())
+            .sum::<usize>(),
+        121
+    );
+    assert!(questions
+        .iter()
+        .all(|question| question.kind == crate::models::PredictionItemKind::SingleChoice));
+    assert!(questions
+        .windows(2)
+        .all(|pair| pair[0].sort_order <= pair[1].sort_order));
+}
+
+#[tokio::test]
+async fn manual_match_lifecycle_creates_syncs_and_deletes_prediction_item() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let admin_id = seed_user(
+        &format!("item-admin-{suffix}"),
+        &format!("item-admin-{suffix}@teste.com"),
+        "senha-correta-123",
+        true,
+    )
+    .await;
+    let (token, csrf) = seed_session(&admin_id).await;
+    sqlx::query("UPDATE sessions SET admin_reauthed_at = datetime('now') WHERE token = ?1")
+        .bind(&token)
+        .execute(crate::db::pool())
+        .await
+        .expect("reauth admin");
+    let client = client_with_session(base, &token);
+    let mut create_body = String::new();
+    let mut create_status = reqwest::StatusCode::INTERNAL_SERVER_ERROR;
+    for attempt in 0..8 {
+        let response = client
+            .post(format!("{base}/api/admin/matches"))
+            .header("X-CSRF-Token", &csrf)
+            .json(&json!({
+                "homeTeam": "Brasil", "awayTeam": "Japao", "phase": "Final",
+                "kickoff": "2030-07-01T20:00:00Z"
+            }))
+            .send()
+            .await
+            .expect("criar match manual");
+        create_status = response.status();
+        create_body = response.text().await.expect("corpo create");
+        if create_status.is_success() {
+            break;
+        }
+        if attempt < 7 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+    assert!(create_status.is_success(), "criar match: {create_body}");
+    let created: crate::models::MatchRecord =
+        serde_json::from_str(&create_body).expect("match criado");
+    let item_id: (String,) = sqlx::query_as("SELECT prediction_item_id FROM matches WHERE id = ?1")
+        .bind(&created.id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("item do match");
+    let initial: (String, String, String) =
+        sqlx::query_as("SELECT title, lock_at, reveal_at FROM prediction_items WHERE id = ?1")
+            .bind(&item_id.0)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("item criado");
+    assert_eq!(
+        initial,
+        (
+            "Brasil x Japao".into(),
+            "2030-07-01T20:00:00+00:00".into(),
+            "2030-07-01T20:00:00+00:00".into()
+        )
+    );
+
+    let updated_kickoff = "2030-07-02T20:00:00Z";
+    let updated: crate::models::MatchRecord = client
+        .post(format!("{base}/api/admin/matches/{}/schedule", created.id))
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "homeTeam": "Brasil", "awayTeam": "Coreia", "phase": "Final", "kickoff": updated_kickoff }))
+        .send().await.expect("editar schedule").error_for_status().expect("status schedule")
+        .json().await.expect("match atualizado");
+    assert_eq!(updated.kickoff, "2030-07-02T20:00:00+00:00");
+    let synced: (String, String, String) =
+        sqlx::query_as("SELECT title, lock_at, reveal_at FROM prediction_items WHERE id = ?1")
+            .bind(&item_id.0)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("item sincronizado");
+    assert_eq!(
+        synced,
+        (
+            "Brasil x Coreia".into(),
+            updated.kickoff.clone(),
+            updated.kickoff
+        )
+    );
+
+    let deleted = client
+        .post(format!("{base}/api/admin/matches/{}/delete", created.id))
+        .header("X-CSRF-Token", &csrf)
+        .send()
+        .await
+        .expect("deletar match");
+    assert!(deleted.status().is_success());
+    let item_exists: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE id = ?1")
+        .bind(&item_id.0)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("verificar item removido");
+    assert_eq!(item_exists.0, 0);
 }
 
 /// Cria uma sessão diretamente no banco (sem passar pelo endpoint de login, que
@@ -367,18 +956,175 @@ async fn leaderboard_points(
 
 async fn insert_prediction(user_id: &str, match_id: &str, home: i64, away: i64) {
     let id = uuid::Uuid::new_v4().to_string();
+    let pool_id: (String,) = sqlx::query_as(
+        "SELECT pm.pool_id FROM pool_members pm JOIN pools p ON p.id = pm.pool_id
+         JOIN matches m ON m.id = ?2 JOIN prediction_items pi ON pi.id = m.prediction_item_id
+         WHERE pm.user_id = ?1 AND p.event_id = pi.event_id LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(match_id)
+    .fetch_one(crate::db::pool())
+    .await
+    .expect("pool compativel para palpite de teste");
+    let item_id: (String,) = sqlx::query_as("SELECT prediction_item_id FROM matches WHERE id = ?1")
+        .bind(match_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("item do match de teste");
     sqlx::query(
-        "INSERT INTO predictions (id, user_id, match_id, home_score, away_score)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO predictions (id, pool_id, user_id, item_id, match_id, home_score, away_score)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
     .bind(&id)
+    .bind(&pool_id.0)
     .bind(user_id)
+    .bind(&item_id.0)
     .bind(match_id)
     .bind(home)
     .bind(away)
     .execute(crate::db::pool())
     .await
     .expect("inserir palpite de teste");
+}
+
+#[tokio::test]
+async fn creating_a_pool_assigns_the_seeded_world_cup_event_server_side() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let user_id = seed_user(
+        &format!("event-owner-{suffix}"),
+        &format!("event-owner-{suffix}@teste.com"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let (token, csrf) = seed_session(&user_id).await;
+    let client = client_with_session(base, &token);
+
+    // O contrato de criação permanece somente com `name`: o cliente não escolhe
+    // nem fornece `event_id` nesta fase.
+    let created: crate::models::PoolSummary = client
+        .post(format!("{base}/api/pools"))
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "name": format!("Bolao Evento {suffix}") }))
+        .send()
+        .await
+        .expect("criar bolao")
+        .error_for_status()
+        .expect("status de criacao")
+        .json()
+        .await
+        .expect("decodificar bolao criado");
+    let seeded: (String,) = sqlx::query_as("SELECT id FROM events WHERE slug = ?1")
+        .bind(crate::events::WORLD_CUP_2026_SLUG)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("evento da Copa seedado");
+    assert_eq!(created.event_id, seeded.0);
+
+    let stored: (String,) = sqlx::query_as("SELECT event_id FROM pools WHERE id = ?1")
+        .bind(&created.id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("ler evento persistido no bolao");
+    assert_eq!(stored.0, created.event_id);
+}
+
+/// O lock é aplicado pelo domínio ao gravar (e não apenas ocultado pela UI):
+/// antes dele o palpite pode ser criado e atualizado; depois, nem a criação
+/// nem a alteração passam sem uma reabertura administrativa explícita.
+#[tokio::test]
+async fn predictions_can_change_before_lock_and_are_rejected_after_lock() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let user_id = seed_user(
+        &format!("prediction-lock-{suffix}"),
+        &format!("prediction-lock-{suffix}@teste.com"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let pool_id = insert_pool(&format!("prediction-lock-pool-{suffix}"), &user_id).await;
+    add_membership(&pool_id, &user_id).await;
+    let (token, csrf) = seed_session(&user_id).await;
+    let client = client_with_session(base, &token);
+
+    let future_match = insert_match("Brasil", "Japao", "2999-01-01T00:00:00Z").await;
+    let prediction_url = format!("{base}/api/predictions");
+    for (home_score, away_score) in [(2, 1), (3, 1)] {
+        let response = client
+            .post(&prediction_url)
+            .header("X-CSRF-Token", &csrf)
+            .json(&json!({
+                "matchId": future_match,
+                "homeScore": home_score,
+                "awayScore": away_score,
+            }))
+            .send()
+            .await
+            .expect("enviar palpite antes do lock");
+        assert_eq!(response.status().as_u16(), 204);
+    }
+    let future_stored: (i64, i64) = sqlx::query_as(
+        "SELECT home_score, away_score FROM predictions WHERE user_id = ?1 AND match_id = ?2",
+    )
+    .bind(&user_id)
+    .bind(&future_match)
+    .fetch_one(crate::db::pool())
+    .await
+    .expect("ler palpite atualizado antes do lock");
+    assert_eq!(future_stored, (3, 1));
+
+    // Fixture arquitetural: football de produção mantém lock_at == kickoff,
+    // mas esta divergência prova que a regra consulta o item genérico.
+    sqlx::query(
+        "UPDATE prediction_items SET lock_at = '2020-01-01T00:00:00Z'
+         WHERE id = (SELECT prediction_item_id FROM matches WHERE id = ?1)",
+    )
+    .bind(&future_match)
+    .execute(crate::db::pool())
+    .await
+    .expect("forçar lock arquitetural");
+    let item_locked = client
+        .post(&prediction_url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "matchId": future_match, "homeScore": 4, "awayScore": 1 }))
+        .send()
+        .await
+        .expect("palpite contra lock do item");
+    assert!(
+        !item_locked.status().is_success(),
+        "lock_at passado deve bloquear mesmo com kickoff futuro"
+    );
+
+    let locked_match = insert_match("Franca", "Espanha", "2020-01-01T00:00:00Z").await;
+    let rejected_new = client
+        .post(&prediction_url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "matchId": locked_match, "homeScore": 1, "awayScore": 0 }))
+        .send()
+        .await
+        .expect("tentar criar palpite travado");
+    assert!(!rejected_new.status().is_success());
+
+    insert_prediction(&user_id, &locked_match, 0, 0).await;
+    let rejected_update = client
+        .post(&prediction_url)
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({ "matchId": locked_match, "homeScore": 4, "awayScore": 0 }))
+        .send()
+        .await
+        .expect("tentar alterar palpite travado");
+    assert!(!rejected_update.status().is_success());
+    let locked_stored: (i64, i64) = sqlx::query_as(
+        "SELECT home_score, away_score FROM predictions WHERE user_id = ?1 AND match_id = ?2",
+    )
+    .bind(&user_id)
+    .bind(&locked_match)
+    .fetch_one(crate::db::pool())
+    .await
+    .expect("ler palpite preservado apos lock");
+    assert_eq!(locked_stored, (0, 0));
 }
 
 #[tokio::test]
@@ -1215,6 +1961,7 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
     let email_a = format!("memberA-{suffix}@teste.com");
     let email_b = format!("memberB-{suffix}@teste.com");
     let email_c = format!("outsider-{suffix}@teste.com");
+    let email_d = format!("late-member-{suffix}@teste.com");
     let user_a = seed_user(
         &format!("memberA-{suffix}"),
         &email_a,
@@ -1236,12 +1983,22 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
         false,
     )
     .await;
+    let user_d = seed_user(
+        &format!("late-member-{suffix}"),
+        &email_d,
+        "senha-correta-123",
+        false,
+    )
+    .await;
 
     let pool_id = insert_pool(&format!("Bolao {suffix}"), &user_a).await;
     // Entraram no bolão antes do jogo "passado", para isolar o teste da regra de
     // elegibilidade por data de entrada (coberta em outro teste).
     add_membership_at(&pool_id, &user_a, "2019-01-01 00:00:00").await;
     add_membership_at(&pool_id, &user_b, "2019-01-01 00:00:00").await;
+    // Entrou depois do jogo passado: sua participação não é retroativa, nem
+    // pode vazar para os demais membros na lista de palpites.
+    add_membership_at(&pool_id, &user_d, "2021-01-01 00:00:00").await;
 
     let past_match = insert_match("Brasil", "Argentina", "2020-01-01T00:00:00Z").await;
     let future_match = insert_match("Franca", "Espanha", "2999-01-01T00:00:00Z").await;
@@ -1249,6 +2006,16 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
     // O membro B palpitou nos dois jogos (um já iniciado, um no futuro).
     insert_prediction(&user_b, &past_match, 2, 1).await;
     insert_prediction(&user_b, &future_match, 0, 0).await;
+    insert_prediction(&user_d, &past_match, 1, 0).await;
+    // Fixture arquitetural: reveal vem do item genérico, não do kickoff.
+    sqlx::query(
+        "UPDATE prediction_items SET reveal_at = '2020-01-01T00:00:00Z'
+         WHERE id = (SELECT prediction_item_id FROM matches WHERE id = ?1)",
+    )
+    .bind(&future_match)
+    .execute(crate::db::pool())
+    .await
+    .expect("forçar reveal arquitetural");
 
     // Membro A consulta os palpites do bolão (sessão semeada, sem login).
     let (token_a, _) = seed_session(&user_a).await;
@@ -1273,10 +2040,26 @@ async fn pool_member_predictions_hides_matches_before_kickoff() {
     // Apenas o palpite do jogo já iniciado deve aparecer.
     assert_eq!(
         b.predictions.len(),
-        1,
-        "apenas o palpite do jogo iniciado deve ser visivel, e nao o do futuro"
+        2,
+        "reveal_at do item deve liberar o palpite mesmo se o kickoff for futuro"
     );
-    assert_eq!(b.predictions[0].match_id, past_match);
+    assert!(b
+        .predictions
+        .iter()
+        .any(|prediction| prediction.match_id == past_match));
+    assert!(b
+        .predictions
+        .iter()
+        .any(|prediction| prediction.match_id == future_match));
+
+    let late_member = members
+        .iter()
+        .find(|m| m.user_id == user_d)
+        .expect("membro que entrou depois presente na resposta");
+    assert!(
+        late_member.predictions.is_empty(),
+        "palpite de jogo anterior a entrada não deve ser exposto retroativamente"
+    );
 
     // Quem não é membro do bolão é barrado.
     let (token_c, _) = seed_session(&user_c).await;

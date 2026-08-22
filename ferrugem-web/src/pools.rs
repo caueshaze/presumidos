@@ -1,12 +1,122 @@
 use crate::error::ServerFnError;
 
 use crate::models::{
-    MemberPredictions, PointAdjustment, PoolPredictionRecord, PoolSummary, PredictionReactionGroup,
-    UserPublic,
+    EventKind, EventStatus, EventSummary, MemberPredictions, PointAdjustment, PoolPredictionRecord,
+    PoolSummary, PredictionReactionGroup, UserPublic,
 };
 
 #[cfg(feature = "server")]
+pub async fn football_scoring_config(
+    token: String,
+    pool_id: String,
+) -> Result<crate::models::FootballScoringConfig, ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    let db = crate::db::pool();
+    let member: Option<(String,)> =
+        sqlx::query_as("SELECT ?2 WHERE EXISTS (SELECT 1 FROM pool_members WHERE pool_id=?1 AND user_id=?2) OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)")
+            .bind(&pool_id)
+            .bind(&session.user_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("football_config_membership", e))?;
+    if member.is_none() {
+        return Err(crate::security::public_error(
+            "Voce nao participa deste bolao.",
+        ));
+    }
+    sqlx::query_as("SELECT exact_score_points,correct_result_exact_side_points,correct_result_points,incorrect_result_points,knockout_bonus_points FROM football_pool_scoring WHERE pool_id=?1").bind(&pool_id).fetch_one(db).await.map_err(|e|crate::security::internal_error("football_config_load",e))
+}
+
+#[cfg(feature = "server")]
+pub async fn update_football_scoring_config(
+    token: String,
+    pool_id: String,
+    config: crate::models::FootballScoringConfig,
+    csrf: String,
+) -> Result<(), ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    if [
+        config.exact_score_points,
+        config.correct_result_exact_side_points,
+        config.correct_result_points,
+        config.incorrect_result_points,
+        config.knockout_bonus_points,
+    ]
+    .iter()
+    .any(|v| !(0..=1000).contains(v))
+    {
+        return Err(crate::security::public_error(
+            "Pontuação deve estar entre 0 e 1000.",
+        ));
+    }
+    let db = crate::db::pool();
+    let owner:Option<(String,)>=sqlx::query_as("SELECT created_by FROM pools WHERE id=?1 AND (created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND NOT EXISTS (SELECT 1 FROM prediction_items pi JOIN matches m ON m.prediction_item_id=pi.id WHERE pi.event_id=(SELECT event_id FROM pools WHERE id=?1) AND datetime(pi.lock_at)<=datetime('now'))").bind(&pool_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("football_config_owner",e))?;
+    if owner.is_none() {
+        return Err(crate::security::public_error(
+            "Apenas o dono ou admin pode alterar antes do primeiro lock.",
+        ));
+    }
+    sqlx::query("UPDATE football_pool_scoring SET exact_score_points=?2,correct_result_exact_side_points=?3,correct_result_points=?4,incorrect_result_points=?5,knockout_bonus_points=?6,updated_at=datetime('now') WHERE pool_id=?1").bind(&pool_id).bind(config.exact_score_points).bind(config.correct_result_exact_side_points).bind(config.correct_result_points).bind(config.incorrect_result_points).bind(config.knockout_bonus_points).execute(db).await.map_err(|e|crate::security::internal_error("football_config_update",e))?;
+    crate::scoring::recalculate_all_breakdowns(Some(&session.user_id)).await?;
+    Ok(())
+}
+
+#[cfg(feature = "server")]
+pub async fn custom_item_scoring_config(
+    token: String,
+    pool_id: String,
+    item_id: String,
+) -> Result<crate::models::CustomItemScoringConfig, ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    let db = crate::db::pool();
+    let ok: Option<(String,)> = sqlx::query_as(
+        "SELECT ?2 WHERE EXISTS (SELECT 1 FROM pool_members WHERE pool_id=?1 AND user_id=?2) OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)",
+    )
+    .bind(&pool_id)
+    .bind(&session.user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("custom_config_member", e))?;
+    if ok.is_none() {
+        return Err(crate::security::public_error(
+            "Voce nao participa deste bolao.",
+        ));
+    }
+    sqlx::query_as("SELECT pool_id,item_id,correct_points,incorrect_points FROM custom_pool_item_scoring WHERE pool_id=?1 AND item_id=?2").bind(&pool_id).bind(&item_id).fetch_one(db).await.map_err(|e|crate::security::internal_error("custom_config_load",e))
+}
+
+#[cfg(feature = "server")]
+pub async fn update_custom_item_scoring_config(
+    token: String,
+    pool_id: String,
+    item_id: String,
+    correct: i64,
+    incorrect: i64,
+    csrf: String,
+) -> Result<(), ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    if !(0..=1000).contains(&correct) || !(0..=1000).contains(&incorrect) {
+        return Err(crate::security::public_error(
+            "Pontuação deve estar entre 0 e 1000.",
+        ));
+    }
+    let db = crate::db::pool();
+    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_id=p.event_id WHERE p.id=?1 AND (p.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND pi.id=?3 AND pi.kind='single_choice' AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("custom_config_owner",e))?;
+    if owner.is_none() {
+        return Err(crate::security::public_error(
+            "Apenas o dono ou admin pode alterar antes do lock.",
+        ));
+    }
+    sqlx::query("UPDATE custom_pool_item_scoring SET correct_points=?3,incorrect_points=?4,updated_at=datetime('now') WHERE pool_id=?1 AND item_id=?2").bind(&pool_id).bind(&item_id).bind(correct).bind(incorrect).execute(db).await.map_err(|e|crate::security::internal_error("custom_config_update",e))?;
+    crate::scoring::recalculate_custom_breakdowns().await?;
+    Ok(())
+}
+
+#[cfg(feature = "server")]
 type PoolSummaryRow = (
+    String,
     String,
     String,
     String,
@@ -15,7 +125,36 @@ type PoolSummaryRow = (
     String,
     String,
     Option<String>,
+    String,
+    String,
+    String,
+    String,
 );
+
+#[cfg(feature = "server")]
+pub(crate) fn event_summary(
+    id: String,
+    name: String,
+    slug: String,
+    kind: String,
+    status: String,
+) -> EventSummary {
+    EventSummary {
+        id,
+        name,
+        slug,
+        kind: if kind == "custom" {
+            EventKind::Custom
+        } else {
+            EventKind::Football
+        },
+        status: match status.as_str() {
+            "draft" => EventStatus::Draft,
+            "finished" => EventStatus::Finished,
+            _ => EventStatus::Active,
+        },
+    }
+}
 
 #[cfg(feature = "server")]
 type PoolMemberUserRow = (String, String, String, bool, Option<String>, Option<String>);
@@ -95,13 +234,14 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
     let session = require_user(&token).await?;
 
     let rows: Vec<PoolSummaryRow> = sqlx::query_as(
-        "SELECT p.id, p.name, p.invite_code,
+        "SELECT p.id, p.event_id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id) AS member_count,
                 p.created_by,
                 p.description,
                 p.visible_rules,
-                p.join_closed_at
+                p.join_closed_at, e.name, e.slug, e.kind, e.status
          FROM pools p
+         JOIN events e ON e.id = p.event_id
          JOIN pool_members pm ON pm.pool_id = p.id
          WHERE pm.user_id = ?1
          ORDER BY p.created_at DESC",
@@ -116,6 +256,7 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
         .map(
             |(
                 id,
+                event_id,
                 name,
                 invite_code,
                 member_count,
@@ -123,8 +264,20 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 description,
                 visible_rules,
                 join_closed_at,
+                event_name,
+                event_slug,
+                event_kind,
+                event_status,
             )| PoolSummary {
                 id,
+                event_id: event_id.clone(),
+                event: event_summary(
+                    event_id.clone(),
+                    event_name,
+                    event_slug,
+                    event_kind,
+                    event_status,
+                ),
                 name,
                 invite_code,
                 member_count,
@@ -154,6 +307,7 @@ pub async fn create_pool(
     let name = crate::security::normalize_required_text("Nome do bolao", name, 3, 80)?;
 
     let db = pool();
+    let event_id = crate::events::world_cup_2026_event_id(db).await?;
     let pool_id = Uuid::new_v4().to_string();
     let invite_code = generate_invite_code(db).await?;
     let mut tx = db
@@ -161,8 +315,9 @@ pub async fn create_pool(
         .await
         .map_err(|e| crate::security::internal_error("create_pool_begin_tx", e))?;
 
-    sqlx::query("INSERT INTO pools (id, name, invite_code, created_by) VALUES (?1, ?2, ?3, ?4)")
+    sqlx::query("INSERT INTO pools (id, event_id, name, invite_code, created_by) VALUES (?1, ?2, ?3, ?4, ?5)")
         .bind(&pool_id)
+        .bind(&event_id)
         .bind(&name)
         .bind(&invite_code)
         .bind(&session.user_id)
@@ -181,8 +336,16 @@ pub async fn create_pool(
         .await
         .map_err(|e| crate::security::internal_error("create_pool_commit", e))?;
 
+    let event: (String, String, String, String) =
+        sqlx::query_as("SELECT name, slug, kind, status FROM events WHERE id=?1")
+            .bind(&event_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("create_pool_event", e))?;
     Ok(PoolSummary {
         id: pool_id,
+        event_id: event_id.clone(),
+        event: event_summary(event_id, event.0, event.1, event.2, event.3),
         name,
         invite_code,
         member_count: 1,
@@ -228,14 +391,27 @@ pub async fn join_pool(
 
     let db = pool();
 
-    let row: Option<(String, String, String, String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, name, created_by, description, visible_rules, join_closed_at FROM pools WHERE invite_code = ?1")
+    let row: Option<(String, String, String, String, String, String, Option<String>, String, String, String, String)> =
+        sqlx::query_as("SELECT p.id, p.event_id, p.name, p.created_by, p.description, p.visible_rules, p.join_closed_at, e.name, e.slug, e.kind, e.status FROM pools p JOIN events e ON e.id=p.event_id WHERE p.invite_code = ?1")
             .bind(&invite_code)
             .fetch_optional(db)
             .await
             .map_err(|e| crate::security::internal_error("join_pool_lookup", e))?;
 
-    let Some((pool_id, name, created_by, description, visible_rules, join_closed_at)) = row else {
+    let Some((
+        pool_id,
+        event_id,
+        name,
+        created_by,
+        description,
+        visible_rules,
+        join_closed_at,
+        event_name,
+        event_slug,
+        event_kind,
+        event_status,
+    )) = row
+    else {
         return Err(crate::security::public_error("Codigo de convite invalido."));
     };
 
@@ -268,6 +444,14 @@ pub async fn join_pool(
 
     Ok(PoolSummary {
         id: pool_id,
+        event: event_summary(
+            event_id.clone(),
+            event_name,
+            event_slug,
+            event_kind,
+            event_status,
+        ),
+        event_id,
         name,
         invite_code,
         member_count: member_count.0,
@@ -353,13 +537,14 @@ pub async fn get_pool_member_predictions(
                 pr.penalty_home_score AS penalty_home_score,
                 pr.penalty_away_score AS penalty_away_score
          FROM pool_members pm
-         JOIN predictions pr ON pr.user_id = pm.user_id
-         JOIN matches m ON m.id = pr.match_id
+         JOIN predictions pr ON pr.user_id = pm.user_id AND pr.pool_id = pm.pool_id
+         JOIN matches m ON m.id = pr.match_id AND m.prediction_item_id = pr.item_id
+         JOIN prediction_items pi ON pi.id = pr.item_id
          WHERE pm.pool_id = ?1
-           AND datetime(m.kickoff) <= datetime(?2)
+           AND datetime(pi.reveal_at) <= datetime(?2)
            -- Consistente com o ranking: só palpites de jogos que começaram
            -- depois de o usuário entrar no bolão.
-           AND datetime(m.kickoff) >= datetime(pm.joined_at)
+           AND datetime(pi.lock_at) >= datetime(pm.joined_at)
          ORDER BY m.kickoff",
     )
     .bind(&pool_id)
@@ -387,10 +572,11 @@ pub async fn get_pool_member_predictions(
                 pr.updated_at AS updated_at
          FROM prediction_reactions pr
          JOIN matches m ON m.id = pr.match_id
+         JOIN prediction_items pi ON pi.id = m.prediction_item_id
          JOIN pool_members pm ON pm.pool_id = pr.pool_id AND pm.user_id = pr.target_user_id
          WHERE pr.pool_id = ?1
-           AND datetime(m.kickoff) <= datetime(?2)
-           AND datetime(m.kickoff) >= datetime(pm.joined_at)
+           AND datetime(pi.reveal_at) <= datetime(?2)
+           AND datetime(pi.lock_at) >= datetime(pm.joined_at)
          ORDER BY pr.updated_at ASC",
     )
     .bind(&pool_id)
@@ -517,12 +703,13 @@ pub async fn react_to_prediction(
     let target_prediction: Option<(String, String)> = sqlx::query_as(
         "SELECT m.home_team, m.away_team
          FROM pool_members pm
-         JOIN predictions p ON p.user_id = pm.user_id AND p.match_id = ?2
-         JOIN matches m ON m.id = p.match_id
+         JOIN predictions p ON p.user_id = pm.user_id AND p.pool_id = pm.pool_id AND p.match_id = ?2
+         JOIN matches m ON m.id = p.match_id AND m.prediction_item_id = p.item_id
+         JOIN prediction_items pi ON pi.id = p.item_id
          WHERE pm.pool_id = ?1
            AND pm.user_id = ?3
-           AND datetime(m.kickoff) <= datetime(?4)
-           AND datetime(m.kickoff) >= datetime(pm.joined_at)",
+           AND datetime(pi.reveal_at) <= datetime(?4)
+           AND datetime(pi.lock_at) >= datetime(pm.joined_at)",
     )
     .bind(&pool_id)
     .bind(&match_id)
@@ -687,13 +874,14 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
     require_admin(&token).await?;
 
     let rows: Vec<PoolSummaryRow> = sqlx::query_as(
-        "SELECT p.id, p.name, p.invite_code,
+        "SELECT p.id, p.event_id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm WHERE pm.pool_id = p.id) AS member_count,
                 p.created_by,
                 p.description,
                 p.visible_rules,
-                p.join_closed_at
+                p.join_closed_at, e.name, e.slug, e.kind, e.status
          FROM pools p
+         JOIN events e ON e.id = p.event_id
          ORDER BY p.name COLLATE NOCASE",
     )
     .fetch_all(pool())
@@ -705,6 +893,7 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
         .map(
             |(
                 id,
+                event_id,
                 name,
                 invite_code,
                 member_count,
@@ -712,8 +901,20 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                 description,
                 visible_rules,
                 join_closed_at,
+                event_name,
+                event_slug,
+                event_kind,
+                event_status,
             )| PoolSummary {
                 id,
+                event_id: event_id.clone(),
+                event: event_summary(
+                    event_id.clone(),
+                    event_name,
+                    event_slug,
+                    event_kind,
+                    event_status,
+                ),
                 name,
                 invite_code,
                 member_count,

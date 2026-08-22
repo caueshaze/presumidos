@@ -15,6 +15,7 @@ import { ContaPage } from "@/pages/Conta";
 import { TermsPage } from "@/pages/Terms";
 import { PrivacyPage } from "@/pages/Privacy";
 import { ContactPage } from "@/pages/Contact";
+import { PoolScoringPage } from "@/pages/PoolScoring";
 
 export function App() {
   return (
@@ -45,6 +46,10 @@ export function App() {
                 </AuthGuard>
               }
             />
+            <Route path="/pools/:poolId/predictions" element={<AuthGuard><PredictionsPage /></AuthGuard>} />
+            <Route path="/pools/:poolId/scoring" element={<AuthGuard><PoolScoringPage /></AuthGuard>} />
+            <Route path="/pools/:poolId/leaderboard" element={<AuthGuard><LeaderboardPage /></AuthGuard>} />
+            <Route path="/pools/:poolId/members" element={<AuthGuard><PoolPredictionsPage /></AuthGuard>} />
             <Route
               path="/palpites-do-bolao"
               element={

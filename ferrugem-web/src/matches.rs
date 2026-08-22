@@ -141,6 +141,7 @@ pub async fn get_my_predictions(token: String) -> Result<Vec<PredictionRecord>, 
 
     #[derive(sqlx::FromRow)]
     struct PredictionRow {
+        item_id: String,
         match_id: String,
         home_score: i64,
         away_score: i64,
@@ -151,9 +152,10 @@ pub async fn get_my_predictions(token: String) -> Result<Vec<PredictionRecord>, 
     }
 
     let rows = sqlx::query_as::<_, PredictionRow>(
-        "SELECT match_id, home_score, away_score, qualifier, went_to_penalties,
+        "SELECT item_id, match_id, home_score, away_score, qualifier, went_to_penalties,
                 penalty_home_score, penalty_away_score
-         FROM predictions WHERE user_id = ?1",
+         FROM predictions WHERE user_id = ?1 AND match_id IS NOT NULL
+         GROUP BY item_id",
     )
     .bind(&session.user_id)
     .fetch_all(pool())
@@ -163,6 +165,7 @@ pub async fn get_my_predictions(token: String) -> Result<Vec<PredictionRecord>, 
     Ok(rows
         .into_iter()
         .map(|row| PredictionRecord {
+            item_id: row.item_id,
             match_id: row.match_id,
             home_score: row.home_score,
             away_score: row.away_score,
@@ -270,22 +273,26 @@ pub async fn submit_prediction(
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
     let db = pool();
 
-    let row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT kickoff, phase FROM matches WHERE id = ?1")
-            .bind(&match_id)
-            .fetch_optional(db)
-            .await
-            .map_err(|e| crate::security::internal_error("submit_prediction_match_lookup", e))?;
+    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT pi.id, pi.lock_at, m.phase
+         FROM matches m
+         JOIN prediction_items pi ON pi.id = m.prediction_item_id
+         WHERE m.id = ?1",
+    )
+    .bind(&match_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("submit_prediction_match_lookup", e))?;
 
-    let Some((kickoff, phase)) = row else {
+    let Some((item_id, lock_at, phase)) = row else {
         return Err(crate::security::public_error("Partida nao encontrada."));
     };
 
-    let kickoff_time = chrono::DateTime::parse_from_rfc3339(&kickoff)
-        .map_err(|e| crate::security::internal_error("submit_prediction_parse_kickoff", e))?;
+    let lock_time = chrono::DateTime::parse_from_rfc3339(&lock_at)
+        .map_err(|e| crate::security::internal_error("submit_prediction_parse_lock_at", e))?;
 
     let lock_minutes = crate::admin::prediction_lock_minutes().await?;
-    let locked_at = kickoff_time.with_timezone(&Utc) - chrono::Duration::minutes(lock_minutes);
+    let locked_at = lock_time.with_timezone(&Utc) - chrono::Duration::minutes(lock_minutes);
     let active_override = if Utc::now() >= locked_at {
         crate::admin::active_prediction_override(&match_id, &session.user_id).await?
     } else {
@@ -304,33 +311,60 @@ pub async fn submit_prediction(
         knockout,
     )?;
 
-    let id = Uuid::new_v4().to_string();
-
-    sqlx::query(
-        "INSERT INTO predictions
-            (id, user_id, match_id, home_score, away_score,
+    let pools: Vec<(String,)> = sqlx::query_as(
+        "SELECT p.id FROM pool_members pm
+         JOIN pools p ON p.id = pm.pool_id
+         JOIN prediction_items pi ON pi.id = ?2 AND pi.event_id = p.event_id
+         WHERE pm.user_id = ?1",
+    )
+    .bind(&session.user_id)
+    .bind(&item_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| crate::security::internal_error("submit_prediction_pools", e))?;
+    if pools.is_empty() {
+        return Err(crate::security::public_error(
+            "Voce nao participa de um bolao deste evento.",
+        ));
+    }
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("submit_prediction_begin_tx", e))?;
+    for (pool_id,) in pools {
+        let id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO predictions
+            (id, pool_id, user_id, item_id, match_id, home_score, away_score,
              qualifier, went_to_penalties, penalty_home_score, penalty_away_score)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-         ON CONFLICT(user_id, match_id) DO UPDATE SET
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT(pool_id, user_id, item_id) DO UPDATE SET
+            match_id = excluded.match_id,
             home_score = excluded.home_score,
             away_score = excluded.away_score,
             qualifier = excluded.qualifier,
             went_to_penalties = excluded.went_to_penalties,
             penalty_home_score = excluded.penalty_home_score,
             penalty_away_score = excluded.penalty_away_score",
-    )
-    .bind(&id)
-    .bind(&session.user_id)
-    .bind(&match_id)
-    .bind(home_score)
-    .bind(away_score)
-    .bind(&ko.qualifier)
-    .bind(ko.went_to_penalties)
-    .bind(ko.penalty_home)
-    .bind(ko.penalty_away)
-    .execute(db)
-    .await
-    .map_err(|e| crate::security::internal_error("submit_prediction_upsert", e))?;
+        )
+        .bind(&id)
+        .bind(&pool_id)
+        .bind(&session.user_id)
+        .bind(&item_id)
+        .bind(&match_id)
+        .bind(home_score)
+        .bind(away_score)
+        .bind(&ko.qualifier)
+        .bind(ko.went_to_penalties)
+        .bind(ko.penalty_home)
+        .bind(ko.penalty_away)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("submit_prediction_upsert", e))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("submit_prediction_commit", e))?;
 
     if let Some(override_info) = active_override {
         crate::admin::mark_prediction_override_used(&override_info.id).await?;
@@ -676,19 +710,38 @@ pub async fn create_match(
 
     let id = Uuid::new_v4().to_string();
     let db = pool();
+    let event_id = crate::events::world_cup_2026_event_id(db).await?;
+    let prediction_item_id = Uuid::new_v4().to_string();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("create_match_begin_tx", e))?;
+    crate::prediction_items::create_football_match_item(
+        &mut tx,
+        &event_id,
+        &prediction_item_id,
+        &home,
+        &away,
+        &kickoff,
+    )
+    .await?;
 
     sqlx::query(
-        "INSERT INTO matches (id, home_team, away_team, kickoff, group_name, phase)
-         VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
+        "INSERT INTO matches (id, prediction_item_id, home_team, away_team, kickoff, group_name, phase)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
     )
     .bind(&id)
+    .bind(&prediction_item_id)
     .bind(&home)
     .bind(&away)
     .bind(&kickoff)
     .bind(&phase)
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(|e| crate::security::internal_error("create_match_insert", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("create_match_commit", e))?;
 
     crate::security::append_audit_log(
         db,
@@ -731,17 +784,21 @@ pub async fn update_match_schedule(
     let (phase, kickoff) = normalize_knockout_match_input(phase, kickoff)?;
 
     let db = pool();
-    let before: Option<(String, String, Option<String>, String)> =
-        sqlx::query_as("SELECT home_team, away_team, phase, kickoff FROM matches WHERE id = ?1")
+    let before: Option<(String, String, Option<String>, String, String)> =
+        sqlx::query_as("SELECT home_team, away_team, phase, kickoff, prediction_item_id FROM matches WHERE id = ?1")
             .bind(&match_id)
             .fetch_optional(db)
             .await
             .map_err(|e| crate::security::internal_error("update_match_schedule_lookup", e))?;
 
-    let Some((old_home, old_away, old_phase, old_kickoff)) = before else {
+    let Some((old_home, old_away, old_phase, old_kickoff, prediction_item_id)) = before else {
         return Err(crate::security::public_error("Partida nao encontrada."));
     };
 
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("update_match_schedule_begin_tx", e))?;
     sqlx::query(
         "UPDATE matches SET home_team = ?1, away_team = ?2, phase = ?3, kickoff = ?4 WHERE id = ?5",
     )
@@ -750,9 +807,19 @@ pub async fn update_match_schedule(
     .bind(&phase)
     .bind(&kickoff)
     .bind(&match_id)
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(|e| crate::security::internal_error("update_match_schedule", e))?;
+    sqlx::query("UPDATE prediction_items SET title = ?1, lock_at = ?2, reveal_at = ?2, updated_at = datetime('now') WHERE id = ?3")
+        .bind(crate::prediction_items::football_match_title(&home, &away))
+        .bind(&kickoff)
+        .bind(&prediction_item_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("update_match_schedule_prediction_item", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("update_match_schedule_commit", e))?;
 
     crate::security::append_audit_log(
         db,
@@ -853,34 +920,53 @@ pub async fn delete_match(
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
     let db = pool();
-    let before: Option<(String, String, Option<String>)> =
-        sqlx::query_as("SELECT home_team, away_team, phase FROM matches WHERE id = ?1")
-            .bind(&match_id)
-            .fetch_optional(db)
-            .await
-            .map_err(|e| crate::security::internal_error("delete_match_lookup", e))?;
+    let before: Option<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT home_team, away_team, phase, prediction_item_id FROM matches WHERE id = ?1",
+    )
+    .bind(&match_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("delete_match_lookup", e))?;
 
-    let Some((home, away, phase)) = before else {
+    let Some((home, away, phase, prediction_item_id)) = before else {
         return Err(crate::security::public_error("Partida nao encontrada."));
     };
 
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("delete_match_begin_tx", e))?;
     sqlx::query("DELETE FROM prediction_score_breakdowns WHERE match_id = ?1")
         .bind(&match_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("delete_match_breakdowns", e))?;
 
+    sqlx::query("DELETE FROM prediction_reactions WHERE match_id = ?1")
+        .bind(&match_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_match_reactions", e))?;
+
     sqlx::query("DELETE FROM predictions WHERE match_id = ?1")
         .bind(&match_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("delete_match_predictions", e))?;
 
     sqlx::query("DELETE FROM matches WHERE id = ?1")
         .bind(&match_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("delete_match", e))?;
+    sqlx::query("DELETE FROM prediction_items WHERE id = ?1")
+        .bind(&prediction_item_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("delete_match_prediction_item", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("delete_match_commit", e))?;
 
     crate::security::append_audit_log(
         db,

@@ -213,17 +213,22 @@ export function DashboardPage() {
             {pools.data?.map((p, i) => (
               <MotionCard key={p.id} transition={{ delay: i * 0.06, duration: 0.3 }}>
                 <h3 className="text-lg">{p.name}</h3>
+                <p className="mt-1 text-sm font-semibold text-mint-dark">{p.event.name}</p>
                 <span className="mt-2 inline-block rounded-pill bg-yellow/40 px-3 py-1 text-xs font-semibold">
                   Código: {p.inviteCode}
                 </span>
                 <p className="mt-2 text-sm text-ink-muted">{p.memberCount} membro(s)</p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => navigate(`/palpites-do-bolao?poolId=${p.id}`)}>
+                  <Button size="sm" onClick={() => navigate(`/pools/${p.id}/predictions`)}>
                     Palpites
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => navigate("/leaderboard")}>
+                  <Button size="sm" variant="secondary" onClick={() => navigate(`/pools/${p.id}/leaderboard`)}>
                     Ranking
                   </Button>
+                  <Button size="sm" variant="outline" onClick={() => navigate(`/pools/${p.id}/members`)}>
+                    Participantes
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => navigate(`/pools/${p.id}/scoring`)}>Regras</Button>
                   {(p.createdBy === user?.id || isAdmin) && (
                     <Button
                       size="sm"

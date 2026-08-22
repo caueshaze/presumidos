@@ -23,12 +23,52 @@ export interface SessionState {
 export interface PoolSummary {
   id: string;
   name: string;
+  eventId: string;
+  event: EventSummary;
   inviteCode: string;
   memberCount: number;
   createdBy: string;
   description: string;
   visibleRules: string;
   joinClosedAt: string | null;
+}
+
+export interface EventSummary {
+  id: string;
+  name: string;
+  slug: string;
+  kind: "football" | "custom";
+  status: "draft" | "active" | "finished";
+}
+
+export interface CustomQuestionOption {
+  id: string;
+  label: string;
+  sortOrder: number;
+}
+
+export interface CustomQuestion {
+  itemId: string;
+  kind: "single_choice";
+  title: string;
+  lockAt: string;
+  revealAt: string;
+  sortOrder: number;
+  status: "draft" | "open" | "locked" | "resolved";
+  currentOptionId: string | null;
+  correctOptionId: string | null;
+  correctPoints: number;
+  incorrectPoints: number;
+  options: CustomQuestionOption[];
+}
+export interface CustomMemberPredictions { userId: string; username: string; predictions: { itemId: string; title: string; optionLabel: string }[]; }
+
+export interface FootballScoringConfig {
+  exactScorePoints: number;
+  correctResultExactSidePoints: number;
+  correctResultPoints: number;
+  incorrectResultPoints: number;
+  knockoutBonusPoints: number;
 }
 
 export interface MatchRecord {

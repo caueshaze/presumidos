@@ -22,7 +22,7 @@ use serde_json::json;
 
 use crate::context::{take_response_headers, RequestContext, REQUEST};
 use crate::error::ServerFnError;
-use crate::models::{AdminSettings, KnockoutEntry};
+use crate::models::{AdminSettings, FootballScoringConfig, KnockoutEntry};
 
 // ---------------------------------------------------------------------------
 // Erro -> resposta HTTP
@@ -165,6 +165,43 @@ struct PredictionBody {
     away_score: i64,
     #[serde(default)]
     knockout: KnockoutEntry,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SingleChoicePredictionBody {
+    pool_id: String,
+    item_id: String,
+    option_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomQuestionsQuery {
+    pool_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FootballScoringBody {
+    exact_score_points: i64,
+    correct_result_exact_side_points: i64,
+    correct_result_points: i64,
+    incorrect_result_points: i64,
+    knockout_bonus_points: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomScoringBody {
+    correct_points: i64,
+    incorrect_points: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomResultBody {
+    option_id: String,
 }
 
 #[derive(Deserialize)]
@@ -654,6 +691,97 @@ async fn submit_prediction(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn submit_single_choice_prediction(
+    headers: HeaderMap,
+    Json(body): Json<SingleChoicePredictionBody>,
+) -> ApiResult<StatusCode> {
+    crate::custom_questions::submit_single_choice_prediction(
+        String::new(),
+        body.pool_id,
+        body.item_id,
+        body.option_id,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn custom_questions(
+    Query(query): Query<CustomQuestionsQuery>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::custom_questions::list_custom_questions(String::new(), query.pool_id).await?,
+    ))
+}
+
+async fn custom_member_predictions(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::custom_questions::list_custom_member_predictions(String::new(), pool_id).await?,
+    ))
+}
+
+async fn pool_football_scoring(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::football_scoring_config(String::new(), pool_id).await?,
+    ))
+}
+
+async fn update_pool_football_scoring(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<FootballScoringBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::update_football_scoring_config(
+        String::new(),
+        pool_id,
+        FootballScoringConfig {
+            exact_score_points: body.exact_score_points,
+            correct_result_exact_side_points: body.correct_result_exact_side_points,
+            correct_result_points: body.correct_result_points,
+            incorrect_result_points: body.incorrect_result_points,
+            knockout_bonus_points: body.knockout_bonus_points,
+        },
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn pool_custom_scoring(
+    Path((pool_id, item_id)): Path<(String, String)>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::custom_item_scoring_config(String::new(), pool_id, item_id).await?,
+    ))
+}
+async fn update_pool_custom_scoring(
+    Path((pool_id, item_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<CustomScoringBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::update_custom_item_scoring_config(
+        String::new(),
+        pool_id,
+        item_id,
+        body.correct_points,
+        body.incorrect_points,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn set_custom_question_result(
+    Path(item_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<CustomResultBody>,
+) -> ApiResult<StatusCode> {
+    let session = crate::auth::require_admin("").await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_header(&headers))?;
+    crate::custom_questions::set_correct_option(&item_id, &body.option_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ---------------------------------------------------------------------------
 // Handlers — admin
 // ---------------------------------------------------------------------------
@@ -1060,6 +1188,24 @@ pub fn router() -> Router {
         .route("/matches", get(list_matches))
         .route("/matches/knockout-released", get(knockout_released))
         .route("/predictions", get(my_predictions).post(submit_prediction))
+        .route("/custom/questions", get(custom_questions))
+        .route(
+            "/pools/{pool_id}/custom-member-predictions",
+            get(custom_member_predictions),
+        )
+        .route("/custom/predictions", post(submit_single_choice_prediction))
+        .route(
+            "/admin/custom/questions/{item_id}/result",
+            post(set_custom_question_result),
+        )
+        .route(
+            "/pools/{pool_id}/scoring/football",
+            get(pool_football_scoring).post(update_pool_football_scoring),
+        )
+        .route(
+            "/pools/{pool_id}/scoring/items/{item_id}",
+            get(pool_custom_scoring).post(update_pool_custom_scoring),
+        )
         .route("/predictions/reopened", get(my_prediction_overrides))
         .route("/scoring/my-points", get(my_match_points))
         .route("/admin/overview", get(admin_overview))

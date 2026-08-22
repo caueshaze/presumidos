@@ -12,11 +12,15 @@ mod football;
 mod matches;
 mod models;
 mod pools;
+mod prediction_items;
 mod scoring;
 
 mod config;
+mod custom_event_manifest;
+mod custom_questions;
 mod db;
 mod email;
+mod events;
 mod security;
 
 #[cfg(feature = "web-push")]
@@ -138,6 +142,61 @@ where
     }
 }
 
+fn run_import_custom_event_command<I>(mut args: I) -> i32
+where
+    I: Iterator<Item = String>,
+{
+    let mut file = None;
+    let mut apply = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--file" => file = args.next(),
+            "--apply" => apply = true,
+            "--dry-run" => apply = false,
+            _ => {
+                eprintln!("uso: import-custom-event --file <arquivo> [--dry-run|--apply]");
+                return 2;
+            }
+        }
+    }
+    let Some(file) = file else {
+        eprintln!("--file é obrigatório");
+        return 2;
+    };
+    let bytes = match std::fs::read_to_string(&file) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("falha ao ler manifesto: {e}");
+            return 1;
+        }
+    };
+    let manifest = match custom_event_manifest::parse_and_validate(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("manifesto inválido: {e}");
+            return 2;
+        }
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        db::init().await;
+        custom_event_manifest::import(manifest, apply).await
+    });
+    match result {
+        Ok((items, options)) => {
+            println!(
+                "{}: {items} itens, {options} opções",
+                if apply { "importado" } else { "dry-run" }
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("falha na importação: {e}");
+            1
+        }
+    }
+}
+
 async fn run_housekeeping() -> Result<(), error::ServerFnError> {
     let db = db::pool();
     let auth_summary = auth::cleanup_expired_auth_data(db).await?;
@@ -200,6 +259,9 @@ fn try_handle_server_command() -> Option<i32> {
     let command = args.next()?;
     if command == "sync-fixtures" {
         return Some(run_sync_fixtures_command(args));
+    }
+    if command == "import-custom-event" {
+        return Some(run_import_custom_event_command(args));
     }
     if command == "cleanup-expired" {
         return Some(run_cleanup_expired_command());

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, X, Info } from "lucide-react";
 import {
@@ -8,6 +8,8 @@ import {
   useMatches,
   usePoolAdjustments,
   useAddAdjustment,
+  useCustomQuestions,
+  useFootballScoring,
   useRemoveAdjustment,
 } from "@/hooks/queries";
 import { useAuth } from "@/hooks/useAuth";
@@ -21,11 +23,12 @@ const medals = ["🥇", "🥈", "🥉"];
 
 export function LeaderboardPage() {
   const { user, isAdmin } = useAuth();
-  const pools = usePools();
+  const { poolId: routePoolId } = useParams();
   const [searchParams] = useSearchParams();
-  const requestedPoolId = searchParams.get("poolId");
+  const pools = usePools();
+  const requestedPoolId = routePoolId ?? searchParams.get("poolId");
   const openedFromClosing = searchParams.get("from") === "closing";
-  const [selectedPool, setSelectedPool] = useState("");
+  const [selectedPool, setSelectedPool] = useState(requestedPoolId ?? "");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -53,6 +56,9 @@ export function LeaderboardPage() {
   const rest = entries.slice(3);
 
   const currentPool = pools.data?.find((p) => p.id === selectedPool);
+  const isFootball = currentPool?.event.kind !== "custom";
+  const footballScoring = useFootballScoring(isFootball ? selectedPool || null : null);
+  const customQuestions = useCustomQuestions(!isFootball ? selectedPool || null : null);
   const isOrganizer = !!currentPool && (currentPool.createdBy === user?.id || isAdmin);
 
   const [scoringOpen, setScoringOpen] = useState(false);
@@ -116,7 +122,7 @@ export function LeaderboardPage() {
     <PageShell>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-3xl">Ranking</h1>
-        {hasLive && (
+        {hasLive && isFootball && (
           <span className="inline-flex items-center gap-1.5 rounded-pill bg-danger-bg px-3 py-1 text-xs font-semibold text-danger ring-1 ring-danger/40">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-danger opacity-75" />
@@ -136,7 +142,7 @@ export function LeaderboardPage() {
           <Info className="h-4 w-4" /> Como funciona a pontuação
         </Button>
       </div>
-      {hasLive && (
+      {hasLive && isFootball && (
         <p className="mt-2 max-w-3xl text-sm font-semibold text-danger">
           Há {liveMatches.length === 1 ? "1 jogo" : `${liveMatches.length} jogos`} em andamento — a
           pontuação abaixo é provisória e muda conforme o placar ao vivo. Ela só se firma quando os
@@ -209,9 +215,10 @@ export function LeaderboardPage() {
                       <span className="text-3xl">{medals[i]}</span>
                       <div className="mt-1 font-heading font-semibold">{entry.username}</div>
                       <div className="text-sm text-mint-dark">{entry.points} pts</div>
-                      <div className="text-xs text-ink-muted">
+                      {isFootball ? <div className="text-xs text-ink-muted">
                         🎯 {entry.exactScores} {entry.exactScores === 1 ? "exato" : "exatos"}
                       </div>
+                      : <div className="text-xs text-ink-muted">✓ {entry.correctResults} {entry.correctResults === 1 ? "acerto" : "acertos"}</div>}
                     </motion.button>
                   ))}
                 </div>
@@ -224,12 +231,12 @@ export function LeaderboardPage() {
                           <th className="px-5 py-3">Posição</th>
                           <th className="px-5 py-3">Usuário</th>
                           <th className="px-5 py-3">Pontos</th>
-                          <th
+                          {isFootball ? <th
                             className="whitespace-nowrap px-3 py-3"
                             title="Placares exatos (1º critério de desempate)"
                           >
                             🎯 Exatos
-                          </th>
+                          </th> : <th className="whitespace-nowrap px-3 py-3">Acertos</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -246,7 +253,7 @@ export function LeaderboardPage() {
                               </button>
                             </td>
                             <td className="px-5 py-3">{entry.points}</td>
-                            <td className="whitespace-nowrap px-3 py-3 text-ink-muted">{entry.exactScores}</td>
+                            {isFootball ? <td className="whitespace-nowrap px-3 py-3 text-ink-muted">{entry.exactScores}</td> : <td className="whitespace-nowrap px-3 py-3 text-ink-muted">{entry.correctResults}</td>}
                           </tr>
                         ))}
                       </tbody>
@@ -408,61 +415,22 @@ export function LeaderboardPage() {
                 </button>
               </div>
 
-              <p className="mt-1 text-sm text-ink-muted">Aplica-se a todos os jogos (grupos e mata-mata).</p>
-
-              <table className="mt-4 w-full text-sm">
-                <thead>
-                  <tr className="border-b border-mint/30 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                    <th className="pb-2 pr-4">Situação</th>
-                    <th className="pb-2 text-right">Pontos</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-mint/15">
-                  {[
-                    ["Placar exato", "7"],
-                    ["Resultado certo + gols de um time acertados", "4"],
-                    ["Só o resultado certo", "3"],
-                    ["Resultado errado", "0"],
-                  ].map(([label, pts]) => (
-                    <tr key={label}>
-                      <td className="py-2 pr-4 text-ink">{label}</td>
-                      <td className="py-2 text-right font-semibold text-mint-dark">{pts}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <p className="mt-5 text-sm font-semibold text-ink">Bônus mata-mata — pênaltis</p>
-              <p className="text-xs text-ink-muted">Somado à base quando o jogo vai para a disputa de pênaltis.</p>
-
-              <table className="mt-2 w-full text-sm">
-                <thead>
-                  <tr className="border-b border-mint/30 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                    <th className="pb-2 pr-4">Situação</th>
-                    <th className="pb-2 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-mint/15">
-                  {[
-                    ["Placar exato + pênaltis exatos (ex: 1×1, 5×4)", "10"],
-                    ["Placar exato + classificado certo", "9"],
-                    ["Placar exato + errou a disputa", "7"],
-                    ["Empate não exato + classificado certo", "4"],
-                    ["Empate não exato + errou a disputa", "3"],
-                  ].map(([label, pts]) => (
-                    <tr key={label}>
-                      <td className="py-2 pr-4 text-ink">{label}</td>
-                      <td className="py-2 text-right font-semibold text-mint-dark">{pts}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <div className="mt-5 rounded-xl bg-secondary/50 px-4 py-3 text-sm text-ink-muted">
-                <span className="font-semibold text-ink">Desempate</span> — na ordem: (1) mais placares
-                exatos; (2) mais acertos de vencedor; (3) mais bônus de gols e pênaltis. Ajustes manuais
-                não entram no desempate.
-              </div>
+              {isFootball ? (
+                <>
+                  <p className="mt-1 text-sm text-ink-muted">Aplica-se a todos os jogos (grupos e mata-mata).</p>
+                  <table className="mt-4 w-full text-sm"><tbody className="divide-y divide-mint/15">
+                    {[["Placar exato", footballScoring.data?.exactScorePoints], ["Resultado + lado exato", footballScoring.data?.correctResultExactSidePoints], ["Resultado correto", footballScoring.data?.correctResultPoints], ["Erro", footballScoring.data?.incorrectResultPoints], ["Bônus mata-mata", footballScoring.data?.knockoutBonusPoints]].map(([label, points]) => <tr key={label as string}><td className="py-2 pr-4 text-ink">{label}</td><td className="py-2 text-right font-semibold text-mint-dark">{points ?? "—"} pts</td></tr>)}
+                  </tbody></table>
+                  <div className="mt-5 rounded-xl bg-secondary/50 px-4 py-3 text-sm text-ink-muted"><span className="font-semibold text-ink">Desempate</span> — mais placares exatos, acertos de resultado e bônus. Ajustes manuais não entram no desempate.</div>
+                </>
+              ) : (
+                <>
+                  <p className="mt-1 text-sm text-ink-muted">Cada categoria usa os valores configurados neste bolão.</p>
+                  <table className="mt-4 w-full text-sm"><tbody className="divide-y divide-mint/15">
+                    {customQuestions.data?.map((question) => <tr key={question.itemId}><td className="py-2 pr-4 text-ink">{question.title}</td><td className="py-2 text-right font-semibold text-mint-dark">{question.correctPoints} pts</td></tr>)}
+                  </tbody></table>
+                </>
+              )}
             </motion.div>
           </motion.div>
         )}

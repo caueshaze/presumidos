@@ -1,6 +1,9 @@
 use crate::error::ServerFnError;
 
-use crate::models::{LeaderboardEntry, MatchPointsSummary, PredictionScoreBreakdown, ScoringJob};
+use crate::models::{
+    FootballScoringConfig, LeaderboardEntry, MatchPointsSummary, PredictionScoreBreakdown,
+    ScoringJob,
+};
 
 /// Resultado oficial (ou palpite) de uma partida, no formato usado pela
 /// pontuação. Os campos de mata-mata só são considerados em jogos de mata-mata.
@@ -112,6 +115,7 @@ struct BreakdownPoints {
     goal_bonus_points: i64,
     qualifier_points: i64,
     penalties_points: i64,
+    incorrect_result_points: i64,
     total_points: i64,
 }
 
@@ -123,7 +127,7 @@ struct BreakdownRow {
     match_id: String,
     joined_at: String,
     phase: Option<String>,
-    kickoff: String,
+    lock_at: String,
     official_home_score: Option<i64>,
     official_away_score: Option<i64>,
     official_qualifier: Option<String>,
@@ -137,6 +141,11 @@ struct BreakdownRow {
     prediction_went_to_penalties: bool,
     prediction_penalty_home_score: Option<i64>,
     prediction_penalty_away_score: Option<i64>,
+    exact_score_points_config: i64,
+    correct_result_exact_side_points_config: i64,
+    correct_result_points_config: i64,
+    incorrect_result_points_config: i64,
+    knockout_bonus_points_config: i64,
 }
 
 #[cfg(feature = "server")]
@@ -154,13 +163,23 @@ struct LiveOverlayRow {
     p_penalties: bool,
     p_pen_home: Option<i64>,
     p_pen_away: Option<i64>,
+    exact_score_points_config: i64,
+    correct_result_exact_side_points_config: i64,
+    correct_result_points_config: i64,
+    incorrect_result_points_config: i64,
+    knockout_bonus_points_config: i64,
 }
 
 #[cfg(feature = "server")]
-fn breakdown_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> BreakdownPoints {
+fn breakdown_points(
+    is_knockout: bool,
+    official: &Outcome,
+    guess: &Outcome,
+    config: &FootballScoringConfig,
+) -> BreakdownPoints {
     let exact_score_points =
         if guess.home_score == official.home_score && guess.away_score == official.away_score {
-            7
+            config.exact_score_points
         } else {
             0
         };
@@ -173,7 +192,12 @@ fn breakdown_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> B
     let outcome_points = if exact_score_points > 0 {
         0
     } else if correct_outcome {
-        3
+        config.correct_result_points
+    } else {
+        0
+    };
+    let incorrect_result_points = if exact_score_points == 0 && !correct_outcome {
+        config.incorrect_result_points
     } else {
         0
     };
@@ -184,7 +208,7 @@ fn breakdown_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> B
         && ((guess.home_score == official.home_score && official.home_score > 0)
             || (guess.away_score == official.away_score && official.away_score > 0))
     {
-        1
+        config.correct_result_exact_side_points - config.correct_result_points
     } else {
         0
     };
@@ -193,7 +217,12 @@ fn breakdown_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> B
     let qualifier_points = 0;
 
     let penalties_points = if is_knockout {
-        knockout_bonus(official, guess)
+        let legacy = knockout_bonus(official, guess);
+        if legacy == 0 {
+            0
+        } else {
+            (legacy * config.knockout_bonus_points) / 3
+        }
     } else {
         0
     };
@@ -204,24 +233,26 @@ fn breakdown_points(is_knockout: bool, official: &Outcome, guess: &Outcome) -> B
         goal_bonus_points,
         qualifier_points,
         penalties_points,
+        incorrect_result_points,
         total_points: exact_score_points
             + outcome_points
             + goal_bonus_points
             + qualifier_points
-            + penalties_points,
+            + penalties_points
+            + incorrect_result_points,
     }
 }
 
 #[cfg(feature = "server")]
 fn build_eligibility(row: &BreakdownRow) -> (bool, String) {
     let joined_at = chrono::NaiveDateTime::parse_from_str(&row.joined_at, "%Y-%m-%d %H:%M:%S").ok();
-    let kickoff = chrono::DateTime::parse_from_rfc3339(&row.kickoff).ok();
-    match (joined_at, kickoff) {
-        (Some(joined), Some(kickoff)) => {
+    let lock_at = chrono::DateTime::parse_from_rfc3339(&row.lock_at).ok();
+    match (joined_at, lock_at) {
+        (Some(joined), Some(lock_at)) => {
             let joined =
                 chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(joined, chrono::Utc);
-            let kickoff = kickoff.with_timezone(&chrono::Utc);
-            if kickoff >= joined {
+            let lock_at = lock_at.with_timezone(&chrono::Utc);
+            if lock_at >= joined {
                 (true, "eligible".to_string())
             } else {
                 (false, "joined_after_kickoff".to_string())
@@ -291,8 +322,9 @@ async fn recompute_breakdowns(
          WHERE EXISTS (
             SELECT 1
             FROM pool_members pm
-            JOIN predictions pr ON pr.user_id = pm.user_id
-            JOIN matches m ON m.id = pr.match_id
+            JOIN predictions pr ON pr.user_id = pm.user_id AND pr.pool_id = pm.pool_id
+            JOIN matches m ON m.id = pr.match_id AND m.prediction_item_id = pr.item_id
+            JOIN prediction_items pi ON pi.id = pr.item_id
             WHERE prediction_score_breakdowns.pool_id = pm.pool_id
               AND prediction_score_breakdowns.user_id = pm.user_id
               AND prediction_score_breakdowns.match_id = m.id
@@ -314,7 +346,7 @@ async fn recompute_breakdowns(
                 pr.match_id,
                 pm.joined_at,
                 m.phase,
-                m.kickoff,
+                pi.lock_at,
                 m.home_score AS official_home_score,
                 m.away_score AS official_away_score,
                 m.qualifier AS official_qualifier,
@@ -327,10 +359,17 @@ async fn recompute_breakdowns(
                 pr.qualifier AS prediction_qualifier,
                 pr.went_to_penalties AS prediction_went_to_penalties,
                 pr.penalty_home_score AS prediction_penalty_home_score,
-                pr.penalty_away_score AS prediction_penalty_away_score
+                pr.penalty_away_score AS prediction_penalty_away_score,
+                f.exact_score_points AS exact_score_points_config,
+                f.correct_result_exact_side_points AS correct_result_exact_side_points_config,
+                f.correct_result_points AS correct_result_points_config,
+                f.incorrect_result_points AS incorrect_result_points_config,
+                f.knockout_bonus_points AS knockout_bonus_points_config
          FROM pool_members pm
-         JOIN predictions pr ON pr.user_id = pm.user_id
-         JOIN matches m ON m.id = pr.match_id
+         JOIN predictions pr ON pr.user_id = pm.user_id AND pr.pool_id = pm.pool_id
+         JOIN matches m ON m.id = pr.match_id AND m.prediction_item_id = pr.item_id
+         JOIN prediction_items pi ON pi.id = pr.item_id
+         JOIN football_pool_scoring f ON f.pool_id = pm.pool_id
          WHERE 1 = 1
            {where_sql}"
     );
@@ -365,7 +404,19 @@ async fn recompute_breakdowns(
                     penalty_away: row.prediction_penalty_away_score,
                 };
                 (
-                    breakdown_points(is_knockout(row.phase.as_deref()), &official, &guess),
+                    breakdown_points(
+                        is_knockout(row.phase.as_deref()),
+                        &official,
+                        &guess,
+                        &FootballScoringConfig {
+                            exact_score_points: row.exact_score_points_config,
+                            correct_result_exact_side_points: row
+                                .correct_result_exact_side_points_config,
+                            correct_result_points: row.correct_result_points_config,
+                            incorrect_result_points: row.incorrect_result_points_config,
+                            knockout_bonus_points: row.knockout_bonus_points_config,
+                        },
+                    ),
                     row.result_source.clone(),
                 )
             } else {
@@ -376,6 +427,7 @@ async fn recompute_breakdowns(
                         goal_bonus_points: 0,
                         qualifier_points: 0,
                         penalties_points: 0,
+                        incorrect_result_points: 0,
                         total_points: 0,
                     },
                     row.result_source.clone(),
@@ -464,6 +516,34 @@ async fn ensure_breakdowns_seeded(db: &sqlx::SqlitePool) -> Result<(), ServerFnE
 }
 
 #[cfg(feature = "server")]
+async fn recompute_custom_breakdowns(db: &sqlx::SqlitePool) -> Result<(), ServerFnError> {
+    sqlx::query("DELETE FROM custom_prediction_score_breakdowns")
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("custom_scoring_clear", e))?;
+    sqlx::query(
+        "INSERT INTO custom_prediction_score_breakdowns (id,pool_id,user_id,item_id,correct_points,incorrect_points,total_points,eligible,eligibility_reason)
+         SELECT lower(hex(randomblob(16))), p.pool_id,p.user_id,p.item_id,
+           CASE WHEN v.option_id=q.correct_option_id THEN c.correct_points ELSE 0 END,
+           CASE WHEN v.option_id=q.correct_option_id THEN 0 ELSE c.incorrect_points END,
+           CASE WHEN v.option_id=q.correct_option_id THEN c.correct_points ELSE c.incorrect_points END,
+           CASE WHEN datetime(pi.lock_at) >= datetime(pm.joined_at) THEN 1 ELSE 0 END,
+           CASE WHEN datetime(pi.lock_at) >= datetime(pm.joined_at) THEN 'eligible' ELSE 'joined_after_lock' END
+         FROM predictions p JOIN custom_prediction_values v ON v.prediction_id=p.id
+         JOIN custom_questions q ON q.item_id=p.item_id JOIN prediction_items pi ON pi.id=p.item_id
+         JOIN custom_pool_item_scoring c ON c.pool_id=p.pool_id AND c.item_id=p.item_id
+         JOIN pool_members pm ON pm.pool_id=p.pool_id AND pm.user_id=p.user_id
+         WHERE q.correct_option_id IS NOT NULL",
+    ).execute(db).await.map_err(|e| crate::security::internal_error("custom_scoring_insert", e))?;
+    Ok(())
+}
+
+#[cfg(feature = "server")]
+pub async fn recalculate_custom_breakdowns() -> Result<(), ServerFnError> {
+    recompute_custom_breakdowns(crate::db::pool()).await
+}
+
+#[cfg(feature = "server")]
 pub async fn recalculate_match_breakdowns(
     match_id: &str,
     triggered_by: Option<&str>,
@@ -489,7 +569,9 @@ pub async fn recalculate_all_breakdowns(
         .execute(db)
         .await
         .map_err(|e| crate::security::internal_error("recalculate_all_breakdowns_clear", e))?;
-    recompute_breakdowns(db, "", &[], "all", None, triggered_by).await
+    let job = recompute_breakdowns(db, "", &[], "all", None, triggered_by).await?;
+    recompute_custom_breakdowns(db).await?;
+    Ok(job)
 }
 
 #[cfg(feature = "server")]
@@ -729,6 +811,15 @@ pub async fn get_leaderboard(
         t.correct_results += correct_results;
         t.bonus_points += bonus_points;
     }
+    let custom: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT user_id, COALESCE(SUM(total_points),0), COALESCE(SUM(CASE WHEN correct_points > 0 THEN 1 ELSE 0 END),0)
+         FROM custom_prediction_score_breakdowns WHERE pool_id=?1 AND eligible=1 GROUP BY user_id",
+    ).bind(&pool_id).fetch_all(db).await.map_err(|e| crate::security::internal_error("get_leaderboard_custom", e))?;
+    for (user_id, total, correct) in custom {
+        let t = tallies.entry(user_id).or_default();
+        t.points += total;
+        t.correct_results += correct;
+    }
 
     // Overlay provisório: jogos ao vivo sem resultado oficial ainda não entram
     // na materialização, então somamos sob demanda para preservar o feedback do
@@ -745,10 +836,16 @@ pub async fn get_leaderboard(
                 pr.qualifier AS p_qualifier,
                 pr.went_to_penalties AS p_penalties,
                 pr.penalty_home_score AS p_pen_home,
-                pr.penalty_away_score AS p_pen_away
+                pr.penalty_away_score AS p_pen_away,
+                f.exact_score_points AS exact_score_points_config,
+                f.correct_result_exact_side_points AS correct_result_exact_side_points_config,
+                f.correct_result_points AS correct_result_points_config,
+                f.incorrect_result_points AS incorrect_result_points_config,
+                f.knockout_bonus_points AS knockout_bonus_points_config
          FROM pool_members pm
-         JOIN predictions pr ON pr.user_id = pm.user_id
-         JOIN matches m ON m.id = pr.match_id
+         JOIN predictions pr ON pr.user_id = pm.user_id AND pr.pool_id = pm.pool_id
+         JOIN matches m ON m.id = pr.match_id AND m.prediction_item_id = pr.item_id
+         JOIN football_pool_scoring f ON f.pool_id = pm.pool_id
          WHERE pm.pool_id = ?1
            AND m.home_score IS NULL
            AND m.away_score IS NULL
@@ -792,6 +889,13 @@ pub async fn get_leaderboard(
             crate::models::is_knockout(row.phase.as_deref()),
             &official,
             &guess,
+            &FootballScoringConfig {
+                exact_score_points: row.exact_score_points_config,
+                correct_result_exact_side_points: row.correct_result_exact_side_points_config,
+                correct_result_points: row.correct_result_points_config,
+                incorrect_result_points: row.incorrect_result_points_config,
+                knockout_bonus_points: row.knockout_bonus_points_config,
+            },
         );
         let t = tallies.entry(row.user_id).or_default();
         t.points += overlay.total_points;
@@ -860,7 +964,7 @@ pub fn rank_leaderboard(entries: &mut [LeaderboardEntry]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{match_points, rank_leaderboard, Outcome};
+    use super::{base_points, match_points, rank_leaderboard, Outcome};
     use crate::models::LeaderboardEntry;
 
     fn entry(
@@ -970,6 +1074,30 @@ mod tests {
         assert_eq!(match_points(false, &real, &group(2, 2)), 3); // acertou empate
         assert_eq!(match_points(false, &real, &group(0, 1)), 0);
         assert_eq!(match_points(false, &real, &group(1, 0)), 0);
+    }
+
+    /// Matriz mínima das faixas da fase de grupos. Mantém explícitos os casos
+    /// assimétricos (vitória visitante) e o detalhe de que gol zero não gera o
+    /// ponto adicional.
+    #[test]
+    fn group_stage_scoring_bands_cover_home_away_draw_and_zero_goals() {
+        assert_eq!(base_points(2, 1, 2, 1), 7, "placar exato");
+        assert_eq!(
+            base_points(0, 2, 1, 2),
+            4,
+            "vitória visitante e gols visitantes exatos"
+        );
+        assert_eq!(
+            base_points(1, 3, 2, 4),
+            3,
+            "vitória visitante sem gol exato"
+        );
+        assert_eq!(
+            base_points(3, 3, 0, 0),
+            3,
+            "empate correto sem bônus para zero gol"
+        );
+        assert_eq!(base_points(0, 1, 1, 0), 0, "resultado incorreto");
     }
 
     // Mata-mata — vitória no tempo normal: Brasil 2x0 México.
