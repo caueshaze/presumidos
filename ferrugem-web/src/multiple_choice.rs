@@ -54,10 +54,10 @@ pub async fn submit_prediction(
     let db = crate::db::pool();
     let row: Option<(String, String, i64, Option<i64>, i64)> = sqlx::query_as(
         "SELECT pi.kind,pi.lock_at,q.min_selections,q.max_selections,COUNT(o.id)
-         FROM pools p JOIN prediction_items pi ON pi.event_id=p.event_id
+         FROM pools p JOIN events e ON e.id=p.event_id JOIN prediction_items pi ON pi.event_id=p.event_id
          JOIN multiple_choice_questions q ON q.item_id=pi.id
          LEFT JOIN custom_question_options o ON o.item_id=pi.id
-         WHERE p.id=?1 AND pi.id=?2 GROUP BY pi.id",
+         WHERE p.id=?1 AND pi.id=?2 AND e.status='active' GROUP BY pi.id",
     )
     .bind(&pool_id)
     .bind(&item_id)

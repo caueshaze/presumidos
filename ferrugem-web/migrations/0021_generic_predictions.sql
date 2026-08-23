@@ -1,4 +1,5 @@
 -- Prediction passa a pertencer ao pool e ao item. A reconstrução é segura:
+-- Versioned after the historical closing-screen migration.
 -- nenhuma tabela existente possui FK para predictions.id.
 ALTER TABLE predictions RENAME TO predictions_before_generic_items;
 

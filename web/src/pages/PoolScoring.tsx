@@ -59,6 +59,7 @@ export function PoolScoringPage() {
   if (pools.isLoading)
     return (
       <PageShell>
+        <Button variant="link" size="sm" onClick={() => navigate("/pools")}>← Voltar aos bolões</Button>
         <Card>
           <p className="text-ink-muted">Carregando...</p>
         </Card>
@@ -67,7 +68,8 @@ export function PoolScoringPage() {
   if (!pool)
     return (
       <PageShell>
-        <ErrorBanner>Bolão não encontrado.</ErrorBanner>
+        <Button variant="link" size="sm" onClick={() => navigate("/pools")}>← Voltar aos bolões</Button>
+        <div className="mt-4"><ErrorBanner>Bolão não encontrado.</ErrorBanner></div>
       </PageShell>
     );
   const footballFrozen =
@@ -95,11 +97,13 @@ export function PoolScoringPage() {
       <Button
         variant="link"
         size="sm"
-        onClick={() => navigate(`/pools/${poolId}/predictions`)}
+        onClick={() => navigate(`/pools/${poolId}`)}
       >
-        ← Voltar aos palpites
+        ← Voltar ao bolão
       </Button>
-      <h1 className="mt-3 text-3xl">Regras de pontuação</h1>
+      <h1 className="mt-3 text-3xl">
+        {pool.event.isHistorical ? "Regras usadas nesta edição" : "Regras de pontuação"}
+      </h1>
       <p className="mt-1 text-ink-muted">
         {pool.name} · {pool.event.name}
       </p>
@@ -154,7 +158,9 @@ export function PoolScoringPage() {
         <>
           <Card className="mt-6">
             <p className="text-sm text-ink-muted">
-              Cada categoria usa a pontuação deste bolão.
+              {pool.event.isHistorical
+                ? "Consulta das regras persistidas nesta edição encerrada."
+                : "Cada categoria usa a pontuação deste bolão."}
             </p>
             <div className="mt-4 space-y-3">
               {custom.data?.map((q) =>

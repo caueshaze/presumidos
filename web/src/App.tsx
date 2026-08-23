@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { Layout } from "@/components/Layout";
@@ -6,22 +7,30 @@ import { HomePage } from "@/pages/Home";
 import { LoginPage } from "@/pages/Login";
 import { RegisterPage } from "@/pages/Register";
 import { ForgotPasswordPage } from "@/pages/ForgotPassword";
-import { DashboardPage } from "@/pages/Dashboard";
-import { PredictionsPage } from "@/pages/Predictions";
-import { PoolPredictionsPage } from "@/pages/PoolPredictions";
-import { LeaderboardPage } from "@/pages/Leaderboard";
-import { AdminPage } from "@/pages/Admin";
-import { ContaPage } from "@/pages/Conta";
 import { TermsPage } from "@/pages/Terms";
 import { PrivacyPage } from "@/pages/Privacy";
 import { ContactPage } from "@/pages/Contact";
-import { PoolScoringPage } from "@/pages/PoolScoring";
-import { EventBuilderPage } from "@/pages/EventBuilder";
+const DashboardPage = lazy(() => import("@/pages/Dashboard").then((module) => ({ default: module.DashboardPage })));
+const PredictionsPage = lazy(() => import("@/pages/Predictions").then((module) => ({ default: module.PredictionsPage })));
+const PoolPredictionsPage = lazy(() => import("@/pages/PoolPredictions").then((module) => ({ default: module.PoolPredictionsPage })));
+const LeaderboardPage = lazy(() => import("@/pages/Leaderboard").then((module) => ({ default: module.LeaderboardPage })));
+const AdminPage = lazy(() => import("@/pages/Admin").then((module) => ({ default: module.AdminPage })));
+const ContaPage = lazy(() => import("@/pages/Conta").then((module) => ({ default: module.ContaPage })));
+const PoolScoringPage = lazy(() => import("@/pages/PoolScoring").then((module) => ({ default: module.PoolScoringPage })));
+const PoolOverviewPage = lazy(() => import("@/pages/PoolOverview").then((module) => ({ default: module.PoolOverviewPage })));
+const EventBuilderPage = lazy(() => import("@/pages/EventBuilder").then((module) => ({ default: module.EventBuilderPage })));
+const PoolsPage = lazy(() => import("@/pages/Pools").then((module) => ({ default: module.PoolsPage })));
+const EventsPage = lazy(() => import("@/pages/Events").then((module) => ({ default: module.EventsPage })));
+
+function RouteFallback() {
+  return <div className="mx-auto max-w-[1100px] px-5 py-12 text-ink-muted">Carregando...</div>;
+}
 
 export function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<HomePage />} />
@@ -44,6 +53,8 @@ export function App() {
                 </AuthGuard>
               }
             />
+            <Route path="/pools" element={<AuthGuard><PoolsPage /></AuthGuard>} />
+            <Route path="/events" element={<AuthGuard><EventsPage /></AuthGuard>} />
             <Route
               path="/predictions"
               element={
@@ -53,6 +64,7 @@ export function App() {
               }
             />
             <Route path="/pools/:poolId/predictions" element={<AuthGuard><PredictionsPage /></AuthGuard>} />
+            <Route path="/pools/:poolId" element={<AuthGuard><PoolOverviewPage /></AuthGuard>} />
             <Route path="/pools/:poolId/scoring" element={<AuthGuard><PoolScoringPage /></AuthGuard>} />
             <Route path="/pools/:poolId/leaderboard" element={<AuthGuard><LeaderboardPage /></AuthGuard>} />
             <Route path="/pools/:poolId/members" element={<AuthGuard><PoolPredictionsPage /></AuthGuard>} />
@@ -91,6 +103,7 @@ export function App() {
             <Route path="*" element={<HomePage />} />
           </Route>
         </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

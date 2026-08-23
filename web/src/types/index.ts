@@ -39,6 +39,27 @@ export interface EventSummary {
   slug: string;
   kind: "football" | "custom";
   status: "draft" | "active" | "finished";
+  endsAt: string | null;
+  isHistorical: boolean;
+}
+
+export interface PoolDashboardSummary {
+  pool: PoolSummary;
+  answeredCount: number;
+  itemCount: number;
+}
+
+export interface EventRecord {
+  id: string;
+  name: string;
+  slug: string;
+  kind: "football" | "custom";
+  status: "draft" | "active" | "finished";
+  createdBy: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CustomQuestionOption {
@@ -371,4 +392,17 @@ export interface AdminSettings {
   globalBannerText: string;
   finalThemeEnabled: boolean;
   closingScreenEnabled: boolean;
+  featuredPoolId: string | null;
+  featuredPool?: FeaturedPool | null;
+}
+
+export interface FeaturedPool {
+  poolId: string;
+  poolName: string;
+  eventName: string;
+  eventKind: "football" | "custom";
+  isHistorical: boolean;
+  memberCount: number;
+  canJoin: boolean;
+  joinCode?: string | null;
 }

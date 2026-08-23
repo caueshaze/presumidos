@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 @layer base {
-  /* Tema claro (padrão) — "Pastel Futebol/Copa" refinado. */
+  /* Tema claro, leve e neutro para todos os tipos de evento. */
   :root {
     --color-bg: 244 247 240;
     --color-card: 255 255 255;

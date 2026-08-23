@@ -43,6 +43,16 @@ pub struct PoolSummary {
     pub join_closed_at: Option<String>,
 }
 
+/// Leitura compacta da página inicial. Mantém o Pool como fonte de verdade e
+/// agrega somente contadores pessoais que evitam uma requisição por card.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolDashboardSummary {
+    pub pool: PoolSummary,
+    pub answered_count: i64,
+    pub item_count: i64,
+}
+
 /// Dados leves do evento necessários para contextualizar um bolão.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +62,10 @@ pub struct EventSummary {
     pub slug: String,
     pub kind: EventKind,
     pub status: EventStatus,
+    pub ends_at: Option<String>,
+    /// Estado de apresentação calculado pelo lifecycle do Event. Não cria uma
+    /// cópia histórica do Pool: os mesmos registros continuam sendo lidos.
+    pub is_historical: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -557,6 +571,24 @@ pub struct AdminSettings {
     pub final_theme_enabled: bool,
     /// Tela de encerramento da Copa para participantes.
     pub closing_screen_enabled: bool,
+    /// Pool explicitamente autorizado pelo admin para aparecer no destaque global.
+    pub featured_pool_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub featured_pool: Option<FeaturedPool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeaturedPool {
+    pub pool_id: String,
+    pub pool_name: String,
+    pub event_name: String,
+    pub event_kind: EventKind,
+    pub is_historical: bool,
+    pub member_count: i64,
+    pub can_join: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_code: Option<String>,
 }
 
 /// Ajuste manual de pontos aplicado a um membro de um bolão.

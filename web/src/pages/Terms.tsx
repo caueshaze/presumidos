@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
+import { buttonVariants } from "@/components/ui/button";
 
 function Section({
   title,
@@ -22,6 +23,7 @@ export function TermsPage() {
     <PageShell className="max-w-[820px]">
       <div className="space-y-6">
         <header className="space-y-3">
+          <Link to="/" className={buttonVariants({ variant: "link", size: "sm" })}>← Voltar</Link>
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mint-dark">
             Documentação
           </p>

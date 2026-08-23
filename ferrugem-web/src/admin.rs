@@ -1,8 +1,8 @@
 use crate::error::ServerFnError;
 use crate::models::{
     AdminActivityItem, AdminMatchRecord, AdminOverview, AdminPredictionRow, AdminSettings,
-    AdminUserRecord, AuditLogEntry, MatchRecord, PoolSummary, PredictionRecord,
-    PredictionReopenOverride, ScoringJob, SyncStatus, UserPublic,
+    AdminUserRecord, AuditLogEntry, Event, EventKind, EventStatus, FeaturedPool, MatchRecord,
+    PoolSummary, PredictionRecord, PredictionReopenOverride, ScoringJob, SyncStatus, UserPublic,
 };
 
 #[cfg(feature = "server")]
@@ -42,6 +42,119 @@ struct AdminMatchRow {
     last_audit_at: Option<String>,
     // Derivado em SQL: o jogo já começou (kickoff <= agora).
     started: bool,
+}
+
+#[cfg(feature = "server")]
+fn admin_event_from_row(
+    (id, name, slug, kind, status, created_by, starts_at, ends_at, created_at, updated_at): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+    ),
+) -> Event {
+    Event {
+        id,
+        name,
+        slug,
+        kind: if kind == "custom" {
+            EventKind::Custom
+        } else {
+            EventKind::Football
+        },
+        status: match status.as_str() {
+            "draft" => EventStatus::Draft,
+            "finished" => EventStatus::Finished,
+            _ => EventStatus::Active,
+        },
+        created_by,
+        starts_at,
+        ends_at,
+        created_at,
+        updated_at,
+    }
+}
+
+#[cfg(feature = "server")]
+pub async fn list_events_admin(token: String) -> Result<Vec<Event>, ServerFnError> {
+    use crate::auth::require_admin;
+
+    crate::security::apply_security_headers();
+    require_admin(&token).await?;
+    let rows = sqlx::query_as(
+        "SELECT id, name, slug, kind, status, created_by, starts_at, ends_at, created_at, updated_at
+         FROM events ORDER BY CASE WHEN ends_at IS NULL THEN 0 ELSE 1 END, datetime(ends_at) DESC, created_at DESC",
+    )
+    .fetch_all(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("admin_list_events", e))?;
+    Ok(rows.into_iter().map(admin_event_from_row).collect())
+}
+
+#[cfg(feature = "server")]
+pub async fn finish_event(
+    token: String,
+    event_id: String,
+    csrf_token: String,
+) -> Result<Event, ServerFnError> {
+    use crate::auth::require_recent_admin;
+
+    crate::security::apply_security_headers();
+    crate::security::validate_uuid("Evento", &event_id)?;
+    let headers = crate::security::current_headers();
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+    let db = crate::db::pool();
+    let row: Option<(String, String, String, String, String, Option<String>, Option<String>, Option<String>, String, String)> =
+        sqlx::query_as(
+            "SELECT id, name, slug, kind, status, created_by, starts_at, ends_at, created_at, updated_at
+             FROM events WHERE id = ?1",
+        )
+        .bind(&event_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| crate::security::internal_error("admin_finish_event_load", e))?;
+    let Some(row) = row else {
+        return Err(crate::security::public_error("Evento não encontrado."));
+    };
+    if row.4 == "finished" {
+        return Ok(admin_event_from_row(row));
+    }
+    let ended = row
+        .7
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .is_some_and(|value| value <= chrono::Utc::now());
+    if !ended {
+        return Err(crate::security::public_error(
+            "A edição só pode ser encerrada depois da data de término.",
+        ));
+    }
+    sqlx::query("UPDATE events SET status='finished', updated_at=datetime('now') WHERE id=?1")
+        .bind(&event_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("admin_finish_event_update", e))?;
+    let forced_matches = crate::matches::force_finish_matches_for_event(&event_id).await?;
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "event_finished",
+        "event",
+        Some(&event_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({"previous_status": row.4, "ends_at": row.7, "matches_force_finished": forced_matches}),
+    )
+    .await?;
+    let mut finished = admin_event_from_row(row);
+    finished.status = EventStatus::Finished;
+    Ok(finished)
 }
 
 #[cfg(feature = "server")]
@@ -248,6 +361,53 @@ pub async fn load_admin_settings() -> Result<AdminSettings, ServerFnError> {
         .await?
         .unwrap_or_else(|| "0".to_string())
         == "1";
+    let featured_pool_id = app_setting(db, "featured_pool_id")
+        .await?
+        .filter(|value| !value.trim().is_empty());
+    let featured_pool = if let Some(pool_id) = featured_pool_id.as_deref() {
+        let row: Option<(String, String, String, String, String, Option<String>, String, Option<String>, i64)> = sqlx::query_as(
+            "SELECT p.id, p.name, p.invite_code, e.name, e.kind, p.join_closed_at,
+                    e.status, e.ends_at, (SELECT COUNT(*) FROM pool_members pm WHERE pm.pool_id = p.id)
+             FROM pools p JOIN events e ON e.id = p.event_id WHERE p.id = ?1",
+        ).bind(pool_id).fetch_optional(db).await.map_err(|e| crate::security::internal_error("featured_pool_load", e))?;
+        row.map(
+            |(
+                pool_id,
+                pool_name,
+                invite_code,
+                event_name,
+                event_kind,
+                join_closed_at,
+                event_status,
+                ends_at,
+                member_count,
+            )| {
+                let kind = if event_kind == "custom" {
+                    EventKind::Custom
+                } else {
+                    EventKind::Football
+                };
+                let is_historical = event_status == "finished"
+                    || ends_at
+                        .as_deref()
+                        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                        .is_some_and(|value| value <= chrono::Utc::now());
+                let can_join = join_closed_at.is_none() && !is_historical;
+                FeaturedPool {
+                    pool_id,
+                    pool_name,
+                    event_name,
+                    event_kind: kind,
+                    is_historical,
+                    member_count,
+                    can_join,
+                    join_code: can_join.then_some(invite_code),
+                }
+            },
+        )
+    } else {
+        None
+    };
 
     Ok(AdminSettings {
         knockout_released,
@@ -258,6 +418,8 @@ pub async fn load_admin_settings() -> Result<AdminSettings, ServerFnError> {
         global_banner_text,
         final_theme_enabled,
         closing_screen_enabled,
+        featured_pool_id,
+        featured_pool,
     })
 }
 
@@ -279,6 +441,12 @@ pub async fn save_admin_settings(
         db,
         "knockout_released",
         sqlite_bool(settings.knockout_released),
+    )
+    .await?;
+    set_app_setting(
+        db,
+        "featured_pool_id",
+        settings.featured_pool_id.as_deref().unwrap_or(""),
     )
     .await?;
     set_app_setting(
@@ -334,6 +502,7 @@ pub async fn save_admin_settings(
             "global_banner_enabled": settings.global_banner_enabled,
             "final_theme_enabled": settings.final_theme_enabled,
             "closing_screen_enabled": settings.closing_screen_enabled,
+            "featured_pool_id": settings.featured_pool_id,
         }),
     )
     .await?;
@@ -1070,12 +1239,13 @@ pub async fn list_user_pools(
             String,
             String,
             String,
+            Option<String>,
         ),
     >(
         "SELECT p.id, p.event_id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id) AS member_count,
                 p.created_by, p.description, p.visible_rules, p.join_closed_at,
-                e.name, e.slug, e.kind, e.status
+                e.name, e.slug, e.kind, e.status, e.ends_at
          FROM pools p
          JOIN events e ON e.id=p.event_id
          JOIN pool_members pm ON pm.pool_id = p.id
@@ -1104,6 +1274,7 @@ pub async fn list_user_pools(
                 event_slug,
                 event_kind,
                 event_status,
+                event_ends_at,
             )| PoolSummary {
                 id,
                 event: crate::pools::event_summary(
@@ -1112,6 +1283,7 @@ pub async fn list_user_pools(
                     event_slug,
                     event_kind,
                     event_status,
+                    event_ends_at,
                 ),
                 event_id,
                 name,

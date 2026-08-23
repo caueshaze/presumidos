@@ -87,7 +87,7 @@ mod tests {
         .await
         .expect("preparar banco historico");
 
-        sqlx::raw_sql(include_str!("../migrations/0018_events.sql"))
+        sqlx::raw_sql(include_str!("../migrations/0019_events.sql"))
             .execute(&db)
             .await
             .expect("aplicar migration de eventos");
@@ -181,7 +181,7 @@ mod tests {
         .await
         .expect("preparar banco anterior a 0020");
 
-        sqlx::raw_sql(include_str!("../migrations/0020_generic_predictions.sql"))
+        sqlx::raw_sql(include_str!("../migrations/0021_generic_predictions.sql"))
             .execute(&db)
             .await
             .expect("migrar predictions historicas");
@@ -256,7 +256,7 @@ mod tests {
              INSERT INTO prediction_items VALUES ('football','e','football_match'),('custom','e','single_choice'); INSERT INTO matches VALUES ('m','football');
              INSERT INTO predictions (id,pool_id,user_id,item_id,match_id,home_score,away_score) VALUES ('historic','p','u','football','m',2,1);",
         ).execute(&db).await.unwrap();
-        sqlx::raw_sql(include_str!("../migrations/0021_custom_questions.sql"))
+        sqlx::raw_sql(include_str!("../migrations/0022_custom_questions.sql"))
             .execute(&db)
             .await
             .unwrap();
@@ -293,7 +293,7 @@ mod tests {
              INSERT INTO prediction_items VALUES('football','e','football_match','2999-01-01T00:00:00Z'),('choice','e','single_choice','2999-01-01T00:00:00Z');
              INSERT INTO custom_questions VALUES('choice',6,NULL);",
         ).execute(&db).await.unwrap();
-        sqlx::raw_sql(include_str!("../migrations/0022_pool_scoring.sql"))
+        sqlx::raw_sql(include_str!("../migrations/0023_pool_scoring.sql"))
             .execute(&db)
             .await
             .unwrap();

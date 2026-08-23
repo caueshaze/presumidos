@@ -23,6 +23,8 @@ import type {
   NotificationStatus,
   PointAdjustment,
   PoolSummary,
+  PoolDashboardSummary,
+  EventRecord,
   PredictionReopenOverride,
   PredictionScoreBreakdown,
   PredictionRecord,
@@ -160,10 +162,17 @@ export function usePools() {
   });
 }
 
+export function useDashboardPools() {
+  return useQuery({
+    queryKey: ["pools", "dashboard"],
+    queryFn: () => api.get<PoolDashboardSummary[]>("/pools/dashboard"),
+  });
+}
+
 export type MyEvent = {
   id: string;
   name: string;
-  status: "draft" | "active";
+  status: "draft" | "active" | "finished";
   startsAt: string | null;
   endsAt: string | null;
 };
@@ -171,6 +180,24 @@ export function useMyEvents() {
   return useQuery({
     queryKey: ["custom-events", "mine"],
     queryFn: () => api.get<MyEvent[]>("/custom/events/mine"),
+  });
+}
+
+export function useAdminEvents() {
+  return useQuery({
+    queryKey: ["admin-events"],
+    queryFn: () => api.get<EventRecord[]>("/admin/events"),
+  });
+}
+
+export function useFinishEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (eventId: string) => api.post<EventRecord>(`/admin/events/${eventId}/finish`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-events"] });
+      qc.invalidateQueries({ queryKey: ["pools"] });
+    },
   });
 }
 

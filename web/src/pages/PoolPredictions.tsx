@@ -15,6 +15,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Label, Select, ErrorBanner } from "@/components/ui/field";
 import { formatSelectionLabel } from "@/lib/selections";
 import { formatKickoff } from "@/lib/utils";
@@ -368,11 +369,12 @@ export function PoolPredictionsPage() {
   }, [lastSeenKey, markSeen, selectedMember, selectedPool, user]);
 
   if (currentPool?.event.kind === "custom") {
-    return <PageShell><h1 className="text-3xl">Palpites do Bolão</h1><p className="mt-1 text-ink-muted">{currentPool.name} · {currentPool.event.name}</p><Card className="mt-6 max-w-sm"><Label htmlFor="custom-pool-select">Bolão</Label><Select id="custom-pool-select" value={selectedPool} onChange={(e) => setSelectedPool(e.target.value)}>{pools.data?.map((pool) => <option key={pool.id} value={pool.id}>{pool.name} · {pool.event.name}</option>)}</Select></Card><div className="mt-5 space-y-4">{customMembers.isLoading ? <Card><p className="text-ink-muted">Carregando...</p></Card> : customMembers.data?.map((member) => <Card key={member.userId}><h2 className="text-lg">{member.username}</h2>{member.predictions.length === 0 ? <p className="mt-2 text-sm text-ink-muted">Palpites ainda ocultos.</p> : <div className="mt-3 space-y-3">{member.predictions.map((prediction) => <div key={prediction.itemId} className="border-t border-mint/15 pt-3 first:border-0 first:pt-0"><p className="text-sm text-ink-muted">{prediction.title}</p><p className="font-semibold">{prediction.optionLabel}</p></div>)}</div>}</Card>)}</div></PageShell>;
+    return <PageShell><Button variant="link" size="sm" onClick={() => navigate(`/pools/${selectedPool}`)}>← Voltar ao bolão</Button><h1 className="mt-3 text-3xl">Palpites do Bolão</h1><p className="mt-1 text-ink-muted">{currentPool.name} · {currentPool.event.name}</p><Card className="mt-6 max-w-sm"><Label htmlFor="custom-pool-select">Bolão</Label><Select id="custom-pool-select" value={selectedPool} onChange={(e) => setSelectedPool(e.target.value)}>{pools.data?.map((pool) => <option key={pool.id} value={pool.id}>{pool.name} · {pool.event.name}</option>)}</Select></Card><div className="mt-5 space-y-4">{customMembers.isLoading ? <Card><p className="text-ink-muted">Carregando...</p></Card> : customMembers.data?.map((member) => <Card key={member.userId}><h2 className="text-lg">{member.username}</h2>{member.predictions.length === 0 ? <p className="mt-2 text-sm text-ink-muted">Palpites ainda ocultos.</p> : <div className="mt-3 space-y-3">{member.predictions.map((prediction) => <div key={prediction.itemId} className="border-t border-mint/15 pt-3 first:border-0 first:pt-0"><p className="text-sm text-ink-muted">{prediction.title}</p><p className="font-semibold">{prediction.optionLabel}</p></div>)}</div>}</Card>)}</div></PageShell>;
   }
 
   return (
     <PageShell>
+      <Button variant="link" size="sm" onClick={() => navigate(selectedPool ? `/pools/${selectedPool}` : "/pools")}>← Voltar ao bolão</Button>
       <h1 className="text-3xl">Palpites do Bolão</h1>
       <p className="mt-2 max-w-3xl text-sm text-ink-muted">
         Veja os palpites dos outros participantes do bolão e compare com os seus. Os palpites

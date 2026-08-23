@@ -142,7 +142,7 @@ pub async fn submit_prediction(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     let db = crate::db::pool();
-    let row:Option<(String,Option<i64>,Option<i64>,i64,String)>=sqlx::query_as("SELECT pi.kind,n.min_value_scaled,n.max_value_scaled,n.decimal_places,pi.lock_at FROM pools p JOIN prediction_items pi ON pi.event_id=p.event_id JOIN numeric_questions n ON n.item_id=pi.id WHERE p.id=?1 AND pi.id=?2").bind(&pool_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_prediction_load",e))?;
+    let row:Option<(String,Option<i64>,Option<i64>,i64,String)>=sqlx::query_as("SELECT pi.kind,n.min_value_scaled,n.max_value_scaled,n.decimal_places,pi.lock_at FROM pools p JOIN events e ON e.id=p.event_id JOIN prediction_items pi ON pi.event_id=p.event_id JOIN numeric_questions n ON n.item_id=pi.id WHERE p.id=?1 AND pi.id=?2 AND e.status='active'").bind(&pool_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_prediction_load",e))?;
     let Some((kind, min, max, places, lock_at)) = row else {
         return Err(crate::security::public_error("Bolão ou pergunta inválida."));
     };

@@ -204,6 +204,7 @@ async fn run_housekeeping() -> Result<(), error::ServerFnError> {
     let db = db::pool();
     let auth_summary = auth::cleanup_expired_auth_data(db).await?;
     let push_summary = push::cleanup_stale_push_data(db).await?;
+    let matches_force_finished = matches::force_finish_matches_for_ended_events().await?;
 
     security::log_event(
         "startup_housekeeping_completed",
@@ -213,6 +214,7 @@ async fn run_housekeeping() -> Result<(), error::ServerFnError> {
             "expired_password_reset_codes_deleted": auth_summary.expired_password_reset_codes_deleted,
             "inactive_push_subscriptions_deleted": push_summary.inactive_subscriptions_deleted,
             "old_push_deliveries_deleted": push_summary.old_deliveries_deleted,
+            "matches_force_finished": matches_force_finished,
         }),
     );
 

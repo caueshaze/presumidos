@@ -22,7 +22,7 @@ import { KnockoutControl } from "@/components/KnockoutControl";
 import { PredictionItemRenderer } from "@/components/PredictionItemRenderer";
 import type { MatchPointsSummary, MatchRecord } from "@/types";
 
-// Ordem natural das fases de uma Copa; fases desconhecidas vão para o fim.
+// Ordem natural das fases de um torneio football; fases desconhecidas vão para o fim.
 const PHASE_ORDER = [
   "Fase de grupos",
   "Oitavas de final",
@@ -179,13 +179,18 @@ export function PredictionsPage() {
     const answered = questions.filter((question) => question.kind === "numeric" ? question.currentValue != null : question.kind === "multiple_choice" ? (question.currentOptionIds?.length ?? 0) > 0 : question.currentOptionId != null).length;
     return (
       <PageShell>
-        <Button variant="link" size="sm" onClick={() => navigate("/dashboard")}>
-          ← Meus bolões
+        <Button variant="link" size="sm" onClick={() => navigate(poolId ? `/pools/${poolId}` : "/pools")}>
+          ← Voltar ao bolão
         </Button>
         <h1 className="mt-3 text-3xl">Palpites</h1>
         <p className="mt-1 text-ink-muted">
           {currentPool.name} · {currentPool.event.name}
         </p>
+        {currentPool.event.isHistorical && (
+          <p className="mt-2 text-sm font-semibold text-mint-dark">
+            Edição encerrada — consulte seus palpites e os resultados oficiais.
+          </p>
+        )}
         {!customQuestions.isLoading && (
           <p className="mt-3 text-sm font-semibold text-mint-dark">
             {answered} de {questions.length} categorias respondidas
@@ -214,8 +219,16 @@ export function PredictionsPage() {
 
   return (
     <PageShell>
+      <Button variant="link" size="sm" onClick={() => navigate(poolId ? `/pools/${poolId}` : "/pools")}>
+        ← Voltar ao bolão
+      </Button>
       <h1 className="text-3xl">Palpites</h1>
       {currentPool && <p className="mt-1 text-ink-muted">{currentPool.name} · {currentPool.event.name}</p>}
+      {currentPool?.event.isHistorical && (
+        <p className="mt-2 text-sm font-semibold text-mint-dark">
+          Edição encerrada — os palpites estão somente para consulta.
+        </p>
+      )}
       <p className="mt-1 text-ink-muted">
         Dê seu palpite de placar para cada partida antes do apito inicial.
       </p>

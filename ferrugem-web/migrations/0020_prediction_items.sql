@@ -1,3 +1,4 @@
+-- Versioned after the historical closing-screen migration.
 CREATE TABLE prediction_items (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL REFERENCES events(id),

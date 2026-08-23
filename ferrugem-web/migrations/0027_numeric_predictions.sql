@@ -1,4 +1,5 @@
 -- no-transaction
+-- Versioned after the historical closing-screen migration.
 -- Fase 8: previsões numéricas usam inteiros escalados. Nunca há float no
 -- contrato persistido nem na comparação de scoring.
 -- SQLite não possui ALTER CHECK e esta tabela é referenciada por várias

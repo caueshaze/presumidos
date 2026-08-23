@@ -3,7 +3,6 @@ import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "framer-
 import { Menu, X } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { usePublicSettings } from "@/hooks/queries";
 import { Button } from "./ui/button";
 import { ThemeToggle } from "./ui/ThemeToggle";
 import { cn } from "@/lib/utils";
@@ -22,10 +21,9 @@ const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
 
 export function Navbar() {
   const { user, isAdmin, loading, logout } = useAuth();
-  const settings = usePublicSettings();
   const navigate = useNavigate();
   const location = useLocation();
-  const homeTarget = user && isAdmin ? "/admin" : "/";
+  const homeTarget = user ? "/dashboard" : "/";
 
   // Esconde ao rolar para baixo, reaparece ao rolar para cima (e sempre no topo).
   const { scrollY } = useScroll();
@@ -78,30 +76,12 @@ export function Navbar() {
         <div className="hidden min-w-0 items-center gap-2 sm:flex sm:flex-1">
           {user ? (
             <>
-              {isAdmin ? (
-                <NavLink to="/admin" className={linkClass}>
-                  Admin
-                </NavLink>
-              ) : settings.data?.closingScreenEnabled ? (
-                <NavLink to="/" className={linkClass}>
-                  Resultado da Copa
-                </NavLink>
-              ) : (
-                <>
-                  <NavLink to="/dashboard" className={linkClass}>
-                    Meus Bolões
-                  </NavLink>
-                  <NavLink to="/predictions" className={linkClass}>
-                    Meus Palpites
-                  </NavLink>
-                  <NavLink to="/palpites-do-bolao" className={linkClass}>
-                    Palpites do Bolão
-                  </NavLink>
-                  <NavLink to="/leaderboard" className={linkClass}>
-                    Ranking
-                  </NavLink>
-                </>
-              )}
+              <>
+                <NavLink to="/dashboard" className={linkClass}>Início</NavLink>
+                <NavLink to="/pools" className={linkClass}>Bolões</NavLink>
+                <NavLink to="/events" className={linkClass}>Eventos</NavLink>
+                {isAdmin && <NavLink to="/admin" className={linkClass}>Admin</NavLink>}
+              </>
               <div className="flex-1" />
               <ThemeToggle className="h-9 w-9" />
               <NavLink
@@ -149,30 +129,12 @@ export function Navbar() {
                     Conta
                   </NavLink>
                   <div className="grid grid-cols-1 gap-1">
-                    {isAdmin ? (
-                      <NavLink to="/admin" className={mobileLinkClass}>
-                        Admin
-                      </NavLink>
-                    ) : settings.data?.closingScreenEnabled ? (
-                      <NavLink to="/" className={mobileLinkClass}>
-                        Resultado da Copa
-                      </NavLink>
-                    ) : (
-                      <>
-                        <NavLink to="/dashboard" className={mobileLinkClass}>
-                          Meus Bolões
-                        </NavLink>
-                        <NavLink to="/predictions" className={mobileLinkClass}>
-                          Meus Palpites
-                        </NavLink>
-                        <NavLink to="/palpites-do-bolao" className={mobileLinkClass}>
-                          Palpites do Bolão
-                        </NavLink>
-                        <NavLink to="/leaderboard" className={mobileLinkClass}>
-                          Ranking
-                        </NavLink>
-                      </>
-                    )}
+                    <>
+                      <NavLink to="/dashboard" className={mobileLinkClass}>Início</NavLink>
+                      <NavLink to="/pools" className={mobileLinkClass}>Bolões</NavLink>
+                      <NavLink to="/events" className={mobileLinkClass}>Eventos</NavLink>
+                      {isAdmin && <NavLink to="/admin" className={mobileLinkClass}>Admin</NavLink>}
+                    </>
                   </div>
                   <Button variant="outline" onClick={handleLogout} className="w-full justify-center">
                     Sair

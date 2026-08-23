@@ -598,6 +598,10 @@ async fn list_pools() -> ApiResult<impl IntoResponse> {
     Ok(Json(crate::pools::list_my_pools(String::new()).await?))
 }
 
+async fn dashboard_pools() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::pools::dashboard_pools(String::new()).await?))
+}
+
 async fn create_pool(
     headers: HeaderMap,
     Json(body): Json<CreatePoolBody>,
@@ -1295,6 +1299,19 @@ async fn admin_overview() -> ApiResult<impl IntoResponse> {
     Ok(Json(crate::admin::admin_overview(String::new()).await?))
 }
 
+async fn admin_events() -> ApiResult<impl IntoResponse> {
+    Ok(Json(crate::admin::list_events_admin(String::new()).await?))
+}
+
+async fn admin_finish_event(
+    Path(event_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::admin::finish_event(String::new(), event_id, csrf_header(&headers)).await?,
+    ))
+}
+
 async fn admin_matches(Query(query): Query<AdminMatchListQuery>) -> ApiResult<impl IntoResponse> {
     Ok(Json(
         crate::admin::list_admin_matches(
@@ -1546,6 +1563,7 @@ pub fn router() -> Router {
             post(remove_push_subscription_handler),
         )
         .route("/pools", get(list_pools).post(create_pool))
+        .route("/pools/dashboard", get(dashboard_pools))
         .route("/custom/events/mine", get(custom_events_mine))
         .route("/custom/events", post(custom_event_create))
         .route("/custom/events/{id}", get(custom_event_get))
@@ -1661,6 +1679,8 @@ pub fn router() -> Router {
         .route("/predictions/reopened", get(my_prediction_overrides))
         .route("/scoring/my-points", get(my_match_points))
         .route("/admin/overview", get(admin_overview))
+        .route("/admin/events", get(admin_events))
+        .route("/admin/events/{event_id}/finish", post(admin_finish_event))
         .route("/admin/matches", get(admin_matches).post(create_match))
         .route("/admin/matches/{id}/audit", get(admin_match_audit))
         .route("/admin/matches/{id}/result", post(set_match_result))

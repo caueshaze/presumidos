@@ -1,3 +1,4 @@
+-- Versioned after the historical closing-screen migration.
 ALTER TABLE prediction_items ADD COLUMN external_key TEXT;
 ALTER TABLE custom_question_options ADD COLUMN external_key TEXT;
 CREATE UNIQUE INDEX idx_prediction_items_event_external_key

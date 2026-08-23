@@ -19,6 +19,7 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   useAddPoolMember,
   useAdminAudit,
+  useAdminEvents,
   useAdminMatches,
   useAdminMatchAudit,
   useAdminOverview,
@@ -33,6 +34,7 @@ import {
   useCreateMatch,
   useCheckFixture,
   useDeleteMatch,
+  useFinishEvent,
   useInvalidateUserSessions,
   useKnockoutReleased,
   useReauth,
@@ -66,6 +68,7 @@ import type { AdminMatchRecord, AdminSettings, FixtureCheckResult } from "@/type
 
 type AdminTab =
   | "overview"
+  | "events"
   | "matches"
   | "predictions"
   | "scoring"
@@ -76,6 +79,7 @@ type AdminTab =
 
 const tabs: Array<{ id: AdminTab; label: string }> = [
   { id: "overview", label: "Resumo" },
+  { id: "events", label: "Edições" },
   { id: "matches", label: "Jogos" },
   { id: "predictions", label: "Palpites" },
   { id: "scoring", label: "Pontuação" },
@@ -401,6 +405,7 @@ export function AdminPage() {
   const breakdown = useUserBreakdown(selectedUserId || null, selectedPoolId || null);
   const audit = useAdminAudit({});
   const settings = useAdminSettings();
+  const adminEvents = useAdminEvents();
   // Lista sem filtros, dedicada ao painel do mata-mata: o contador/chaveamento
   // não devem mudar quando o admin filtra a lista de jogos logo abaixo.
   const allMatchesForKnockout = useAdminMatches({});
@@ -429,6 +434,7 @@ export function AdminPage() {
   const addPoolMember = useAddPoolMember();
   const removePoolMember = useRemovePoolMember();
   const saveSettings = useSaveAdminSettings();
+  const finishEvent = useFinishEvent();
 
   useEffect(() => {
     if (!selectedUserId && adminUsers.data?.length) {
@@ -795,6 +801,15 @@ export function AdminPage() {
     }
   };
 
+  const handleFinishEvent = async (eventId: string, name: string) => {
+    if (!window.confirm(`Encerrar a edição “${name}”? Os dados permanecem consultáveis e não serão recalculados.`)) return;
+    try {
+      await runAdminAction(() => finishEvent.mutateAsync(eventId));
+    } catch {
+      // erro já exibido por runAdminAction
+    }
+  };
+
   const handleUpdateSchedule = async () => {
     if (!selectedMatch) return;
     setScheduleError("");
@@ -1035,6 +1050,19 @@ export function AdminPage() {
               ))}
             </div>
           </Card>
+        </div>
+      )}
+
+      {tab === "events" && (
+        <div className="mt-6 space-y-4">
+          <Card>
+            <h2 className="text-xl">Edições do Presumidos</h2>
+            <p className="mt-1 text-sm text-ink-muted">Uma edição encerrada preserva pools, ranking, palpites e regras em modo histórico.</p>
+          </Card>
+          {adminEvents.isLoading ? <Card><p className="text-ink-muted">Carregando edições...</p></Card> : adminEvents.isError ? <ErrorBanner>Não foi possível carregar as edições.</ErrorBanner> : adminEvents.data?.map((event) => {
+            const historical = event.status === "finished" || (event.endsAt != null && new Date(event.endsAt).getTime() <= Date.now());
+            return <Card key={event.id} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-lg">{event.name}</h3><p className="mt-1 text-sm text-ink-muted">{event.kind === "football" ? "Futebol" : "Evento customizado"}{event.endsAt ? ` · termina em ${formatKickoff(event.endsAt)}` : " · sem data de término"}</p><p className="mt-2 text-sm font-semibold text-mint-dark">{historical ? "Encerrado / histórico" : event.status === "draft" ? "Rascunho" : "Em andamento"}</p></div>{historical ? <span className="rounded-pill bg-mint/25 px-3 py-1 text-sm font-semibold">Encerrado</span> : <Button variant="outline" onClick={() => handleFinishEvent(event.id, event.name)} disabled={finishEvent.isPending || !event.endsAt}>Encerrar edição</Button>}</Card>;
+          })}
         </div>
       )}
 
@@ -2057,12 +2085,7 @@ export function AdminPage() {
                 }
                 className="mt-0.5"
               />
-              <span>
-                <span className="block font-heading text-base font-semibold">Ativar tema da final Espanha × Argentina</span>
-                <span className="mt-1 block text-ink-muted">
-                  Exibe a edição especial em todo o site, com as cores e bandeiras da grande final.
-                </span>
-              </span>
+              <span><span className="block font-heading text-base font-semibold">Ativar tema do bolão em destaque</span><span className="mt-1 block text-ink-muted">Aplica uma edição visual neutra quando houver um bolão em destaque configurado.</span></span>
             </label>
             <label className="flex items-start gap-3 rounded-2xl border border-mint-dark/25 bg-mint/10 px-4 py-3 text-sm text-ink md:col-span-2">
               <input
@@ -2073,13 +2096,9 @@ export function AdminPage() {
                 }
                 className="mt-0.5"
               />
-              <span>
-                <span className="block font-heading text-base font-semibold">Exibir encerramento da Copa</span>
-                <span className="mt-1 block text-ink-muted">
-                  Participantes verão a Espanha campeã, suas estatísticas e os rankings dos bolões.
-                </span>
-              </span>
+              <span><span className="block font-heading text-base font-semibold">Destacar encerramento da edição</span><span className="mt-1 block text-ink-muted">Usa o bolão em destaque como referência visual, independente do tipo de evento.</span></span>
             </label>
+            <div className="md:col-span-2"><Label htmlFor="featured-pool-id">ID do bolão em destaque</Label><Input id="featured-pool-id" value={settingsDraft.featuredPoolId ?? ""} onChange={(e) => setSettingsDraft((v) => v ? { ...v, featuredPoolId: e.target.value || null } : v)} placeholder="Opcional — um bolão explicitamente divulgado pelo admin" /><p className="mt-1 text-xs text-ink-muted">O destaque mostra contexto do bolão mesmo para quem ainda não participa; regras de entrada continuam valendo.</p></div>
             <label className="flex items-center gap-2 text-sm font-semibold text-ink md:col-span-2">
               <input
                 type="checkbox"

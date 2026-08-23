@@ -1,4 +1,5 @@
 -- no-transaction
+-- Versioned after the historical closing-screen migration.
 -- Reações pertencem à Prediction, não a uma partida. O match era apenas o
 -- primeiro tipo de item que possuía Prediction; mantemos os dados históricos
 -- via backfill fail-closed antes de remover a coluna antiga.

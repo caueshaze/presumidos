@@ -1,3 +1,4 @@
+-- Versioned after the historical closing-screen migration.
 -- Evento explícito que representa o conteúdo previsto pelos bolões.
 -- Nesta fase existe apenas a Copa de 2026; `kind` já reserva o valor `custom`
 -- para uma etapa futura, sem introduzir comportamento para ele agora.

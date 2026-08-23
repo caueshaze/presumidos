@@ -202,7 +202,8 @@ export function EventBuilderPage() {
   if (!eventId)
     return (
       <PageShell>
-        <h1 className="text-3xl">Criar evento</h1>
+        <Button variant="link" size="sm" onClick={() => navigate("/events")}>← Voltar aos eventos</Button>
+        <h1 className="mt-3 text-3xl">Criar evento</h1>
         <Card className="mt-5">
           <form onSubmit={create} className="flex flex-col gap-3">
             <label>
@@ -238,13 +239,15 @@ export function EventBuilderPage() {
   if (!draft)
     return (
       <PageShell>
-        <p>Carregando evento…</p>
+        <Button variant="link" size="sm" onClick={() => navigate("/events")}>← Voltar aos eventos</Button>
+        <p className="mt-3">Carregando evento…</p>
         {error && <ErrorBanner>{error}</ErrorBanner>}
       </PageShell>
     );
   const editable = draft.event.status === "draft";
   return (
     <PageShell>
+      <Button variant="link" size="sm" onClick={() => navigate("/events")}>← Voltar aos eventos</Button>
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl">{draft.event.name}</h1>

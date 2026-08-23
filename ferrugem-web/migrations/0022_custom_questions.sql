@@ -1,4 +1,5 @@
 -- Fase 4: segundo tipo real de PredictionItem. Valores football continuam
+-- Versioned after the historical closing-screen migration.
 -- temporariamente na tabela principal, mas são nulos para single_choice.
 ALTER TABLE predictions RENAME TO predictions_before_custom_questions;
 

@@ -1,4 +1,5 @@
 -- no-transaction
+-- Versioned after the historical closing-screen migration.
 -- Fase 9: conjuntos de opções para perguntas multiple_choice. A sequência
 -- 0027 já foi consumida pela migração de reactions da Fase 8, por isso esta
 -- evolução incremental usa 0028 e preserva todo o histórico.

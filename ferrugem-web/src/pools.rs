@@ -1,8 +1,8 @@
 use crate::error::ServerFnError;
 
 use crate::models::{
-    EventKind, EventStatus, EventSummary, MemberPredictions, PointAdjustment, PoolPredictionRecord,
-    PoolSummary, PredictionReactionGroup, UserPublic,
+    EventKind, EventStatus, EventSummary, MemberPredictions, PointAdjustment, PoolDashboardSummary,
+    PoolPredictionRecord, PoolSummary, PredictionReactionGroup, UserPublic,
 };
 
 #[cfg(feature = "server")]
@@ -233,6 +233,7 @@ type PoolSummaryRow = (
     String,
     String,
     String,
+    Option<String>,
 );
 
 #[cfg(feature = "server")]
@@ -242,7 +243,13 @@ pub(crate) fn event_summary(
     slug: String,
     kind: String,
     status: String,
+    ends_at: Option<String>,
 ) -> EventSummary {
+    let is_historical = status == "finished"
+        || ends_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|value| value <= chrono::Utc::now());
     EventSummary {
         id,
         name,
@@ -257,6 +264,8 @@ pub(crate) fn event_summary(
             "finished" => EventStatus::Finished,
             _ => EventStatus::Active,
         },
+        ends_at,
+        is_historical,
     }
 }
 
@@ -343,7 +352,7 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 p.created_by,
                 p.description,
                 p.visible_rules,
-                p.join_closed_at, e.name, e.slug, e.kind, e.status
+                p.join_closed_at, e.name, e.slug, e.kind, e.status, e.ends_at
          FROM pools p
          JOIN events e ON e.id = p.event_id
          JOIN pool_members pm ON pm.pool_id = p.id
@@ -372,6 +381,7 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 event_slug,
                 event_kind,
                 event_status,
+                event_ends_at,
             )| PoolSummary {
                 id,
                 event_id: event_id.clone(),
@@ -381,6 +391,7 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                     event_slug,
                     event_kind,
                     event_status,
+                    event_ends_at,
                 ),
                 name,
                 invite_code,
@@ -389,6 +400,76 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 description,
                 visible_rules,
                 join_closed_at,
+            },
+        )
+        .collect())
+}
+
+#[cfg(feature = "server")]
+pub async fn dashboard_pools(token: String) -> Result<Vec<PoolDashboardSummary>, ServerFnError> {
+    use crate::auth::require_user;
+
+    crate::security::apply_security_headers();
+    let session = require_user(&token).await?;
+    let rows: Vec<(String, String, String, String, i64, String, String, String, Option<String>, String, String, String, String, Option<String>, i64, i64)> = sqlx::query_as(
+        "SELECT p.id, p.event_id, p.name, p.invite_code,
+                (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id),
+                p.created_by, p.description, p.visible_rules, p.join_closed_at,
+                e.name, e.slug, e.kind, e.status, e.ends_at,
+                (SELECT COUNT(*) FROM predictions pr WHERE pr.pool_id = p.id AND pr.user_id = ?1),
+                (SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_id = p.event_id)
+         FROM pools p
+         JOIN events e ON e.id = p.event_id
+         JOIN pool_members pm ON pm.pool_id = p.id
+         WHERE pm.user_id = ?1
+         ORDER BY CASE WHEN e.ends_at IS NULL THEN 0 ELSE 1 END, datetime(e.ends_at) DESC, p.created_at DESC",
+    )
+    .bind(&session.user_id)
+    .fetch_all(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("dashboard_pools", e))?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                event_id,
+                name,
+                invite_code,
+                member_count,
+                created_by,
+                description,
+                visible_rules,
+                join_closed_at,
+                event_name,
+                event_slug,
+                event_kind,
+                event_status,
+                event_ends_at,
+                answered_count,
+                item_count,
+            )| PoolDashboardSummary {
+                pool: PoolSummary {
+                    id,
+                    event_id: event_id.clone(),
+                    event: event_summary(
+                        event_id,
+                        event_name,
+                        event_slug,
+                        event_kind,
+                        event_status,
+                        event_ends_at,
+                    ),
+                    name,
+                    invite_code,
+                    member_count,
+                    created_by,
+                    description,
+                    visible_rules,
+                    join_closed_at,
+                },
+                answered_count,
+                item_count,
             },
         )
         .collect())
@@ -414,13 +495,17 @@ pub async fn create_pool_for_event(
     let db = pool();
     let event_id = match requested_event_id {
         Some(id) => {
-            let allowed: Option<(String,)> = sqlx::query_as("SELECT id FROM events WHERE id=?1 AND status='active' AND (kind='football' OR kind='custom')")
+            let allowed: Option<(String,)> = sqlx::query_as("SELECT id FROM events WHERE id=?1 AND status='active' AND (ends_at IS NULL OR datetime(ends_at) > datetime('now')) AND (kind='football' OR kind='custom')")
                 .bind(&id).fetch_optional(db).await.map_err(|e| crate::security::internal_error("create_pool_event_allowed", e))?;
             allowed.map(|v| v.0).ok_or_else(|| {
                 crate::security::public_error("Evento indisponível para criar bolão.")
             })?
         }
-        None => crate::events::world_cup_2026_event_id(db).await?,
+        None => {
+            return Err(crate::security::public_error(
+                "Escolha um evento publicado para criar o bolão.",
+            ));
+        }
     };
     let pool_id = Uuid::new_v4().to_string();
     let invite_code = generate_invite_code(db).await?;
@@ -450,8 +535,8 @@ pub async fn create_pool_for_event(
         .await
         .map_err(|e| crate::security::internal_error("create_pool_commit", e))?;
 
-    let event: (String, String, String, String) =
-        sqlx::query_as("SELECT name, slug, kind, status FROM events WHERE id=?1")
+    let event: (String, String, String, String, Option<String>) =
+        sqlx::query_as("SELECT name, slug, kind, status, ends_at FROM events WHERE id=?1")
             .bind(&event_id)
             .fetch_one(db)
             .await
@@ -459,7 +544,7 @@ pub async fn create_pool_for_event(
     Ok(PoolSummary {
         id: pool_id,
         event_id: event_id.clone(),
-        event: event_summary(event_id, event.0, event.1, event.2, event.3),
+        event: event_summary(event_id, event.0, event.1, event.2, event.3, event.4),
         name,
         invite_code,
         member_count: 1,
@@ -505,8 +590,8 @@ pub async fn join_pool(
 
     let db = pool();
 
-    let row: Option<(String, String, String, String, String, String, Option<String>, String, String, String, String)> =
-        sqlx::query_as("SELECT p.id, p.event_id, p.name, p.created_by, p.description, p.visible_rules, p.join_closed_at, e.name, e.slug, e.kind, e.status FROM pools p JOIN events e ON e.id=p.event_id WHERE p.invite_code = ?1")
+    let row: Option<(String, String, String, String, String, String, Option<String>, String, String, String, String, Option<String>)> =
+        sqlx::query_as("SELECT p.id, p.event_id, p.name, p.created_by, p.description, p.visible_rules, p.join_closed_at, e.name, e.slug, e.kind, e.status, e.ends_at FROM pools p JOIN events e ON e.id=p.event_id WHERE p.invite_code = ?1")
             .bind(&invite_code)
             .fetch_optional(db)
             .await
@@ -524,6 +609,7 @@ pub async fn join_pool(
         event_slug,
         event_kind,
         event_status,
+        event_ends_at,
     )) = row
     else {
         return Err(crate::security::public_error("Codigo de convite invalido."));
@@ -532,6 +618,16 @@ pub async fn join_pool(
     if join_closed_at.is_some() {
         return Err(crate::security::public_error(
             "Este bolao esta fechado para novos participantes.",
+        ));
+    }
+    if event_status == "finished"
+        || event_ends_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|value| value <= chrono::Utc::now())
+    {
+        return Err(crate::security::public_error(
+            "Este bolão pertence a uma edição encerrada.",
         ));
     }
 
@@ -564,6 +660,7 @@ pub async fn join_pool(
             event_slug,
             event_kind,
             event_status,
+            event_ends_at,
         ),
         event_id,
         name,
@@ -1003,7 +1100,7 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                 p.created_by,
                 p.description,
                 p.visible_rules,
-                p.join_closed_at, e.name, e.slug, e.kind, e.status
+                p.join_closed_at, e.name, e.slug, e.kind, e.status, e.ends_at
          FROM pools p
          JOIN events e ON e.id = p.event_id
          ORDER BY p.name COLLATE NOCASE",
@@ -1029,6 +1126,7 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                 event_slug,
                 event_kind,
                 event_status,
+                event_ends_at,
             )| PoolSummary {
                 id,
                 event_id: event_id.clone(),
@@ -1038,6 +1136,7 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                     event_slug,
                     event_kind,
                     event_status,
+                    event_ends_at,
                 ),
                 name,
                 invite_code,
@@ -1245,6 +1344,24 @@ async fn require_pool_manager(
     }
 }
 
+#[cfg(feature = "server")]
+async fn require_active_pool(db: &sqlx::SqlitePool, pool_id: &str) -> Result<(), ServerFnError> {
+    let active: Option<(String,)> = sqlx::query_as(
+        "SELECT p.id FROM pools p JOIN events e ON e.id = p.event_id
+         WHERE p.id = ?1 AND e.status = 'active'",
+    )
+    .bind(pool_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("require_active_pool", e))?;
+    if active.is_none() {
+        return Err(crate::security::public_error(
+            "Esta edição está encerrada e só pode ser consultada.",
+        ));
+    }
+    Ok(())
+}
+
 /// Lista os ajustes de pontos de um bolão (visível a qualquer membro, por transparência).
 #[cfg(feature = "server")]
 pub async fn list_pool_adjustments(
@@ -1322,6 +1439,7 @@ pub async fn add_point_adjustment(
 
     let db = pool();
     require_pool_manager(db, &pool_id, &session.user_id).await?;
+    require_active_pool(db, &pool_id).await?;
 
     if delta == 0 {
         return Err(crate::security::public_error("O ajuste nao pode ser zero."));
@@ -1396,6 +1514,7 @@ pub async fn remove_point_adjustment(
 
     let db = pool();
     require_pool_manager(db, &pool_id, &session.user_id).await?;
+    require_active_pool(db, &pool_id).await?;
 
     sqlx::query("DELETE FROM point_adjustments WHERE id = ?1 AND pool_id = ?2")
         .bind(&adjustment_id)

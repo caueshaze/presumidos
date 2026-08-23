@@ -120,8 +120,13 @@ export function LeaderboardPage() {
 
   return (
     <PageShell>
+      <Button variant="link" size="sm" onClick={() => navigate(routePoolId ? `/pools/${routePoolId}` : "/pools")}>
+        <ArrowLeft className="h-4 w-4" /> Voltar ao bolão
+      </Button>
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-3xl">Ranking</h1>
+        <h1 className="text-3xl">
+          {currentPool?.event.isHistorical ? "Ranking final" : "Ranking"}
+        </h1>
         {hasLive && isFootball && (
           <span className="inline-flex items-center gap-1.5 rounded-pill bg-danger-bg px-3 py-1 text-xs font-semibold text-danger ring-1 ring-danger/40">
             <span className="relative flex h-2 w-2">
@@ -265,7 +270,7 @@ export function LeaderboardPage() {
           </div>
 
           {/* Painel do organizador: lançar ajustes manuais */}
-          {isOrganizer && entries.length > 0 && (
+          {isOrganizer && !currentPool?.event.isHistorical && entries.length > 0 && (
             <Card className="mt-6 border-l-4 border-yellow-dark">
               <h2 className="text-xl">Ajustar pontos</h2>
               <p className="mt-1 text-sm text-ink-muted">
@@ -367,7 +372,7 @@ export function LeaderboardPage() {
                         <div className="truncate text-sm text-ink-muted">{adj.reason}</div>
                       )}
                     </div>
-                    {isOrganizer && (
+                    {isOrganizer && !currentPool?.event.isHistorical && (
                       <Button
                         variant="outline"
                         size="sm"

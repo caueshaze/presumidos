@@ -50,9 +50,9 @@ pub async fn submit_single_choice_prediction(
     let db = pool();
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT pi.kind, pi.lock_at, o.item_id
-         FROM pools p JOIN prediction_items pi ON pi.event_id = p.event_id
+         FROM pools p JOIN events e ON e.id = p.event_id JOIN prediction_items pi ON pi.event_id = p.event_id
          LEFT JOIN custom_question_options o ON o.id = ?3
-         WHERE p.id = ?1 AND pi.id = ?2",
+         WHERE p.id = ?1 AND pi.id = ?2 AND e.status = 'active'",
     )
     .bind(&pool_id)
     .bind(&item_id)

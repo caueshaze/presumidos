@@ -1,4 +1,5 @@
 -- Defaults são materializados por pool; o scorer nunca consulta estes valores.
+-- Versioned after the historical closing-screen migration.
 CREATE TABLE football_pool_scoring (
     pool_id TEXT PRIMARY KEY REFERENCES pools(id) ON DELETE CASCADE,
     exact_score_points INTEGER NOT NULL CHECK(exact_score_points BETWEEN 0 AND 1000),

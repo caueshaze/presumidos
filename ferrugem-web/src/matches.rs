@@ -66,6 +66,59 @@ pub async fn is_knockout_released() -> Result<bool, ServerFnError> {
     knockout_released_flag().await
 }
 
+/// Encerra a apresentação ao vivo de partidas vinculadas a uma edição já
+/// encerrada. Não cria resultado oficial nem altera a pontuação: apenas torna
+/// o flag operacional `finished` coerente com o ciclo de vida da edição.
+#[cfg(feature = "server")]
+pub async fn force_finish_matches_for_ended_events() -> Result<u64, ServerFnError> {
+    force_finish_matches_in(
+        crate::db::pool(),
+        "AND (e.status = 'finished' OR (e.ends_at IS NOT NULL AND datetime(e.ends_at) <= datetime('now')))",
+        None,
+    )
+    .await
+}
+
+/// Variante restrita à edição formalmente encerrada pelo administrador.
+#[cfg(feature = "server")]
+pub async fn force_finish_matches_for_event(event_id: &str) -> Result<u64, ServerFnError> {
+    force_finish_matches_in(crate::db::pool(), "AND e.id = ?1", Some(event_id)).await
+}
+
+#[cfg(feature = "server")]
+async fn force_finish_matches_in(
+    db: &sqlx::SqlitePool,
+    event_clause: &str,
+    event_id: Option<&str>,
+) -> Result<u64, ServerFnError> {
+    let sql = format!(
+        "UPDATE matches
+         SET finished = 1,
+             live_home_score = NULL,
+             live_away_score = NULL,
+             live_status = NULL,
+             live_elapsed = NULL,
+             live_updated_at = NULL
+         WHERE finished = 0
+           AND EXISTS (
+               SELECT 1
+               FROM prediction_items pi
+               JOIN events e ON e.id = pi.event_id
+               WHERE pi.id = matches.prediction_item_id
+                 {event_clause}
+           )"
+    );
+    let mut query = sqlx::query(&sql);
+    if let Some(event_id) = event_id {
+        query = query.bind(event_id);
+    }
+    let result = query
+        .execute(db)
+        .await
+        .map_err(|error| crate::security::internal_error("force_finish_event_matches", error))?;
+    Ok(result.rows_affected())
+}
+
 #[cfg(feature = "server")]
 pub async fn list_matches(token: String) -> Result<Vec<MatchRecord>, ServerFnError> {
     use crate::db::pool;
@@ -277,7 +330,8 @@ pub async fn submit_prediction(
         "SELECT pi.id, pi.lock_at, m.phase
          FROM matches m
          JOIN prediction_items pi ON pi.id = m.prediction_item_id
-         WHERE m.id = ?1",
+         JOIN events e ON e.id = pi.event_id
+         WHERE m.id = ?1 AND e.status = 'active'",
     )
     .bind(&match_id)
     .fetch_optional(db)
@@ -1081,5 +1135,55 @@ mod tests {
                 .message(),
             expected
         );
+    }
+
+    #[tokio::test]
+    async fn elapsed_event_finishes_stale_live_matches_without_inventing_a_result() {
+        let db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("criar banco de teste");
+        sqlx::raw_sql(
+            "CREATE TABLE events (id TEXT PRIMARY KEY, status TEXT NOT NULL, ends_at TEXT);
+             CREATE TABLE prediction_items (id TEXT PRIMARY KEY, event_id TEXT NOT NULL);
+             CREATE TABLE matches (
+                id TEXT PRIMARY KEY, prediction_item_id TEXT NOT NULL, finished INTEGER NOT NULL DEFAULT 0,
+                home_score INTEGER, away_score INTEGER, live_home_score INTEGER, live_away_score INTEGER,
+                live_status TEXT, live_elapsed INTEGER, live_updated_at TEXT
+             );
+             INSERT INTO events VALUES ('past', 'active', '2020-01-01T00:00:00Z'),
+                                       ('future', 'active', '2099-01-01T00:00:00Z');
+             INSERT INTO prediction_items VALUES ('past-item', 'past'), ('future-item', 'future');
+             INSERT INTO matches (id,prediction_item_id,live_home_score,live_away_score,live_status,live_elapsed,live_updated_at)
+             VALUES ('past-match','past-item',2,1,'Ao vivo',67,'2020-01-01T00:00:00Z'),
+                    ('future-match','future-item',1,0,'Ao vivo',30,'2099-01-01T00:00:00Z');",
+        )
+        .execute(&db)
+        .await
+        .expect("preparar partidas");
+
+        let affected = force_finish_matches_in(
+            &db,
+            "AND (e.status = 'finished' OR (e.ends_at IS NOT NULL AND datetime(e.ends_at) <= datetime('now')))",
+            None,
+        )
+        .await
+        .expect("encerrar partidas da edição passada");
+        assert_eq!(affected, 1);
+
+        let past: (bool, Option<i64>, Option<i64>, Option<String>, Option<i64>) = sqlx::query_as(
+            "SELECT finished, home_score, away_score, live_status, live_elapsed FROM matches WHERE id='past-match'",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("ler partida encerrada");
+        assert_eq!(past, (true, None, None, None, None));
+        let future: (bool, Option<String>) =
+            sqlx::query_as("SELECT finished, live_status FROM matches WHERE id='future-match'")
+                .fetch_one(&db)
+                .await
+                .expect("ler partida futura");
+        assert_eq!(future, (false, Some("Ao vivo".into())));
     }
 }
