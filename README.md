@@ -259,9 +259,10 @@ docker compose up -d
 ./deploy/deploy.sh
 ```
 
-O `deploy.sh` faz: backup pré-deploy verificado, `docker compose build` com
-`DOCKER_BUILDKIT=1`, para o app, aplica migrations explicitamente, sobe a nova
-versão e valida `GET /health/ready`. Não há rollback automático de binário após
+O `deploy.sh` faz: `docker compose build` com `DOCKER_BUILDKIT=1`, backup
+pré-deploy verificado pela imagem nova em um container CLI isolado, para o app,
+aplica migrations explicitamente, sobe a nova versão e valida `GET
+/health/ready`. Não há rollback automático de binário após
 migration; use o backup compatível e o procedimento do
 [runbook](PRODUCTION_RUNBOOK.md).
 

@@ -73,6 +73,23 @@ pub async fn init() {
     DB.set(pool).expect("banco já inicializado");
 }
 
+/// Opens the database for an operational snapshot without applying or
+/// requiring the current migration set. A pre-deploy backup must work before
+/// the new image's migrations are applied.
+pub async fn init_for_backup() {
+    let options = SqliteConnectOptions::new()
+        .filename(&settings().database_path)
+        .create_if_missing(false)
+        .busy_timeout(Duration::from_millis(settings().database_busy_timeout_ms))
+        .foreign_keys(false);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("falha ao conectar ao banco para backup");
+    DB.set(pool).expect("banco já inicializado");
+}
+
 pub fn pool() -> &'static SqlitePool {
     DB.get().expect("banco não inicializado")
 }

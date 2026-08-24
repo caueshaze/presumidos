@@ -338,6 +338,26 @@ async fn count_rows(pool: &SqlitePool, table: &str) -> Result<i64, sqlx::Error> 
     Ok(row.0)
 }
 
+async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, String> {
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1")
+            .bind(table)
+            .fetch_one(pool)
+            .await
+            .map_err(|error| format!("falha ao verificar tabela {table}: {error}"))?;
+    Ok(row.0 != 0)
+}
+
+async fn count_rows_if_present(pool: &SqlitePool, table: &str) -> Result<i64, String> {
+    if table_exists(pool, table).await? {
+        count_rows(pool, table)
+            .await
+            .map_err(|error| format!("falha ao contar {table}: {error}"))
+    } else {
+        Ok(0)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupMetadata {
@@ -345,6 +365,8 @@ pub struct BackupMetadata {
     pub created_at: String,
     pub application_version: String,
     pub migration_count: i64,
+    #[serde(default)]
+    pub expected_migration_count: Option<i64>,
     pub database_sha256: String,
     pub assets_sha256: String,
     pub database_file: String,
@@ -387,34 +409,22 @@ pub async fn create_backup(output: &Path) -> Result<PathBuf, String> {
         let (migration_count, expected) = db::migration_status()
             .await
             .map_err(|e| format!("falha ao ler migrations: {e}"))?;
-        if migration_count != expected {
-            return Err("schema incompatível: existem migrations pendentes".to_string());
-        }
         let metadata = BackupMetadata {
             format_version: 1,
             created_at: Utc::now().to_rfc3339(),
             application_version: env!("CARGO_PKG_VERSION").to_string(),
             migration_count,
+            expected_migration_count: Some(expected),
             database_sha256: sha256_file(&database_file)?,
             assets_sha256: sha256_file(&assets_file)?,
             database_file: "database.db".to_string(),
             assets_file: "assets.zip".to_string(),
             counts: BackupCounts {
-                users: count_rows(db::pool(), "users")
-                    .await
-                    .map_err(|e| e.to_string())?,
-                events: count_rows(db::pool(), "events")
-                    .await
-                    .map_err(|e| e.to_string())?,
-                pools: count_rows(db::pool(), "pools")
-                    .await
-                    .map_err(|e| e.to_string())?,
-                predictions: count_rows(db::pool(), "predictions")
-                    .await
-                    .map_err(|e| e.to_string())?,
-                assets: count_rows(db::pool(), "assets")
-                    .await
-                    .map_err(|e| e.to_string())?,
+                users: count_rows_if_present(db::pool(), "users").await?,
+                events: count_rows_if_present(db::pool(), "events").await?,
+                pools: count_rows_if_present(db::pool(), "pools").await?,
+                predictions: count_rows_if_present(db::pool(), "predictions").await?,
+                assets: count_rows_if_present(db::pool(), "assets").await?,
             },
         };
         fs::write(
@@ -480,12 +490,17 @@ pub async fn verify_backup(backup: &Path) -> Result<(), String> {
         }
         names.insert(entry.name().to_string());
     }
-    let references: Vec<(String,)> = sqlx::query_as(
-        "SELECT storage_key FROM assets UNION SELECT storage_key FROM asset_variants",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("não foi possível validar referências de assets: {e}"))?;
+    let references: Vec<(String,)> =
+        if table_exists(&pool, "assets").await? && table_exists(&pool, "asset_variants").await? {
+            sqlx::query_as(
+                "SELECT storage_key FROM assets UNION SELECT storage_key FROM asset_variants",
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| format!("não foi possível validar referências de assets: {e}"))?
+        } else {
+            Vec::new()
+        };
     for (reference,) in references {
         if !names.contains(&reference) {
             return Err(format!("asset referenciado ausente no backup: {reference}"));
@@ -622,6 +637,62 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn verify_backup_accepts_legacy_schema_without_asset_tables() {
+        let root =
+            std::env::temp_dir().join(format!("presumidos-legacy-backup-{}", Uuid::new_v4()));
+        let backup = root.join("backup");
+        let assets = root.join("assets");
+        let database = backup.join("database.db");
+        fs::create_dir_all(&backup).expect("backup dir");
+        fs::create_dir_all(&assets).expect("assets dir");
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&database)
+                    .create_if_missing(true),
+            )
+            .await
+            .expect("legacy database");
+        sqlx::raw_sql("CREATE TABLE users(id TEXT PRIMARY KEY);")
+            .execute(&pool)
+            .await
+            .expect("legacy table");
+        pool.close().await;
+
+        archive_assets(&assets, &backup.join("assets.zip")).expect("empty assets archive");
+        let metadata = BackupMetadata {
+            format_version: 1,
+            created_at: Utc::now().to_rfc3339(),
+            application_version: "legacy-test".to_string(),
+            migration_count: 18,
+            expected_migration_count: Some(32),
+            database_sha256: sha256_file(&database).expect("db hash"),
+            assets_sha256: sha256_file(&backup.join("assets.zip")).expect("assets hash"),
+            database_file: "database.db".to_string(),
+            assets_file: "assets.zip".to_string(),
+            counts: BackupCounts {
+                users: 1,
+                events: 0,
+                pools: 0,
+                predictions: 0,
+                assets: 0,
+            },
+        };
+        fs::write(
+            backup.join("backup.json"),
+            serde_json::to_vec(&metadata).expect("metadata"),
+        )
+        .expect("write metadata");
+
+        verify_backup(&backup)
+            .await
+            .expect("legacy backup should verify");
+        fs::remove_dir_all(root).expect("cleanup legacy backup test");
+    }
+
+    #[tokio::test]
     async fn backup_verify_and_restore_round_trip_preserves_database_and_assets() {
         let root = std::env::temp_dir().join(format!("presumidos-ops-test-{}", Uuid::new_v4()));
         let source = root.join("source");
@@ -662,6 +733,7 @@ mod tests {
             created_at: Utc::now().to_rfc3339(),
             application_version: "test".to_string(),
             migration_count: 0,
+            expected_migration_count: Some(0),
             database_sha256: sha256_file(&backup.join("database.db")).expect("db hash"),
             assets_sha256: sha256_file(&backup.join("assets.zip")).expect("assets hash"),
             database_file: "database.db".to_string(),

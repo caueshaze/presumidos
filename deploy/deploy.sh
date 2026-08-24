@@ -3,6 +3,7 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+IMAGE_NAME="presumidos/ferrugem-web:local-prod"
 HEALTH_URL="http://ferrugem-web:8080/health/ready"
 HEALTH_TRIES="${HEALTH_TRIES:-20}"
 HEALTH_SLEEP_SECONDS="${HEALTH_SLEEP_SECONDS:-2}"
@@ -14,6 +15,12 @@ fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker nao encontrado no PATH" >&2
+  exit 1
+fi
+
+APP_CONTAINER="$(docker compose ps -q ferrugem-web 2>/dev/null || true)"
+if [ -z "$APP_CONTAINER" ]; then
+  echo "container ferrugem-web atual não encontrado; deploy.sh exige backup pre-deploy" >&2
   exit 1
 fi
 
@@ -33,17 +40,19 @@ wait_for_health() {
   return 1
 }
 
-echo "==> Backup pre-deploy"
-./deploy/backup.sh
-
 echo "==> Build da imagem de producao"
 DOCKER_BUILDKIT=1 docker compose build ferrugem-web
+
+echo "==> Backup pre-deploy"
+PRESUMIDOS_APP_CONTAINER="$APP_CONTAINER" \
+PRESUMIDOS_CLI_IMAGE="$IMAGE_NAME" ./deploy/backup.sh
 
 echo "==> Parando o app para aplicar migrations offline"
 docker compose stop ferrugem-web
 
 echo "==> Aplicando migrations na imagem nova"
-docker compose run --rm --no-deps --entrypoint /app/ferrugem-web ferrugem-web migrate
+PRESUMIDOS_APP_CONTAINER="$APP_CONTAINER" \
+PRESUMIDOS_CLI_IMAGE="$IMAGE_NAME" ./deploy/run-cli.sh migrate
 
 echo "==> Atualizando servicos"
 docker compose up -d ferrugem-web redis caddy

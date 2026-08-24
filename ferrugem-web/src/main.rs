@@ -386,7 +386,7 @@ where
             }
             let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
             match runtime.block_on(async {
-                db::init().await;
+                db::init_for_backup().await;
                 operability::create_backup(std::path::Path::new(&output)).await
             }) {
                 Ok(path) => {
