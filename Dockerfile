@@ -37,16 +37,24 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # 3) Runtime mínimo
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends ca-certificates wget passwd && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin presumidos
 
 WORKDIR /app
 COPY --from=backend /build/target/release/ferrugem-web /app/ferrugem-web
 COPY --from=frontend /frontend/dist /app/public
+RUN mkdir -p /data /backups && chown -R presumidos:presumidos /app /data /backups
 
 ENV STATIC_DIR=/app/public
 ENV IP=0.0.0.0
 ENV PORT=8080
+ENV LISTEN_ADDRESS=0.0.0.0:8080
+ENV PRESUMIDOS_BACKUP_DIR=/backups
 
 EXPOSE 8080
+VOLUME ["/data"]
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 CMD wget -qO- http://127.0.0.1:8080/health/ready >/dev/null || exit 1
+USER presumidos
 ENTRYPOINT ["/app/ferrugem-web"]

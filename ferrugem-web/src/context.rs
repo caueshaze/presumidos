@@ -15,14 +15,16 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue};
 pub struct RequestContext {
     pub headers: HeaderMap,
     pub peer: Option<SocketAddr>,
+    pub request_id: String,
     pub response_headers: Mutex<Vec<(HeaderName, HeaderValue)>>,
 }
 
 impl RequestContext {
-    pub fn new(headers: HeaderMap, peer: Option<SocketAddr>) -> Self {
+    pub fn new(headers: HeaderMap, peer: Option<SocketAddr>, request_id: String) -> Self {
         Self {
             headers,
             peer,
+            request_id,
             response_headers: Mutex::new(Vec::new()),
         }
     }
@@ -45,6 +47,12 @@ pub fn peer_ip() -> Option<IpAddr> {
         .try_with(|ctx| ctx.peer.map(|addr| addr.ip()))
         .ok()
         .flatten()
+}
+
+pub fn request_id() -> String {
+    REQUEST
+        .try_with(|ctx| ctx.request_id.clone())
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 /// Enfileira um header para ser anexado à resposta.

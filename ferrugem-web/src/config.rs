@@ -1,4 +1,6 @@
 #[cfg(feature = "server")]
+use std::path::Path;
+#[cfg(feature = "server")]
 use std::sync::OnceLock;
 
 #[cfg(feature = "server")]
@@ -13,6 +15,15 @@ pub enum RateLimitBackendKind {
 pub struct AppConfig {
     pub app_env: String,
     pub database_path: String,
+    pub backup_dir: String,
+    pub public_base_url: Option<String>,
+    pub listen_address: String,
+    pub shutdown_timeout_secs: u64,
+    pub min_free_bytes: u64,
+    pub database_busy_timeout_ms: u64,
+    pub max_body_bytes: usize,
+    pub json_logs: bool,
+    pub metrics_enabled: bool,
     pub contact_email: Option<String>,
     pub session_secret: String,
     pub admin_bootstrap_secret: String,
@@ -33,6 +44,9 @@ pub struct AppConfig {
     pub argon2_policy_version: String,
     pub football: FootballConfig,
     pub web_push: WebPushConfig,
+    pub asset_dir: String,
+    pub asset_max_upload_bytes: usize,
+    pub asset_max_pixels: u64,
 }
 
 /// Configuração da integração de resultados ao vivo via provedor público de placares.
@@ -140,6 +154,29 @@ fn optional_bool_var(name: &str, default: bool) -> bool {
         },
         None => default,
     }
+}
+
+#[cfg(feature = "server")]
+fn parse_environment(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_lowercase();
+    match normalized.as_str() {
+        "development" | "test" | "production" => Ok(normalized),
+        _ => Err("APP_ENV deve ser development, test ou production".to_string()),
+    }
+}
+
+#[cfg(feature = "server")]
+fn validate_secret(name: &str, value: &str) {
+    assert!(
+        value.trim().len() >= 32,
+        "{name} precisa ter pelo menos 32 caracteres"
+    );
+    assert!(
+        !value.to_lowercase().contains("troque-este")
+            && !value.to_lowercase().contains("change-me")
+            && !value.to_lowercase().contains("example"),
+        "{name} nao pode usar um valor de exemplo"
+    );
 }
 
 #[cfg(feature = "server")]
@@ -252,8 +289,26 @@ pub fn settings() -> &'static AppConfig {
     CONFIG.get_or_init(|| {
         let _ = dotenvy::dotenv();
 
-        let app_env = required_var("APP_ENV").trim().to_lowercase();
+        let app_env =
+            parse_environment(&required_var("APP_ENV")).unwrap_or_else(|error| panic!("{error}"));
         let database_path = required_var("DATABASE_PATH");
+        let backup_dir =
+            optional_var("PRESUMIDOS_BACKUP_DIR").unwrap_or_else(|| "./backups".to_string());
+        let public_base_url = optional_var("PUBLIC_BASE_URL");
+        let listen_address = optional_var("LISTEN_ADDRESS").unwrap_or_else(|| {
+            let ip = optional_var("IP").unwrap_or_else(|| "127.0.0.1".to_string());
+            let port = optional_var("PORT").unwrap_or_else(|| "8080".to_string());
+            format!("{ip}:{port}")
+        });
+        let shutdown_timeout_secs = optional_u64_var("SHUTDOWN_TIMEOUT_SECS", 30);
+        let min_free_bytes = optional_u64_var("PRESUMIDOS_MIN_FREE_BYTES", 100 * 1024 * 1024);
+        let database_busy_timeout_ms =
+            optional_u64_var("PRESUMIDOS_DATABASE_BUSY_TIMEOUT_MS", 5_000);
+        let max_body_bytes = optional_u64_var("PRESUMIDOS_MAX_BODY_BYTES", 128 * 1024 * 1024)
+            .try_into()
+            .unwrap_or_else(|_| panic!("PRESUMIDOS_MAX_BODY_BYTES excede o limite suportado"));
+        let json_logs = optional_bool_var("PRESUMIDOS_JSON_LOGS", false);
+        let metrics_enabled = optional_bool_var("PRESUMIDOS_METRICS_ENABLED", false);
         let contact_email = optional_var("CONTACT_EMAIL")
             .or_else(|| optional_var("VITE_CONTACT_EMAIL"))
             .or_else(|| optional_var("WEB_PUSH_CONTACT_EMAIL"));
@@ -310,6 +365,19 @@ pub fn settings() -> &'static AppConfig {
             vapid_private_key: optional_var("WEB_PUSH_VAPID_PRIVATE_KEY"),
             contact_email: optional_var("WEB_PUSH_CONTACT_EMAIL"),
         };
+        let asset_dir =
+            optional_var("PRESUMIDOS_ASSET_DIR").unwrap_or_else(|| "./data/assets".to_string());
+        let asset_max_upload_bytes =
+            optional_u32_var("PRESUMIDOS_ASSET_MAX_UPLOAD_BYTES", 10 * 1024 * 1024) as usize;
+        let asset_max_pixels = optional_u64_var("PRESUMIDOS_ASSET_MAX_PIXELS", 25_000_000);
+        assert!(
+            asset_max_upload_bytes > 0,
+            "PRESUMIDOS_ASSET_MAX_UPLOAD_BYTES deve ser > 0"
+        );
+        assert!(
+            asset_max_pixels > 0,
+            "PRESUMIDOS_ASSET_MAX_PIXELS deve ser > 0"
+        );
         if web_push_enabled {
             assert!(
                 web_push.poll_interval_secs >= 30,
@@ -338,9 +406,11 @@ pub fn settings() -> &'static AppConfig {
             );
         }
 
+        validate_secret("SESSION_SECRET", &session_secret);
+        validate_secret("ADMIN_BOOTSTRAP_SECRET", &admin_bootstrap_secret);
         assert!(
-            session_secret.trim().len() >= 32,
-            "SESSION_SECRET precisa ter pelo menos 32 caracteres"
+            session_secret != admin_bootstrap_secret,
+            "SESSION_SECRET e ADMIN_BOOTSTRAP_SECRET devem ser diferentes"
         );
         assert!(
             rate_limit_identity_secret.trim().len() >= 32,
@@ -360,8 +430,43 @@ pub fn settings() -> &'static AppConfig {
 
         if app_env == "production" {
             assert!(
+                Path::new(&database_path).is_absolute(),
+                "DATABASE_PATH precisa ser absoluto em producao"
+            );
+            assert!(
+                Path::new(&backup_dir).is_absolute(),
+                "PRESUMIDOS_BACKUP_DIR precisa ser absoluto em producao"
+            );
+            assert!(
+                Path::new(&asset_dir).is_absolute(),
+                "PRESUMIDOS_ASSET_DIR precisa ser absoluto em producao"
+            );
+            assert!(
                 cookie_secure,
                 "COOKIE_SECURE precisa estar habilitado em producao"
+            );
+            assert!(
+                public_base_url.is_some(),
+                "PUBLIC_BASE_URL precisa ser configurada em producao"
+            );
+        }
+        assert!(
+            shutdown_timeout_secs > 0,
+            "SHUTDOWN_TIMEOUT_SECS deve ser > 0"
+        );
+        assert!(min_free_bytes > 0, "PRESUMIDOS_MIN_FREE_BYTES deve ser > 0");
+        assert!(
+            database_busy_timeout_ms > 0,
+            "PRESUMIDOS_DATABASE_BUSY_TIMEOUT_MS deve ser > 0"
+        );
+        assert!(max_body_bytes > 0, "PRESUMIDOS_MAX_BODY_BYTES deve ser > 0");
+        let _: std::net::SocketAddr = listen_address
+            .parse()
+            .unwrap_or_else(|_| panic!("LISTEN_ADDRESS invalido"));
+        if let Some(url) = public_base_url.as_deref() {
+            assert!(
+                url.starts_with("http://") || url.starts_with("https://"),
+                "PUBLIC_BASE_URL precisa usar http:// ou https://"
             );
         }
         validate_auth_email_config(
@@ -381,6 +486,15 @@ pub fn settings() -> &'static AppConfig {
         AppConfig {
             app_env,
             database_path,
+            backup_dir,
+            public_base_url,
+            listen_address,
+            shutdown_timeout_secs,
+            min_free_bytes,
+            database_busy_timeout_ms,
+            max_body_bytes,
+            json_logs,
+            metrics_enabled,
             contact_email,
             session_secret,
             admin_bootstrap_secret,
@@ -401,15 +515,53 @@ pub fn settings() -> &'static AppConfig {
             argon2_policy_version,
             football,
             web_push,
+            asset_dir,
+            asset_max_upload_bytes,
+            asset_max_pixels,
         }
     })
+}
+
+#[cfg(feature = "server")]
+pub fn check_config() -> Result<(), String> {
+    let _ = dotenvy::dotenv();
+    match std::panic::catch_unwind(settings) {
+        Ok(config) => {
+            if config.app_env == "production" {
+                for (name, configured_path) in [
+                    ("DATABASE_PATH", config.database_path.as_str()),
+                    ("PRESUMIDOS_ASSET_DIR", config.asset_dir.as_str()),
+                    ("PRESUMIDOS_BACKUP_DIR", config.backup_dir.as_str()),
+                ] {
+                    if let Some(parent) = Path::new(configured_path).parent() {
+                        if !parent.as_os_str().is_empty() && !parent.exists() {
+                            return Err(format!("o diretório pai de {name} não existe"));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| {
+                    payload
+                        .downcast_ref::<&str>()
+                        .map(|value| value.to_string())
+                })
+                .unwrap_or_else(|| "configuração inválida".to_string());
+            Err(message)
+        }
+    }
 }
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use super::{
-        has_global_cidr, validate_auth_email_config, validate_proxy_config,
-        validate_rate_limit_config, RateLimitBackendKind,
+        has_global_cidr, parse_environment, validate_auth_email_config, validate_proxy_config,
+        validate_rate_limit_config, validate_secret, RateLimitBackendKind,
     };
 
     #[test]
@@ -420,6 +572,26 @@ mod tests {
         ];
         assert!(has_global_cidr(&cidrs));
         assert!(!has_global_cidr(&["10.0.0.0/8".parse().expect("cidr")]));
+    }
+
+    #[test]
+    fn environment_is_explicitly_bounded() {
+        assert_eq!(
+            parse_environment("production").expect("production"),
+            "production"
+        );
+        assert!(parse_environment("staging").is_err());
+    }
+
+    #[test]
+    fn example_secret_is_rejected() {
+        let result = std::panic::catch_unwind(|| {
+            validate_secret(
+                "SESSION_SECRET",
+                "troque-este-segredo-por-um-valor-seguro-0123456789",
+            );
+        });
+        assert!(result.is_err());
     }
 
     #[test]

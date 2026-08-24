@@ -76,12 +76,59 @@ fn rate_limit_backend() -> &'static RateLimitBackend {
 
 #[cfg(feature = "server")]
 pub fn log_event(kind: &str, details: serde_json::Value) {
+    if kind.contains("rate_limit") {
+        crate::operability::metrics()
+            .rate_limit_hits
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    let mut details = redact_json(details, false);
+    if let Some(object) = details.as_object_mut() {
+        object
+            .entry("request_id".to_string())
+            .or_insert_with(|| serde_json::Value::String(crate::context::request_id()));
+    }
     let line = serde_json::json!({
         "kind": kind,
         "at": chrono::Utc::now().to_rfc3339(),
         "details": details,
     });
-    eprintln!("{line}");
+    if settings().json_logs {
+        eprintln!("{line}");
+    } else {
+        eprintln!("[{kind}] {}", line["details"]);
+    }
+}
+
+#[cfg(feature = "server")]
+fn redact_json(value: serde_json::Value, inherited_sensitive: bool) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| {
+                    let normalized = key.to_lowercase();
+                    let sensitive = inherited_sensitive
+                        || normalized.contains("password")
+                        || normalized.contains("secret")
+                        || normalized.contains("cookie")
+                        || normalized.contains("authorization")
+                        || normalized.contains("csrf")
+                        || normalized.contains("token");
+                    (key, redact_json(value, sensitive))
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .into_iter()
+                .map(|value| redact_json(value, inherited_sensitive))
+                .collect(),
+        ),
+        serde_json::Value::String(_) if inherited_sensitive => {
+            serde_json::Value::String("[REDACTED]".to_string())
+        }
+        other => other,
+    }
 }
 
 #[cfg(feature = "server")]
@@ -91,14 +138,42 @@ pub fn public_error(message: impl Into<String>) -> ServerFnError {
 
 #[cfg(feature = "server")]
 pub fn internal_error(context: &str, error: impl std::fmt::Display) -> ServerFnError {
+    let error_text = error.to_string();
     log_event(
         "internal_error",
         serde_json::json!({
             "context": context,
-            "error": error.to_string(),
+            "error": error_text,
         }),
     );
+    let storage_failure = is_storage_failure(&error_text);
+    if context.starts_with("asset_") {
+        if storage_failure {
+            crate::operability::metrics()
+                .asset_failures
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    if context.starts_with("db_") || context.contains("database") {
+        crate::operability::metrics()
+            .db_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    if storage_failure {
+        return public_error("STORAGE: a operação de storage não pôde ser concluída.");
+    }
     public_error("O servidor nao conseguiu concluir essa operacao agora.")
+}
+
+#[cfg(feature = "server")]
+fn is_storage_failure(error: &str) -> bool {
+    let normalized = error.to_lowercase();
+    normalized.contains("no space left")
+        || normalized.contains("enospc")
+        || normalized.contains("sqlite_full")
+        || normalized.contains("disk full")
+        || normalized.contains("disk is full")
+        || normalized.contains("database or disk is full")
 }
 
 #[cfg(feature = "server")]
@@ -652,7 +727,7 @@ pub fn apply_security_headers() {
         // O hash em 'script-src' libera o único script inline (anti-FOUC de tema em
         // web/index.html, executado antes do React montar). Se aquele script mudar, o
         // hash precisa ser recalculado (sha256 do conteúdo entre as tags <script>).
-        "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self' 'sha256-sXw+kzZjEDOTCprbeOhrRSIW0La32ltxhXRk+DncIVU='; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'".to_string(),
+        "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; object-src 'none'; script-src 'self' 'sha256-sXw+kzZjEDOTCprbeOhrRSIW0La32ltxhXRk+DncIVU='; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'".to_string(),
     );
     set_response_header(
         "referrer-policy",
@@ -660,6 +735,10 @@ pub fn apply_security_headers() {
     );
     set_response_header("x-content-type-options", "nosniff".to_string());
     set_response_header("x-frame-options", "DENY".to_string());
+    set_response_header(
+        "permissions-policy",
+        "camera=(), microphone=(), geolocation=()".to_string(),
+    );
     if settings().app_env == "production" && settings().cookie_secure {
         set_response_header(
             "strict-transport-security",
@@ -738,9 +817,9 @@ pub async fn append_audit_log(
 mod tests {
     use super::{
         email_format_is_valid, forwarded_chain, memory_enforce_rate_limit, parse_forwarded_for_ip,
-        parse_ip_token, proxy_boundary_allowed, rate_limit_identity_hash, redis_enforce_rate_limit,
-        resolve_client_ip_from_peer_and_headers, RateLimitFailurePolicy, RateLimitRule,
-        RateLimiter,
+        parse_ip_token, proxy_boundary_allowed, rate_limit_identity_hash, redact_json,
+        redis_enforce_rate_limit, resolve_client_ip_from_peer_and_headers, RateLimitFailurePolicy,
+        RateLimitRule, RateLimiter,
     };
     use axum::http::HeaderMap;
     use std::net::{IpAddr, Ipv4Addr};
@@ -1031,5 +1110,24 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    #[test]
+    fn structured_log_redaction_removes_credential_fields() {
+        let redacted = redact_json(
+            serde_json::json!({
+                "password": "not-for-logs",
+                "cookie": "session=secret",
+                "authorization": "Bearer secret",
+                "nested": { "csrfToken": "csrf-secret" },
+                "safe": "kept",
+            }),
+            false,
+        );
+        assert_eq!(redacted["password"], "[REDACTED]");
+        assert_eq!(redacted["cookie"], "[REDACTED]");
+        assert_eq!(redacted["authorization"], "[REDACTED]");
+        assert_eq!(redacted["nested"]["csrfToken"], "[REDACTED]");
+        assert_eq!(redacted["safe"], "kept");
     }
 }

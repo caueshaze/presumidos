@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type {
+  AdminEventRecord,
   AdminMatchRecord,
   AdminOverview,
   AdminPredictionRow,
@@ -12,6 +13,7 @@ import type {
   AuthResult,
   CustomQuestion,
   CustomMemberPredictions,
+  EventShowcase,
   FootballScoringConfig,
   FixtureCheckResult,
   KnockoutEntry,
@@ -24,13 +26,13 @@ import type {
   PointAdjustment,
   PoolSummary,
   PoolDashboardSummary,
-  EventRecord,
   PredictionReopenOverride,
   PredictionScoreBreakdown,
   PredictionRecord,
   ScoringJob,
   SyncStatus,
   UserPublic,
+  EventRecord,
 } from "@/types";
 
 function normalizeAdminUserRecord(
@@ -182,11 +184,17 @@ export function useMyEvents() {
     queryFn: () => api.get<MyEvent[]>("/custom/events/mine"),
   });
 }
+export function useAvailableEvents() {
+  return useQuery({
+    queryKey: ["custom-events", "available"],
+    queryFn: () => api.get<MyEvent[]>("/custom/events/available"),
+  });
+}
 
 export function useAdminEvents() {
   return useQuery({
     queryKey: ["admin-events"],
-    queryFn: () => api.get<EventRecord[]>("/admin/events"),
+    queryFn: () => api.get<AdminEventRecord[]>("/admin/events"),
   });
 }
 
@@ -297,6 +305,16 @@ export function useCustomQuestions(poolId: string | null) {
         `/custom/questions?poolId=${encodeURIComponent(poolId ?? "")}`,
       ),
     enabled: !!poolId,
+  });
+}
+export function useEventShowcase(poolId: string | null) {
+  return useQuery({ queryKey: ["event-showcase", poolId], queryFn: () => api.get<EventShowcase>(`/custom/event-showcase?poolId=${encodeURIComponent(poolId ?? "")}`), enabled: !!poolId });
+}
+export function useUpdateOptionMediaProgress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; optionId: string; seen: boolean }) => api.post<void>("/custom/media-progress", vars),
+    onSuccess: (_data, vars) => qc.setQueryData<CustomQuestion[]>(["custom-questions", vars.poolId], (questions) => questions?.map((question) => ({ ...question, options: question.options.map((option) => option.id === vars.optionId ? { ...option, mediaSeen: vars.seen } : option) }))),
   });
 }
 export function useCustomMemberPredictions(poolId: string | null) {

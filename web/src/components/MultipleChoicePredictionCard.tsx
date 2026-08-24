@@ -4,6 +4,7 @@ import type { CustomQuestion } from "@/types";
 import { MotionCard } from "./ui/card";
 import { Button } from "./ui/button";
 import { ErrorBanner } from "./ui/field";
+import { OptionMediaActions } from "./OptionMediaActions";
 
 export function MultipleChoicePredictionCard({
   question,
@@ -93,27 +94,36 @@ export function MultipleChoicePredictionCard({
         Selecione de {min} a {max}. Parcial: você selecionou apenas opções
         corretas, mas deixou de marcar uma ou mais opções vencedoras.
       </p>
-      <fieldset
-        className="mt-3 space-y-2"
-        disabled={locked || submit.isPending}
-      >
+      <fieldset className="mt-3 space-y-2">
         {question.options.map((option) => (
-          <label
+          <div
             key={option.id}
-            className="flex items-center gap-3 rounded-xl border border-mint/20 px-3 py-3"
+            className="block rounded-xl border border-mint/20 p-3"
           >
-            <input
-              type="checkbox"
-              checked={selected.includes(option.id)}
-              disabled={
-                locked ||
-                submit.isPending ||
-                (!selected.includes(option.id) && selected.length >= max)
-              }
-              onChange={() => toggle(option.id)}
-            />
-            <span>{option.label}</span>
-          </label>
+            <label htmlFor={`${question.itemId}-${option.id}`} className="flex cursor-pointer items-center gap-3">
+              <input
+                id={`${question.itemId}-${option.id}`}
+                type="checkbox"
+                checked={selected.includes(option.id)}
+                disabled={
+                  locked ||
+                  submit.isPending ||
+                  (!selected.includes(option.id) && selected.length >= max)
+                }
+                onChange={() => toggle(option.id)}
+              />
+              {(option.imageAssetUrl ?? option.imageUrl) && <img src={option.imageAssetUrl ?? option.imageUrl ?? undefined} alt="" loading="lazy" className="aspect-square h-11 w-11 shrink-0 rounded-lg object-cover" onError={(event) => {
+                if (option.imageAssetUrl && option.imageUrl && event.currentTarget.dataset.fallback !== "used") {
+                  event.currentTarget.dataset.fallback = "used";
+                  event.currentTarget.src = option.imageUrl;
+                } else {
+                  event.currentTarget.style.display = "none";
+                }
+              }} />}
+              <span>{option.label}</span>
+            </label>
+            <OptionMediaActions option={option} poolId={poolId} />
+          </div>
         ))}
       </fieldset>
       <p className="mt-2 text-xs text-ink-muted">

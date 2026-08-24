@@ -15,15 +15,18 @@ mod pools;
 mod prediction_items;
 mod scoring;
 
+mod assets;
 mod config;
 mod custom_event_manifest;
 mod custom_events;
 mod custom_questions;
 mod db;
 mod email;
+mod event_package;
 mod events;
 mod multiple_choice;
 mod numeric;
+mod operability;
 mod security;
 
 #[cfg(feature = "web-push")]
@@ -259,6 +262,214 @@ fn run_cleanup_expired_command() -> i32 {
     }
 }
 
+fn run_check_config_command() -> i32 {
+    match config::check_config() {
+        Ok(()) => {
+            println!("configuração válida");
+            0
+        }
+        Err(error) => {
+            eprintln!("configuração inválida: {error}");
+            78
+        }
+    }
+}
+
+fn run_migrate_command<I>(mut args: I) -> i32
+where
+    I: Iterator<Item = String>,
+{
+    let mut check_only = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--check" => check_only = true,
+            _ => {
+                eprintln!("uso: migrate [--check]");
+                return 2;
+            }
+        }
+    }
+    if let Err(error) = config::check_config() {
+        eprintln!("configuração inválida: {error}");
+        return 78;
+    }
+    let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+    if check_only {
+        return match runtime.block_on(db::migration_report()) {
+            Ok(report) if !report.pending && !report.dirty && !report.checksum_mismatch => {
+                println!("migrations em dia: {}/{}", report.applied, report.expected);
+                0
+            }
+            Ok(report) => {
+                eprintln!(
+                    "migrations incompatíveis: aplicadas={}, esperadas={}, pendentes={}, dirty={}, checksum_mismatch={}",
+                    report.applied, report.expected, report.pending, report.dirty, report.checksum_mismatch
+                );
+                1
+            }
+            Err(error) => {
+                eprintln!("falha ao verificar migrations: {error}");
+                1
+            }
+        };
+    }
+    match runtime.block_on(db::apply_migrations()) {
+        Ok(()) => {
+            println!("migrations aplicadas");
+            0
+        }
+        Err(error) => {
+            eprintln!("falha ao aplicar migrations: {error}");
+            1
+        }
+    }
+}
+
+fn run_db_command<I>(mut args: I) -> i32
+where
+    I: Iterator<Item = String>,
+{
+    match args.next().as_deref() {
+        Some("check") if args.next().is_none() => {}
+        _ => {
+            eprintln!("uso: db check");
+            return 2;
+        }
+    }
+    if let Err(error) = config::check_config() {
+        eprintln!("configuração inválida: {error}");
+        return 78;
+    }
+    let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+    match runtime.block_on(db::integrity_check_without_migration()) {
+        Ok(result) if result == "ok" => {
+            println!("integrity_check: ok");
+            0
+        }
+        Ok(result) => {
+            eprintln!("integrity_check: {result}");
+            1
+        }
+        Err(error) => {
+            eprintln!("falha no db check: {error}");
+            1
+        }
+    }
+}
+
+fn run_backup_command<I>(mut args: I) -> i32
+where
+    I: Iterator<Item = String>,
+{
+    let Some(action) = args.next() else {
+        eprintln!("uso: backup create --output <diretório> | backup verify <diretório> | backup restore ...");
+        return 2;
+    };
+    match action.as_str() {
+        "create" => {
+            let mut output = None;
+            while let Some(arg) = args.next() {
+                if arg == "--output" {
+                    output = args.next();
+                } else {
+                    eprintln!("uso: backup create --output <diretório>");
+                    return 2;
+                }
+            }
+            let Some(output) = output else {
+                eprintln!("--output é obrigatório");
+                return 2;
+            };
+            if let Err(error) = config::check_config() {
+                eprintln!("configuração inválida: {error}");
+                return 78;
+            }
+            let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+            match runtime.block_on(async {
+                db::init().await;
+                operability::create_backup(std::path::Path::new(&output)).await
+            }) {
+                Ok(path) => {
+                    println!("backup criado: {}", path.display());
+                    0
+                }
+                Err(error) => {
+                    eprintln!("backup falhou: {error}");
+                    1
+                }
+            }
+        }
+        "verify" => {
+            let Some(path) = args.next() else {
+                eprintln!("uso: backup verify <diretório>");
+                return 2;
+            };
+            if args.next().is_some() {
+                eprintln!("uso: backup verify <diretório>");
+                return 2;
+            }
+            let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+            match runtime.block_on(operability::verify_backup(std::path::Path::new(&path))) {
+                Ok(()) => {
+                    println!("backup válido");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("backup inválido: {error}");
+                    1
+                }
+            }
+        }
+        "restore" => {
+            let mut input = None;
+            let mut database = None;
+            let mut assets = None;
+            let mut replace = false;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--input" => input = args.next(),
+                    "--database" => database = args.next(),
+                    "--assets" => assets = args.next(),
+                    "--replace" => replace = true,
+                    _ => {
+                        eprintln!("uso: backup restore --input <dir> --database <path> --assets <dir> [--replace]");
+                        return 2;
+                    }
+                }
+            }
+            let (Some(input), Some(database), Some(assets)) = (input, database, assets) else {
+                eprintln!("--input, --database e --assets são obrigatórios");
+                return 2;
+            };
+            let runtime = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
+            let result = runtime.block_on(operability::verify_backup(std::path::Path::new(&input)));
+            if let Err(error) = result {
+                eprintln!("restore recusado: {error}");
+                return 1;
+            }
+            match operability::restore_backup(
+                std::path::Path::new(&input),
+                std::path::Path::new(&database),
+                std::path::Path::new(&assets),
+                replace,
+            ) {
+                Ok(()) => {
+                    println!("restore concluído; inicialize a aplicação e valide readiness");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("restore falhou: {error}");
+                    1
+                }
+            }
+        }
+        _ => {
+            eprintln!("ação de backup desconhecida");
+            2
+        }
+    }
+}
+
 fn try_handle_server_command() -> Option<i32> {
     let mut args = std::env::args().skip(1);
     let command = args.next()?;
@@ -273,6 +484,18 @@ fn try_handle_server_command() -> Option<i32> {
     }
     if command == "backfill-results" {
         return Some(run_backfill_results_command());
+    }
+    if command == "check-config" {
+        return Some(run_check_config_command());
+    }
+    if command == "migrate" {
+        return Some(run_migrate_command(args));
+    }
+    if command == "db" {
+        return Some(run_db_command(args));
+    }
+    if command == "backup" {
+        return Some(run_backup_command(args));
     }
     if command != "bootstrap-admin" {
         return None;
@@ -323,14 +546,46 @@ fn static_dir() -> String {
 }
 
 fn bind_address() -> std::net::SocketAddr {
-    let ip = std::env::var("IP").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-    format!("{ip}:{port}")
+    crate::config::settings()
+        .listen_address
         .parse()
-        .expect("IP/PORT inválidos para bind do servidor")
+        .expect("LISTEN_ADDRESS inválido para bind do servidor")
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).expect("falha ao registrar SIGTERM");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = term.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+    crate::operability::runtime_state().stop_accepting();
+    let drained = crate::operability::runtime_state()
+        .drain(std::time::Duration::from_secs(
+            crate::config::settings().shutdown_timeout_secs,
+        ))
+        .await;
+    if !drained {
+        crate::security::log_event(
+            "graceful_shutdown_timeout",
+            serde_json::json!({
+                "in_flight": crate::operability::runtime_state().in_flight(),
+            }),
+        );
+    } else {
+        crate::security::log_event("graceful_shutdown_completed", serde_json::json!({}));
+    }
 }
 
 async fn serve_application() {
+    use axum::extract::DefaultBodyLimit;
     use axum::response::Html;
     use axum::routing::get_service;
     use axum::Router;
@@ -338,7 +593,34 @@ async fn serve_application() {
     use std::sync::Arc;
     use tower_http::services::{ServeDir, ServeFile};
 
+    let removed_staging = operability::cleanup_known_staging();
+    if removed_staging > 0 {
+        security::log_event(
+            "startup_staging_cleanup",
+            serde_json::json!({ "entries_removed": removed_staging }),
+        );
+    }
     db::init().await;
+    let readiness = operability::readiness_report().await;
+    if readiness.state != operability::ReadinessState::Ready {
+        panic!("readiness inicial falhou; dependência operacional indisponível");
+    }
+    let migration_status = db::migration_status().await.unwrap_or((0, 0));
+    security::log_event(
+        "startup",
+        serde_json::json!({
+            "application_version": env!("CARGO_PKG_VERSION"),
+            "environment": crate::config::settings().app_env,
+            "database_backend": "sqlite",
+            "database_path_configured": true,
+            "asset_store": "filesystem_hash_addressed",
+            "backup_configured": !crate::config::settings().backup_dir.is_empty(),
+            "public_base_url_configured": crate::config::settings().public_base_url.is_some(),
+            "migration_applied": migration_status.0,
+            "migration_expected": migration_status.1,
+            "listen_address": crate::config::settings().listen_address,
+        }),
+    );
     if let Err(error) = run_housekeeping().await {
         security::log_event(
             "startup_housekeeping_failed",
@@ -375,6 +657,16 @@ async fn serve_application() {
 
     let app = Router::new()
         .nest("/api", api::router())
+        .route("/health/live", axum::routing::get(api::health_live))
+        .route("/health/ready", axum::routing::get(api::health_ready))
+        .route(
+            "/internal/metrics",
+            axum::routing::get(api::internal_metrics),
+        )
+        .route(
+            "/media/assets/{asset_id}/{variant}",
+            axum::routing::get(api::media_asset),
+        )
         .nest_service("/assets", ServeDir::new(format!("{dir}/assets")))
         .route_service(
             "/favicon.ico",
@@ -409,6 +701,9 @@ async fn serve_application() {
             get_service(ServeFile::new(format!("{dir}/sw.js"))),
         )
         .fallback(spa_fallback)
+        .layer(DefaultBodyLimit::max(
+            crate::config::settings().max_body_bytes,
+        ))
         .layer(axum::middleware::from_fn(api::context_middleware));
 
     let addr = bind_address();
@@ -422,6 +717,7 @@ async fn serve_application() {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal())
     .await
     .expect("falha ao servir aplicacao");
 }
@@ -431,6 +727,10 @@ fn main() {
         std::process::exit(exit_code);
     }
 
+    if let Err(error) = config::check_config() {
+        eprintln!("configuração inválida: {error}");
+        std::process::exit(78);
+    }
     let rt = tokio::runtime::Runtime::new().expect("falha ao criar runtime tokio");
     rt.block_on(serve_application());
 }

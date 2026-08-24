@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -64,7 +64,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorBanner, Label, Select } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import type { AdminMatchRecord, AdminSettings, FixtureCheckResult } from "@/types";
+import { AdminManifestPanel } from "@/components/AdminManifestPanel";
+import { api } from "@/lib/api";
+import type { AdminEventRecord, AdminMatchRecord, AdminSettings, FixtureCheckResult } from "@/types";
 
 type AdminTab =
   | "overview"
@@ -368,6 +370,7 @@ function validateFixtureAgainstMatch(
 
 export function AdminPage() {
   const { isAdmin, loading } = useAuth();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<AdminTab>("overview");
   const [error, setError] = useState("");
   const emptyMatchFilters = { type: "", phase: "", groupName: "", date: "", status: "", origin: "", team: "" };
@@ -620,6 +623,36 @@ export function AdminPage() {
       const message = err instanceof Error ? err.message : "Falha ao executar ação admin.";
       setError(message);
       throw err;
+    }
+  };
+
+  const downloadManifest = async (eventId: string, slug: string) => {
+    setError("");
+    try {
+      const download = await api.download(`/admin/events/${eventId}/manifest`);
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.filename ?? `${slug}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível exportar o manifesto.");
+    }
+  };
+
+  const downloadPackage = async (eventId: string, slug: string) => {
+    setError("");
+    try {
+      const download = await api.download(`/admin/events/${eventId}/package`);
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.filename ?? `${slug}.zip`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível exportar o pacote.");
     }
   };
 
@@ -1055,13 +1088,14 @@ export function AdminPage() {
 
       {tab === "events" && (
         <div className="mt-6 space-y-4">
+          <AdminManifestPanel onApplied={() => void adminEvents.refetch()} />
           <Card>
             <h2 className="text-xl">Edições do Presumidos</h2>
-            <p className="mt-1 text-sm text-ink-muted">Uma edição encerrada preserva pools, ranking, palpites e regras em modo histórico.</p>
+            <p className="mt-1 text-sm text-ink-muted">Eventos customizados podem ser exportados para promoção ou reabertos no Builder quando ainda forem drafts.</p>
           </Card>
-          {adminEvents.isLoading ? <Card><p className="text-ink-muted">Carregando edições...</p></Card> : adminEvents.isError ? <ErrorBanner>Não foi possível carregar as edições.</ErrorBanner> : adminEvents.data?.map((event) => {
+          {adminEvents.isLoading ? <Card><p className="text-ink-muted">Carregando edições...</p></Card> : adminEvents.isError ? <ErrorBanner>Não foi possível carregar as edições.</ErrorBanner> : adminEvents.data?.map((event: AdminEventRecord) => {
             const historical = event.status === "finished" || (event.endsAt != null && new Date(event.endsAt).getTime() <= Date.now());
-            return <Card key={event.id} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-lg">{event.name}</h3><p className="mt-1 text-sm text-ink-muted">{event.kind === "football" ? "Futebol" : "Evento customizado"}{event.endsAt ? ` · termina em ${formatKickoff(event.endsAt)}` : " · sem data de término"}</p><p className="mt-2 text-sm font-semibold text-mint-dark">{historical ? "Encerrado / histórico" : event.status === "draft" ? "Rascunho" : "Em andamento"}</p></div>{historical ? <span className="rounded-pill bg-mint/25 px-3 py-1 text-sm font-semibold">Encerrado</span> : <Button variant="outline" onClick={() => handleFinishEvent(event.id, event.name)} disabled={finishEvent.isPending || !event.endsAt}>Encerrar edição</Button>}</Card>;
+            return <Card key={event.id} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-lg">{event.name}</h3><p className="mt-1 text-sm text-ink-muted">{event.kind === "football" ? "Futebol" : "Evento customizado"} · {event.slug}{event.endsAt ? ` · termina em ${formatKickoff(event.endsAt)}` : " · sem data de término"}</p><p className="mt-2 text-sm font-semibold text-mint-dark">{historical ? "Encerrado / histórico" : event.status === "draft" ? "Rascunho" : "Em andamento"}</p><p className="mt-1 text-xs text-ink-muted">Autoria: {event.createdByUsername ? `@${event.createdByUsername}` : "sistema"} · {event.itemCount} perguntas · {event.optionCount} opções · {event.poolCount} pools</p><p className="mt-1 text-xs text-ink-muted">Atualizado em {formatKickoff(event.updatedAt)}</p></div><div className="flex flex-wrap gap-2">{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadManifest(event.id, event.slug)}>Exportar JSON</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadPackage(event.id, event.slug)}>Exportar pacote</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => navigate(`/events/${event.id}`)}>{event.status === "draft" ? "Abrir Builder" : "Abrir / editar"}</Button>}{historical ? <span className="rounded-pill bg-mint/25 px-3 py-1 text-sm font-semibold">Encerrado</span> : <Button variant="outline" onClick={() => handleFinishEvent(event.id, event.name)} disabled={finishEvent.isPending || !event.endsAt}>Encerrar edição</Button>}</div></Card>;
           })}
         </div>
       )}

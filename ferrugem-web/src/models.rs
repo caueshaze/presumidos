@@ -63,6 +63,10 @@ pub struct EventSummary {
     pub kind: EventKind,
     pub status: EventStatus,
     pub ends_at: Option<String>,
+    pub description: Option<String>,
+    pub cover_url: Option<String>,
+    pub cover_asset_url: Option<String>,
+    pub external_url: Option<String>,
     /// Estado de apresentação calculado pelo lifecycle do Event. Não cria uma
     /// cópia histórica do Pool: os mesmos registros continuam sendo lidos.
     pub is_historical: bool,
@@ -98,8 +102,38 @@ pub struct Event {
     pub created_by: Option<String>,
     pub starts_at: Option<String>,
     pub ends_at: Option<String>,
+    pub description: Option<String>,
+    pub cover_url: Option<String>,
+    pub cover_asset_id: Option<String>,
+    pub cover_asset_url: Option<String>,
+    pub external_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Projeção administrativa do catálogo de Events. Os contadores são
+/// observacionais e não fazem parte da definição portátil do Event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminEventRecord {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub kind: EventKind,
+    pub status: EventStatus,
+    pub created_by: Option<String>,
+    pub created_by_username: Option<String>,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub description: Option<String>,
+    pub cover_url: Option<String>,
+    pub cover_asset_url: Option<String>,
+    pub external_url: Option<String>,
+    pub item_count: i64,
+    pub option_count: i64,
+    pub pool_count: i64,
 }
 
 #[allow(dead_code)]
@@ -167,6 +201,19 @@ pub struct CustomQuestionOption {
     pub id: String,
     pub label: String,
     pub sort_order: i64,
+    pub image_url: Option<String>,
+    pub image_asset_url: Option<String>,
+    pub links: Vec<OptionLink>,
+    pub media_seen: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionLink {
+    pub kind: String,
+    pub label: String,
+    pub url: String,
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -212,6 +259,21 @@ pub struct CustomQuestion {
     pub correct_option_ids: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub partial_points: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EventShowcase {
+    pub name: String,
+    pub description: Option<String>,
+    pub cover_url: Option<String>,
+    pub cover_asset_url: Option<String>,
+    pub external_url: Option<String>,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub item_count: i64,
+    pub answered_count: i64,
+    pub is_historical: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

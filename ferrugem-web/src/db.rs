@@ -1,17 +1,29 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use crate::config::settings;
 
 static DB: OnceLock<SqlitePool> = OnceLock::new();
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MigrationReport {
+    pub applied: i64,
+    pub expected: i64,
+    pub pending: bool,
+    pub dirty: bool,
+    pub checksum_mismatch: bool,
+}
 
 pub async fn init() {
     let database_path = settings().database_path.clone();
 
     let options = SqliteConnectOptions::new()
         .filename(database_path)
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_millis(settings().database_busy_timeout_ms));
 
     // As migrations precisam iniciar com a configuração SQLite padrão: a
     // migration de eventos adiciona uma coluna REFERENCES com default de
@@ -22,13 +34,26 @@ pub async fn init() {
         .await
         .expect("falha ao conectar ao banco para migrations");
 
-    sqlx::migrate!("./migrations")
-        .run(&migration_pool)
-        .await
-        .expect("falha ao executar migrations");
+    if settings().app_env == "production" {
+        let report = migration_report()
+            .await
+            .unwrap_or_else(|error| panic!("falha ao verificar schema de produção: {error}"));
+        if report.pending || report.dirty || report.checksum_mismatch {
+            panic!(
+                "schema de produção incompatível: aplicadas={}, esperadas={}, pendentes={}, dirty={}, checksum_mismatch={}",
+                report.applied, report.expected, report.pending, report.dirty, report.checksum_mismatch
+            );
+        }
+    } else {
+        MIGRATOR
+            .run(&migration_pool)
+            .await
+            .expect("falha ao executar migrations");
+    }
     migration_pool.close().await;
 
     let pool = SqlitePoolOptions::new()
+        .max_connections(10)
         .connect_with(options.foreign_keys(true))
         .await
         .expect("falha ao conectar ao banco de dados");
@@ -37,10 +62,13 @@ pub async fn init() {
         .execute(&pool)
         .await
         .expect("falha ao ativar WAL");
-    sqlx::query("PRAGMA busy_timeout = 5000")
-        .execute(&pool)
-        .await
-        .expect("falha ao configurar busy_timeout");
+    sqlx::query(&format!(
+        "PRAGMA busy_timeout = {}",
+        settings().database_busy_timeout_ms
+    ))
+    .execute(&pool)
+    .await
+    .expect("falha ao configurar busy_timeout");
 
     DB.set(pool).expect("banco já inicializado");
 }
@@ -49,9 +77,127 @@ pub fn pool() -> &'static SqlitePool {
     DB.get().expect("banco não inicializado")
 }
 
+pub async fn quick_check() -> Result<String, sqlx::Error> {
+    let row: (String,) = sqlx::query_as("PRAGMA quick_check")
+        .fetch_one(pool())
+        .await?;
+    Ok(row.0)
+}
+
+pub async fn migration_status() -> Result<(i64, i64), sqlx::Error> {
+    let applied: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(pool())
+        .await?;
+    let expected = MIGRATOR.iter().count() as i64;
+    Ok((applied.0, expected))
+}
+
+async fn operation_pool() -> Result<SqlitePool, sqlx::Error> {
+    let options = SqliteConnectOptions::new()
+        .filename(&settings().database_path)
+        .create_if_missing(false)
+        .busy_timeout(Duration::from_millis(settings().database_busy_timeout_ms))
+        .foreign_keys(false);
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+}
+
+pub async fn migration_report() -> Result<MigrationReport, String> {
+    let pool = operation_pool()
+        .await
+        .map_err(|e| format!("não foi possível abrir o banco: {e}"))?;
+    let table_exists: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| format!("não foi possível consultar migrations: {e}"))?;
+    if table_exists.0 == 0 {
+        pool.close().await;
+        return Ok(MigrationReport {
+            applied: 0,
+            expected: MIGRATOR.iter().count() as i64,
+            pending: true,
+            dirty: false,
+            checksum_mismatch: false,
+        });
+    }
+    let rows: Vec<(i64, Vec<u8>, i64)> =
+        sqlx::query_as("SELECT version, checksum, success FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| format!("não foi possível consultar migrations: {e}"))?;
+    let mut checksum_mismatch = false;
+    for (version, checksum, success) in &rows {
+        if *success == 0 {
+            continue;
+        }
+        let Some(migration) = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == *version)
+        else {
+            checksum_mismatch = true;
+            continue;
+        };
+        if migration.checksum.as_ref() != checksum.as_slice() {
+            checksum_mismatch = true;
+        }
+    }
+    let applied = rows.iter().filter(|(_, _, success)| *success != 0).count() as i64;
+    let dirty = rows.iter().any(|(_, _, success)| *success == 0);
+    let expected = MIGRATOR.iter().count() as i64;
+    pool.close().await;
+    Ok(MigrationReport {
+        applied,
+        expected,
+        pending: applied != expected,
+        dirty,
+        checksum_mismatch,
+    })
+}
+
+pub async fn apply_migrations() -> Result<(), String> {
+    let options = SqliteConnectOptions::new()
+        .filename(&settings().database_path)
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_millis(settings().database_busy_timeout_ms))
+        .foreign_keys(false);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|e| format!("não foi possível abrir o banco: {e}"))?;
+    MIGRATOR
+        .run(&pool)
+        .await
+        .map_err(|e| format!("falha ao aplicar migrations: {e}"))?;
+    pool.close().await;
+    Ok(())
+}
+
+pub async fn integrity_check_without_migration() -> Result<String, String> {
+    let pool = operation_pool()
+        .await
+        .map_err(|e| format!("não foi possível abrir o banco: {e}"))?;
+    let result: Result<(String,), sqlx::Error> = sqlx::query_as("PRAGMA integrity_check")
+        .fetch_one(&pool)
+        .await;
+    pool.close().await;
+    result
+        .map(|row| row.0)
+        .map_err(|e| format!("integrity_check indisponível: {e}"))
+}
+
 #[cfg(all(test, feature = "server"))]
 mod tests {
+    use std::borrow::Cow;
+
+    use sqlx::migrate::Migrator;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::MIGRATOR;
 
     #[tokio::test]
     async fn event_migration_seeds_world_cup_backfills_pools_and_enforces_fk() {
@@ -305,5 +451,78 @@ mod tests {
             (6, 0),
             "points legado é copiado somente na inicialização"
         );
+    }
+
+    #[tokio::test]
+    async fn supported_schema_upgrade_preserves_domain_data_and_adds_assets() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("criar sqlite em memoria");
+        let older = Migrator {
+            migrations: Cow::Owned(MIGRATOR.iter().take(31).cloned().collect()),
+            ignore_missing: false,
+            locking: true,
+            no_tx: false,
+        };
+        older.run(&db).await.expect("aplicar schema suportado");
+        sqlx::query(
+            "INSERT INTO users(id,username,email,password_hash) VALUES('upgrade-user','upgrade','upgrade@example.com','hash');
+             INSERT INTO pools(id,name,invite_code,created_by,event_id) VALUES('upgrade-pool','Upgrade','UPGRADE','upgrade-user','8e4cfe71-9123-4bd1-a4a9-989eeb55b77f');
+             INSERT INTO pool_members(pool_id,user_id) VALUES('upgrade-pool','upgrade-user');",
+        )
+        .execute(&db)
+        .await
+        .expect("seed de dados legados");
+        let item: (String, String) = sqlx::query_as(
+            "SELECT pi.id,m.id FROM prediction_items pi JOIN matches m ON m.prediction_item_id=pi.id LIMIT 1",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("item legado");
+        sqlx::query(
+            "INSERT INTO predictions(id,pool_id,user_id,item_id,match_id,home_score,away_score)
+             VALUES('upgrade-prediction','upgrade-pool','upgrade-user',?1,?2,2,1)",
+        )
+        .bind(&item.0)
+        .bind(&item.1)
+        .execute(&db)
+        .await
+        .expect("prediction legada");
+
+        let before: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM events), (SELECT COUNT(*) FROM pools), (SELECT COUNT(*) FROM predictions)",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("contagens legadas");
+        let current = Migrator {
+            migrations: Cow::Owned(MIGRATOR.iter().skip(31).cloned().collect()),
+            ignore_missing: true,
+            locking: true,
+            no_tx: false,
+        };
+        current.run(&db).await.expect("aplicar migration atual");
+        let after: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM events), (SELECT COUNT(*) FROM pools), (SELECT COUNT(*) FROM predictions)",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("contagens atuais");
+        assert_eq!(before, after, "upgrade não pode perder dados de domínio");
+        sqlx::query(
+            "INSERT INTO assets(id,storage_key,sha256,media_type,width,height,byte_size,uploaded_by)
+             VALUES('upgrade-asset','hash/master.webp',?1,'image/webp',1,1,1,'upgrade-user')",
+        )
+        .bind("a".repeat(64))
+        .execute(&db)
+        .await
+        .expect("asset pós-upgrade");
+        let integrity: (String,) = sqlx::query_as("PRAGMA integrity_check")
+            .fetch_one(&db)
+            .await
+            .expect("integrity pós-upgrade");
+        assert_eq!(integrity.0, "ok");
     }
 }

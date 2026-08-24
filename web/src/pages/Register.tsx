@@ -46,7 +46,7 @@ export function RegisterPage() {
     try {
       const result = await confirmReg.mutateAsync({ email, code });
       await applySession(result);
-      navigate("/");
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Código inválido.");
     }

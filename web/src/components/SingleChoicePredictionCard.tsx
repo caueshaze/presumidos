@@ -4,6 +4,7 @@ import { useSubmitCustomPrediction } from "@/hooks/queries";
 import type { CustomQuestion } from "@/types";
 import { MotionCard } from "./ui/card";
 import { ErrorBanner } from "./ui/field";
+import { OptionMediaActions } from "./OptionMediaActions";
 
 export function SingleChoicePredictionCard({ question, poolId, index, preview = false }: { question: CustomQuestion; poolId: string; index: number; preview?: boolean }) {
   const submit = useSubmitCustomPrediction();
@@ -41,17 +42,28 @@ export function SingleChoicePredictionCard({ question, poolId, index, preview = 
         </span>
       </div>
       {locked && <p className="mt-3 text-sm text-ink-muted">Os palpites desta categoria já foram encerrados.</p>}
-      <fieldset className="mt-4 space-y-2" disabled={locked || submit.isPending}>
+      <fieldset className="mt-4 space-y-2" disabled={locked && !question.options.some((option) => option.links?.length)}>
         <legend className="sr-only">Opções para {question.title}</legend>
         {question.options.map((option) => {
           const checked = selected === option.id;
           const correct = resolved && question.correctOptionId === option.id;
           return (
-            <label key={option.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 transition ${checked ? "border-mint-dark bg-mint/15" : "border-mint/20 bg-card/40 hover:border-mint/50"} ${locked ? "cursor-default opacity-80" : ""}`}>
-              <input className="h-4 w-4 accent-[var(--color-mint-dark)]" type="radio" name={question.itemId} checked={checked} onChange={() => choose(option.id)} />
-              <span className="flex-1 text-sm font-medium">{option.label}</span>
-              {correct && <CheckCircle2 className="h-5 w-5 text-success" aria-label="Opção vencedora" />}
-            </label>
+            <div key={option.id} className={`rounded-xl border p-3 transition ${checked ? "border-mint-dark bg-mint/15" : "border-mint/20 bg-card/40 hover:border-mint/50"} ${locked ? "cursor-default opacity-80" : ""}`}>
+              <label htmlFor={`${question.itemId}-${option.id}`} className="flex cursor-pointer items-center gap-3">
+                <input id={`${question.itemId}-${option.id}`} className="h-4 w-4 accent-[var(--color-mint-dark)]" type="radio" name={question.itemId} checked={checked} disabled={locked || submit.isPending} onChange={() => choose(option.id)} />
+                {(option.imageAssetUrl ?? option.imageUrl) && <img src={option.imageAssetUrl ?? option.imageUrl ?? undefined} alt="" loading="lazy" className="aspect-square h-11 w-11 shrink-0 rounded-lg object-cover" onError={(event) => {
+                  if (option.imageAssetUrl && option.imageUrl && event.currentTarget.dataset.fallback !== "used") {
+                    event.currentTarget.dataset.fallback = "used";
+                    event.currentTarget.src = option.imageUrl;
+                  } else {
+                    event.currentTarget.style.display = "none";
+                  }
+                }} />}
+                <span className="flex-1 text-sm font-medium">{option.label}</span>
+                {correct && <CheckCircle2 className="h-5 w-5 text-success" aria-label="Opção vencedora" />}
+              </label>
+              <OptionMediaActions option={option} poolId={poolId} />
+            </div>
           );
         })}
       </fieldset>

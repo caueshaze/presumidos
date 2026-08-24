@@ -41,6 +41,9 @@ export interface EventSummary {
   status: "draft" | "active" | "finished";
   endsAt: string | null;
   isHistorical: boolean;
+  coverUrl?: string | null;
+  coverAssetUrl?: string | null;
+  externalUrl?: string | null;
 }
 
 export interface PoolDashboardSummary {
@@ -60,12 +63,76 @@ export interface EventRecord {
   endsAt: string | null;
   createdAt: string;
   updatedAt: string;
+  description?: string | null;
+  coverUrl?: string | null;
+  coverAssetUrl?: string | null;
+  externalUrl?: string | null;
+}
+
+export interface AdminEventRecord extends EventRecord {
+  createdByUsername: string | null;
+  itemCount: number;
+  optionCount: number;
+  poolCount: number;
+}
+
+export type ManifestAction = "create" | "noChange" | "safeUpdate" | "conflict" | "rejected";
+export interface ManifestDiffEntry { category: string; path: string; change: string; }
+export interface ManifestPreview {
+  action: ManifestAction;
+  name: string;
+  slug: string;
+  schemaVersion: number;
+  itemCount: number;
+  optionCount: number;
+  linkCount: number;
+  manifestFingerprint: string;
+  baseFingerprint: string;
+  safeChanges: ManifestDiffEntry[];
+  blockedChanges: ManifestDiffEntry[];
+}
+export interface ManifestApplyResult {
+  action: ManifestAction;
+  eventId: string | null;
+  itemCount: number;
+  optionCount: number;
+  linkCount: number;
 }
 
 export interface CustomQuestionOption {
   id: string;
   label: string;
   sortOrder: number;
+  imageUrl?: string | null;
+  imageAssetUrl?: string | null;
+  links?: OptionLink[];
+  mediaSeen?: boolean;
+}
+export interface OptionLink { kind: "video" | "audio" | "official" | "other"; label: string; url: string; sortOrder: number; }
+export interface EventShowcase { name: string; description: string | null; coverUrl: string | null; coverAssetUrl?: string | null; externalUrl: string | null; startsAt: string | null; endsAt: string | null; itemCount: number; answeredCount: number; isHistorical: boolean; }
+
+export interface AssetResponse {
+  assetId: string;
+  sha256: string;
+  mediaType: string;
+  width: number;
+  height: number;
+  byteSize: number;
+  url: string;
+  variants: Record<string, string>;
+}
+
+export interface PackagePreview {
+  manifest: ManifestPreview;
+  assetCount: number;
+  existingAssetCount: number;
+  addedAssetCount: number;
+}
+
+export interface PackageApplyResult {
+  result: ManifestApplyResult;
+  assetCount: number;
+  addedAssetCount: number;
 }
 
 export interface CustomQuestion {

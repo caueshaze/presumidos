@@ -228,6 +228,8 @@ O repositório inclui:
   entrada + Redis interno para rate limit
 - [deploy/Caddyfile](deploy/Caddyfile): proxy reverso com HTTPS automático
 - [deploy/deploy.sh](deploy/deploy.sh): backup pré-deploy + build + restart + healthcheck
+- [PRODUCTION_RUNBOOK.md](PRODUCTION_RUNBOOK.md): configuração, migrations,
+  backup/restore, shutdown e resposta a incidentes
 
 Desenho da rede:
 
@@ -257,9 +259,11 @@ docker compose up -d
 ./deploy/deploy.sh
 ```
 
-O `deploy.sh` faz: backup pré-deploy do SQLite, `docker compose build` com
-`DOCKER_BUILDKIT=1`, `up -d`, valida `GET /api/health` via Caddy e, em falha de
-healthcheck, reaplica a imagem anterior automaticamente.
+O `deploy.sh` faz: backup pré-deploy verificado, `docker compose build` com
+`DOCKER_BUILDKIT=1`, para o app, aplica migrations explicitamente, sobe a nova
+versão e valida `GET /health/ready`. Não há rollback automático de binário após
+migration; use o backup compatível e o procedimento do
+[runbook](PRODUCTION_RUNBOOK.md).
 
 Depois do deploy, rode (uma vez) o bootstrap do admin e o mapeamento de jogos
 dentro do container:
@@ -290,9 +294,10 @@ benefício do cache.
 
 ## Backup e Restore
 
-O banco SQLite (WAL) vive no volume Docker `app_data` (`/data/bolao.db`). Os
-scripts usam uma imagem auxiliar (`deploy/backup/`, alpine + `sqlite3`) para
-gerar backups consistentes com a aplicação rodando.
+O banco SQLite (WAL) e o AssetStore vivem no volume Docker `app_data`
+(`/data/bolao.db` e `/data/assets`). O formato oficial é o diretório produzido
+pela CLI operacional; Event Package não é backup. Veja o
+[runbook](PRODUCTION_RUNBOOK.md) para o procedimento completo.
 
 ### Backup manual
 
@@ -300,10 +305,12 @@ gerar backups consistentes com a aplicação rodando.
 ./deploy/backup.sh
 ```
 
-- roda `sqlite3 /data/bolao.db ".backup '...'"` (seguro com WAL, app ligada)
-- salva em `./backups/ferrugem-YYYYMMDD-HHMMSS.db`, **fora** do volume `app_data`
-- valida `PRAGMA integrity_check;` (se falhar, apaga o arquivo e retorna erro)
-- aplica `chmod 600` e remove backups com mais de 14 dias
+- executa `backup create` no binário da aplicação, com snapshot SQLite seguro
+  para WAL;
+- salva `database.db`, `assets.zip` e `backup.json` em `./backups`, fora do
+  volume `app_data`;
+- valida checksums, `PRAGMA integrity_check`, archive e referências de assets;
+- não inclui `.env`, secrets ou chaves privadas.
 
 `./backups/` é criado com `chmod 700` e está no `.gitignore`.
 
@@ -322,17 +329,17 @@ rsync -av ./backups/ usuario@outro-host:/caminho/de/backups/ferrugem/
 ### Restore em produção
 
 ```bash
-./deploy/restore.sh backups/ferrugem-20260612-030000.db
+./deploy/restore.sh backups/backup-20260612T030000Z-XXXXXXXX
 ```
 
 O script valida `integrity_check` **antes** de tocar em produção, pede confirmação
-interativa, cria um backup pré-restore do estado atual e então faz
-`docker compose down`, substitui os arquivos `bolao.db*` e sobe de novo.
+interativa, cria um backup pré-restore do estado atual, valida o diretório
+completo e restaura DB/assets em staging durante manutenção.
 
 ### Restore testado (ambiente isolado)
 
 ```bash
-./deploy/restore-test.sh backups/ferrugem-20260612-030000.db
+./deploy/restore-test.sh backups/backup-20260612T030000Z-XXXXXXXX
 ```
 
 Cria volume e container temporários (sem tocar em `app_data`/`origin`), sobe em

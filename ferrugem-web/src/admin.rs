@@ -45,8 +45,46 @@ struct AdminMatchRow {
 }
 
 #[cfg(feature = "server")]
+#[derive(sqlx::FromRow)]
+struct AdminEventRow {
+    id: String,
+    name: String,
+    slug: String,
+    kind: String,
+    status: String,
+    created_by: Option<String>,
+    created_by_username: Option<String>,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+    description: Option<String>,
+    cover_url: Option<String>,
+    cover_asset_id: Option<String>,
+    external_url: Option<String>,
+    item_count: i64,
+    option_count: i64,
+    pool_count: i64,
+}
+
+#[cfg(feature = "server")]
 fn admin_event_from_row(
-    (id, name, slug, kind, status, created_by, starts_at, ends_at, created_at, updated_at): (
+    (
+        id,
+        name,
+        slug,
+        kind,
+        status,
+        created_by,
+        starts_at,
+        ends_at,
+        created_at,
+        updated_at,
+        description,
+        cover_url,
+        cover_asset_id,
+        external_url,
+    ): (
         String,
         String,
         String,
@@ -57,6 +95,10 @@ fn admin_event_from_row(
         Option<String>,
         String,
         String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
     ),
 ) -> Event {
     Event {
@@ -78,23 +120,70 @@ fn admin_event_from_row(
         ends_at,
         created_at,
         updated_at,
+        description,
+        cover_url,
+        cover_asset_url: cover_asset_id
+            .as_ref()
+            .map(|asset_id| format!("/media/assets/{asset_id}/cover")),
+        cover_asset_id,
+        external_url,
     }
 }
 
 #[cfg(feature = "server")]
-pub async fn list_events_admin(token: String) -> Result<Vec<Event>, ServerFnError> {
+pub async fn list_events_admin(
+    token: String,
+) -> Result<Vec<crate::models::AdminEventRecord>, ServerFnError> {
     use crate::auth::require_admin;
 
     crate::security::apply_security_headers();
     require_admin(&token).await?;
-    let rows = sqlx::query_as(
-        "SELECT id, name, slug, kind, status, created_by, starts_at, ends_at, created_at, updated_at
-         FROM events ORDER BY CASE WHEN ends_at IS NULL THEN 0 ELSE 1 END, datetime(ends_at) DESC, created_at DESC",
+    let rows: Vec<AdminEventRow> = sqlx::query_as(
+        "SELECT e.id, e.name, e.slug, e.kind, e.status, e.created_by, u.username AS created_by_username,
+                e.starts_at, e.ends_at, e.created_at, e.updated_at, e.description,
+                e.cover_url, e.cover_asset_id, e.external_url,
+                (SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_id=e.id) AS item_count,
+                (SELECT COUNT(*) FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_id=e.id) AS option_count,
+                (SELECT COUNT(*) FROM pools p WHERE p.event_id=e.id) AS pool_count
+         FROM events e LEFT JOIN users u ON u.id=e.created_by
+         ORDER BY CASE WHEN e.ends_at IS NULL THEN 0 ELSE 1 END, datetime(e.ends_at) DESC, e.created_at DESC",
     )
     .fetch_all(crate::db::pool())
     .await
     .map_err(|e| crate::security::internal_error("admin_list_events", e))?;
-    Ok(rows.into_iter().map(admin_event_from_row).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| crate::models::AdminEventRecord {
+            id: row.id,
+            name: row.name,
+            slug: row.slug,
+            kind: if row.kind == "custom" {
+                EventKind::Custom
+            } else {
+                EventKind::Football
+            },
+            status: match row.status.as_str() {
+                "draft" => EventStatus::Draft,
+                "finished" => EventStatus::Finished,
+                _ => EventStatus::Active,
+            },
+            created_by: row.created_by,
+            created_by_username: row.created_by_username,
+            starts_at: row.starts_at,
+            ends_at: row.ends_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            description: row.description,
+            cover_url: row.cover_url,
+            cover_asset_url: row
+                .cover_asset_id
+                .map(|asset_id| format!("/media/assets/{asset_id}/cover")),
+            external_url: row.external_url,
+            item_count: row.item_count,
+            option_count: row.option_count,
+            pool_count: row.pool_count,
+        })
+        .collect())
 }
 
 #[cfg(feature = "server")]
@@ -111,9 +200,9 @@ pub async fn finish_event(
     let session = require_recent_admin(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
     let db = crate::db::pool();
-    let row: Option<(String, String, String, String, String, Option<String>, Option<String>, Option<String>, String, String)> =
+    let row: Option<(String, String, String, String, String, Option<String>, Option<String>, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>)> =
         sqlx::query_as(
-            "SELECT id, name, slug, kind, status, created_by, starts_at, ends_at, created_at, updated_at
+            "SELECT id, name, slug, kind, status, created_by, starts_at, ends_at, created_at, updated_at, description, cover_url, cover_asset_id, external_url
              FROM events WHERE id = ?1",
         )
         .bind(&event_id)

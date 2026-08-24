@@ -8,13 +8,15 @@ const API_BASE = "/api";
 
 export class ApiError extends Error {
   status: number;
+  errorId: string | null;
   /** true quando o backend pede reautenticação de admin (403 SECURITY:ADMIN_REAUTH_REQUIRED). */
   needsAdminReauth: boolean;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, errorId: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.errorId = errorId;
     this.needsAdminReauth = message === "SECURITY:ADMIN_REAUTH_REQUIRED";
   }
 }
@@ -62,9 +64,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (!res.ok) {
     let message = res.statusText;
+    let errorId: string | null = null;
     try {
       const data = await res.json();
       if (data && typeof data.error === "string") message = data.error;
+      if (data && typeof data.errorId === "string") errorId = data.errorId;
     } catch {
       // resposta sem corpo JSON
     }
@@ -78,7 +82,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       return request<T>(path, { ...options, _retried: true });
     }
 
-    throw new ApiError(res.status, message);
+    if (res.status >= 500 && errorId) {
+      message = `Não foi possível concluir a operação. Código do erro: ${errorId}`;
+    }
+    throw new ApiError(res.status, message, errorId);
   }
 
   if (res.status === 204) return undefined as T;
@@ -92,4 +99,62 @@ export const api = {
   /** POST público (login/registro/reset): não exige CSRF. */
   postPublic: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body, csrf: false }),
+  upload: async <T>(path: string, file: File, fields: Record<string, string> = {}): Promise<T> => {
+    const form = new FormData();
+    form.append("file", file);
+    Object.entries(fields).forEach(([key, value]) => form.append(key, value));
+    const send = async () => fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-CSRF-Token": await ensureCsrfToken() },
+      body: form,
+    });
+    let res = await send();
+    if (res.status === 403) {
+      let message = "";
+      try { message = ((await res.clone().json()) as { error?: string }).error ?? ""; } catch { /* resposta não JSON */ }
+      if (message !== "SECURITY:ADMIN_REAUTH_REQUIRED") {
+        setCsrfToken(null);
+        await fetchCsrfToken();
+        res = await send();
+      }
+    }
+    if (!res.ok) {
+      let message = res.statusText;
+      let errorId: string | null = null;
+      try {
+        const data = (await res.json()) as { error?: string; errorId?: string };
+        message = data.error ?? message;
+        errorId = data.errorId ?? null;
+      } catch { /* resposta sem corpo */ }
+      if (res.status >= 500 && errorId) {
+        message = `Não foi possível concluir a operação. Código do erro: ${errorId}`;
+      }
+      throw new ApiError(res.status, message, errorId);
+    }
+    return (await res.json()) as T;
+  },
+  download: async (path: string): Promise<{ blob: Blob; filename: string | null }> => {
+    const res = await fetch(`${API_BASE}${path}`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      let message = res.statusText;
+      let errorId: string | null = null;
+      try {
+        const data = await res.json();
+        if (data && typeof data.error === "string") message = data.error;
+        if (data && typeof data.errorId === "string") errorId = data.errorId;
+      } catch {
+        // resposta sem corpo JSON
+      }
+      if (res.status >= 500 && errorId) {
+        message = `Não foi possível concluir a operação. Código do erro: ${errorId}`;
+      }
+      throw new ApiError(res.status, message, errorId);
+    }
+    const disposition = res.headers.get("content-disposition");
+    const filename = disposition?.match(/filename="([^"]+)"/)?.[1] ?? null;
+    return { blob: await res.blob(), filename };
+  },
 };

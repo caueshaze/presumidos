@@ -5,6 +5,5 @@ cd "$(dirname "$0")/.."
 mkdir -p backups
 chmod 700 backups
 
-docker compose --profile tools run --rm -T \
-  -e "BACKUP_UID=$(id -u)" -e "BACKUP_GID=$(id -g)" \
-  backup
+docker compose exec -T --user 0 ferrugem-web \
+  /app/ferrugem-web backup create --output /backups

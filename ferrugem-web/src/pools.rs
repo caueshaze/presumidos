@@ -265,6 +265,10 @@ pub(crate) fn event_summary(
             _ => EventStatus::Active,
         },
         ends_at,
+        description: None,
+        cover_url: None,
+        external_url: None,
+        cover_asset_url: None,
         is_historical,
     }
 }

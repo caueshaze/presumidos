@@ -65,6 +65,16 @@ describe("SingleChoicePredictionCard", () => {
     expect(screen.getByText("Palpites encerrados")).toBeTruthy();
   });
 
+  it("falls back from an unavailable internal asset to the external URL", () => {
+    renderCard({
+      options: [{ id: "option-a", label: "Opção A", sortOrder: 0, imageAssetUrl: "/media/a/card", imageUrl: "https://example.test/a.jpg" }, ...question.options.slice(1)],
+    });
+    const image = document.querySelector("img") as HTMLImageElement;
+    expect(image.src).toContain("/media/a/card");
+    fireEvent.error(image);
+    expect(image.src).toBe("https://example.test/a.jpg");
+  });
+
   it("keeps builder preview interactions local", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

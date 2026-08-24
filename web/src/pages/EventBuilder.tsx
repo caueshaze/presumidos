@@ -6,12 +6,14 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ErrorBanner } from "@/components/ui/field";
+import { AssetUploadControl } from "@/components/AssetUploadControl";
 import { SingleChoicePredictionCard } from "@/components/SingleChoicePredictionCard";
 import { NumericPredictionCard } from "@/components/NumericPredictionCard";
 import { MultipleChoicePredictionCard } from "@/components/MultipleChoicePredictionCard";
-import type { CustomQuestion } from "@/types";
+import type { CustomQuestion, OptionLink } from "@/types";
+import { useAuth } from "@/hooks/useAuth";
 
-type Option = { id: string; label: string };
+type Option = { id: string; label: string; imageUrl?: string | null; imageAssetUrl?: string | null; links?: OptionLink[] };
 type Item = {
   id: string;
   kind: "single_choice" | "numeric" | "multiple_choice";
@@ -33,8 +35,14 @@ type Draft = {
     id: string;
     name: string;
     status: "draft" | "active";
+    createdBy: string | null;
     startsAt: string | null;
     endsAt: string | null;
+    description: string | null;
+    coverUrl: string | null;
+    coverAssetId?: string | null;
+    coverAssetUrl?: string | null;
+    externalUrl: string | null;
   };
   items: Item[];
 };
@@ -42,10 +50,14 @@ type Draft = {
 export function EventBuilderPage() {
   const { eventId } = useParams();
   const navigate = useNavigate();
+  const { isAdmin, user } = useAuth();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [name, setName] = useState("");
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
+  const [description, setDescription] = useState("");
+  const [coverUrl, setCoverUrl] = useState("");
+  const [externalUrl, setExternalUrl] = useState("");
   const [title, setTitle] = useState("");
   const [itemKind, setItemKind] = useState<
     "single_choice" | "numeric" | "multiple_choice"
@@ -59,6 +71,7 @@ export function EventBuilderPage() {
   const [lockAt, setLockAt] = useState("");
   const [revealAt, setRevealAt] = useState("");
   const [labels, setLabels] = useState<Record<string, string>>({});
+  const [mediaDrafts, setMediaDrafts] = useState<Record<string, { imageUrl: string; links: OptionLink[] }>>({});
   const [results, setResults] = useState<Record<string, string>>({});
   const [multipleResults, setMultipleResults] = useState<
     Record<string, string[]>
@@ -72,6 +85,13 @@ export function EventBuilderPage() {
       setName(next.event.name);
       setStartsAt(next.event.startsAt?.slice(0, 16) ?? "");
       setEndsAt(next.event.endsAt?.slice(0, 16) ?? "");
+      setDescription(next.event.description ?? "");
+      setCoverUrl(next.event.coverUrl ?? "");
+      setExternalUrl(next.event.externalUrl ?? "");
+      setMediaDrafts(Object.fromEntries(next.items.flatMap((item) => item.options.map((option) => [option.id, {
+        imageUrl: option.imageUrl ?? "",
+        links: option.links ?? [],
+      }]))));
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Não foi possível carregar o evento.",
@@ -163,6 +183,9 @@ export function EventBuilderPage() {
       name,
       startsAt: startsAt ? new Date(startsAt).toISOString() : null,
       endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+      description: description || null,
+      coverUrl: coverUrl || null,
+      externalUrl: externalUrl || null,
     });
   };
   const editItem = async (item: Item) => {
@@ -183,6 +206,28 @@ export function EventBuilderPage() {
         `/custom/events/${draft.event.id}/items/${item.id}/options/${option.id}/update`,
         { label },
       );
+  };
+  const saveOptionMedia = async (item: Item, option: Option) => {
+    if (!draft) return;
+    const media = mediaDrafts[option.id] ?? { imageUrl: option.imageUrl ?? "", links: option.links ?? [] };
+    await action(`/custom/events/${draft.event.id}/items/${item.id}/options/${option.id}/media`, {
+      imageUrl: media.imageUrl || null,
+      links: media.links.filter((link) => link.url.trim()).map((link, sortOrder) => ({ ...link, sortOrder })),
+    });
+  };
+  const downloadEventFile = async (kind: "manifest" | "package") => {
+    if (!draft) return;
+    try {
+      const download = await api.download(kind === "manifest" ? `/custom/events/${draft.event.id}/manifest` : `/custom/events/${draft.event.id}/package`);
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.filename ?? `${draft.event.name}.${kind === "manifest" ? "json" : "zip"}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível exportar o evento.");
+    }
   };
   const deleteDraft = async () => {
     if (!draft || !window.confirm(`Apagar o rascunho "${draft.event.name}"?`))
@@ -245,6 +290,12 @@ export function EventBuilderPage() {
       </PageShell>
     );
   const editable = draft.event.status === "draft";
+  const editorialEditable = editable || isAdmin;
+  const mediaEditable = editable || isAdmin || draft.event.createdBy === user?.id;
+  const hasInternalAssets = Boolean(
+    draft.event.coverAssetId ||
+      draft.items.some((item) => item.options.some((option) => option.imageAssetUrl)),
+  );
   return (
     <PageShell>
       <Button variant="link" size="sm" onClick={() => navigate("/events")}>← Voltar aos eventos</Button>
@@ -258,7 +309,9 @@ export function EventBuilderPage() {
           </p>
         </div>
         {editable ? (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button size="sm" variant="outline" onClick={() => void downloadEventFile("manifest")}>Exportar JSON</Button>
+            <Button size="sm" variant="outline" onClick={() => void downloadEventFile("package")}>Exportar pacote</Button>
             <Button
               variant="outline"
               className="text-danger"
@@ -275,11 +328,11 @@ export function EventBuilderPage() {
             </Button>
           </div>
         ) : (
-          <Button
-            onClick={() => navigate(`/dashboard?eventId=${draft.event.id}`)}
-          >
-            Criar bolão
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button size="sm" variant="outline" onClick={() => void downloadEventFile("manifest")}>Exportar JSON</Button>
+            <Button size="sm" variant="outline" onClick={() => void downloadEventFile("package")}>Exportar pacote</Button>
+            <Button onClick={() => navigate(`/dashboard?eventId=${draft.event.id}`)}>Criar bolão</Button>
+          </div>
         )}
       </div>
       {error && (
@@ -287,12 +340,18 @@ export function EventBuilderPage() {
           <ErrorBanner>{error}</ErrorBanner>
         </div>
       )}
+      {hasInternalAssets && (
+        <p className="mt-3 rounded-lg border border-sky/25 bg-sky/5 px-3 py-2 text-sm text-ink-muted">
+          Este evento usa arquivos locais. Para promovê-lo para outro ambiente,
+          exporte o pacote completo; o JSON contém apenas as referências por hash.
+        </p>
+      )}
       <Card className="mt-5">
         <div className="flex flex-col gap-3">
           <label>
             Nome do evento
             <Input
-              disabled={!editable}
+              disabled={!editorialEditable}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -300,7 +359,7 @@ export function EventBuilderPage() {
           <label>
             Data inicial
             <Input
-              disabled={!editable}
+              disabled={editable ? false : true}
               type="datetime-local"
               value={startsAt}
               onChange={(e) => setStartsAt(e.target.value)}
@@ -309,13 +368,37 @@ export function EventBuilderPage() {
           <label>
             Data final
             <Input
-              disabled={!editable}
+              disabled={editable ? false : true}
               type="datetime-local"
               value={endsAt}
               onChange={(e) => setEndsAt(e.target.value)}
             />
           </label>
-          {editable && (
+          <label>
+            Descrição <span className="text-ink-muted">(opcional)</span>
+            <textarea disabled={!editorialEditable} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1200} className="mt-1 min-h-24 w-full rounded-xl border border-mint/25 bg-card/60 px-3 py-2" />
+          </label>
+          <label>
+            Capa do evento
+            {draft && (
+              <AssetUploadControl
+                label="Capa do evento"
+                currentUrl={draft.event.coverAssetUrl ?? coverUrl}
+                fallbackUrl={draft.event.coverAssetUrl ? coverUrl : undefined}
+                uploadPath={`/custom/events/${draft.event.id}/cover`}
+                removePath={`/custom/events/${draft.event.id}/cover/remove`}
+                disabled={!mediaEditable}
+                onChanged={(asset) => setDraft((current) => current ? { ...current, event: { ...current.event, coverAssetId: asset?.assetId ?? null, coverAssetUrl: asset?.url ?? null } } : current)}
+              />
+            )}
+            <span className="mt-2 block text-xs text-ink-muted">URL externa (opcional)</span>
+            <Input disabled={!editorialEditable} type="url" placeholder="https://..." value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} />
+          </label>
+          <label>
+            Site oficial <span className="text-ink-muted">(opcional)</span>
+            <Input disabled={!editorialEditable} type="url" placeholder="https://..." value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} />
+          </label>
+          {editorialEditable && (
             <Button
               variant="secondary"
               disabled={busy}
@@ -511,7 +594,47 @@ export function EventBuilderPage() {
                 <ol className="mt-3 list-decimal pl-5">
                   {item.options.map((o, optionIndex) => (
                     <li key={o.id} className="flex justify-between gap-2">
-                      <span>{o.label}</span>
+                      <div className="min-w-0 flex-1">
+                        <span>{o.label}</span>
+                        {(editorialEditable || mediaEditable) && (() => {
+                          const media = mediaDrafts[o.id] ?? { imageUrl: o.imageUrl ?? "", links: o.links ?? [] };
+                          return (
+                            <div className="mt-2 rounded-lg border border-mint/15 bg-card/50 p-3">
+                              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink-muted">Mídia e links editoriais</p>
+                              <AssetUploadControl
+                                label={`Imagem da opção ${o.label}`}
+                                currentUrl={o.imageAssetUrl ?? o.imageUrl}
+                                fallbackUrl={o.imageAssetUrl ? o.imageUrl : undefined}
+                                uploadPath={`/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/image`}
+                                removePath={`/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/image/remove`}
+                                disabled={!mediaEditable}
+                                compact
+                                onChanged={() => void load(draft.event.id)}
+                              />
+                              <p className="mt-2 text-xs text-ink-muted">URL externa (opcional)</p>
+                              <Input
+                                aria-label={`Imagem da opção ${o.label}`}
+                                className="mt-2"
+                                placeholder="URL da imagem (https://…)"
+                                value={media.imageUrl}
+                                onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, imageUrl: event.target.value } }))}
+                              />
+                              {media.links.map((link, linkIndex) => (
+                                <div className="mt-2 grid gap-2 sm:grid-cols-[8rem_1fr_1fr_auto]" key={`${o.id}-link-${linkIndex}`}>
+                                  <Input aria-label={`Tipo do link ${o.label} ${linkIndex + 1}`} value={link.kind} placeholder="tipo" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, kind: event.target.value as OptionLink["kind"] } : entry) } }))} />
+                                  <Input aria-label={`Rótulo do link ${o.label} ${linkIndex + 1}`} value={link.label} placeholder="rótulo" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, label: event.target.value } : entry) } }))} />
+                                  <Input aria-label={`URL do link ${o.label} ${linkIndex + 1}`} value={link.url} placeholder="https://…" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, url: event.target.value } : entry) } }))} />
+                                  <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.filter((_, index) => index !== linkIndex) } }))}>Remover</Button>
+                                </div>
+                              ))}
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: [...media.links, { kind: "other", label: "", url: "", sortOrder: media.links.length }] } }))}>Adicionar link</Button>
+                                <Button size="sm" variant="secondary" disabled={busy} onClick={() => void saveOptionMedia(item, o)}>Salvar mídia</Button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
                       {editable && (
                         <span className="flex gap-1">
                           <Button
