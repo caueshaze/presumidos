@@ -186,10 +186,30 @@ pub async fn apply_migrations() -> Result<(), String> {
         .connect_with(options)
         .await
         .map_err(|e| format!("não foi possível abrir o banco: {e}"))?;
-    MIGRATOR
-        .run(&pool)
-        .await
-        .map_err(|e| format!("falha ao aplicar migrations: {e}"))?;
+    let archived_before = reconcile_legacy_predictions(&pool).await?;
+    if archived_before > 0 {
+        eprintln!(
+            "reconciliação legada: {} prediction(s) sem pool preservada(s) em legacy_predictions_without_pool",
+            archived_before
+        );
+    }
+    if let Err(first_error) = MIGRATOR.run(&pool).await {
+        // Migrations 0019/0020 may have been committed before 0021 failed.
+        // Retry once after the same backend-owned reconciliation so upgrades
+        // from those intermediate states remain recoverable.
+        let archived_after = reconcile_legacy_predictions(&pool).await?;
+        if archived_after == 0 {
+            return Err(format!("falha ao aplicar migrations: {first_error}"));
+        }
+        eprintln!(
+            "reconciliação após falha de migration: {} prediction(s) preservada(s); repetindo migrations",
+            archived_after
+        );
+        MIGRATOR
+            .run(&pool)
+            .await
+            .map_err(|error| format!("falha ao aplicar migrations após reconciliação: {error}"))?;
+    }
     pool.close().await;
     Ok(())
 }
@@ -207,6 +227,94 @@ pub async fn integrity_check_without_migration() -> Result<String, String> {
         .map_err(|e| format!("integrity_check indisponível: {e}"))
 }
 
+/// Preserves legacy global predictions for which the historical schema cannot
+/// derive a legitimate pool. Such rows must not be silently dropped and must
+/// not be assigned to a synthetic pool merely to satisfy the new schema.
+async fn reconcile_legacy_predictions(pool: &SqlitePool) -> Result<u64, String> {
+    let columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        sqlx::query_as("PRAGMA table_info(predictions)")
+            .fetch_all(pool)
+            .await
+            .map_err(|error| format!("falha ao inspecionar predictions legadas: {error}"))?;
+    if columns.is_empty()
+        || columns
+            .iter()
+            .any(|(_, name, _, _, _, _)| name == "pool_id")
+    {
+        return Ok(0);
+    }
+
+    let required_tables: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN
+         ('users','pools','pool_members','prediction_items','matches')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|error| format!("falha ao verificar schema legado: {error}"))?;
+    if required_tables.0 != 5 {
+        return Ok(0);
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| format!("falha ao iniciar reconciliação legada: {error}"))?;
+    sqlx::raw_sql(
+        "CREATE TABLE IF NOT EXISTS legacy_predictions_without_pool (
+            source_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            match_id TEXT NOT NULL,
+            home_score INTEGER NOT NULL,
+            away_score INTEGER NOT NULL,
+            submitted_at TEXT NOT NULL,
+            qualifier TEXT,
+            went_to_penalties INTEGER NOT NULL,
+            penalty_home_score INTEGER,
+            penalty_away_score INTEGER,
+            reason TEXT NOT NULL,
+            archived_at TEXT NOT NULL DEFAULT(datetime('now'))
+        )",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| format!("falha ao criar arquivo de predictions legadas: {error}"))?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO legacy_predictions_without_pool (
+            source_id, user_id, match_id, home_score, away_score, submitted_at,
+            qualifier, went_to_penalties, penalty_home_score, penalty_away_score, reason
+        )
+        SELECT old.id, old.user_id, old.match_id, old.home_score, old.away_score,
+               old.submitted_at, old.qualifier, old.went_to_penalties,
+               old.penalty_home_score, old.penalty_away_score,
+               'no_pool_for_prediction_event'
+        FROM predictions old
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM matches m
+            JOIN prediction_items pi ON pi.id = m.prediction_item_id
+            JOIN pools p ON p.event_id = pi.event_id
+            JOIN pool_members pm ON pm.pool_id = p.id AND pm.user_id = old.user_id
+            WHERE m.id = old.match_id
+        )",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| format!("falha ao arquivar predictions sem pool: {error}"))?;
+
+    let deleted = sqlx::query(
+        "DELETE FROM predictions
+         WHERE id IN (SELECT source_id FROM legacy_predictions_without_pool)",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| format!("falha ao remover somente predictions já arquivadas: {error}"))?;
+    tx.commit()
+        .await
+        .map_err(|error| format!("falha ao confirmar reconciliação legada: {error}"))?;
+    Ok(deleted.rows_affected())
+}
+
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use std::borrow::Cow;
@@ -214,7 +322,7 @@ mod tests {
     use sqlx::migrate::Migrator;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    use super::MIGRATOR;
+    use super::{reconcile_legacy_predictions, MIGRATOR};
 
     #[tokio::test]
     async fn event_migration_seeds_world_cup_backfills_pools_and_enforces_fk() {
@@ -401,6 +509,58 @@ mod tests {
             cross_event.is_err(),
             "pool e item devem pertencer ao mesmo evento"
         );
+    }
+
+    #[tokio::test]
+    async fn legacy_prediction_without_pool_is_archived_before_generic_migration() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("criar sqlite em memoria");
+        sqlx::raw_sql(
+            "CREATE TABLE users (id TEXT PRIMARY KEY);
+             CREATE TABLE events (id TEXT PRIMARY KEY);
+             CREATE TABLE pools (id TEXT PRIMARY KEY, event_id TEXT NOT NULL);
+             CREATE TABLE pool_members (pool_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY(pool_id, user_id));
+             CREATE TABLE prediction_items (id TEXT PRIMARY KEY, event_id TEXT NOT NULL);
+             CREATE TABLE matches (id TEXT PRIMARY KEY, prediction_item_id TEXT NOT NULL);
+             CREATE TABLE predictions (
+                id TEXT PRIMARY KEY, user_id TEXT NOT NULL, match_id TEXT NOT NULL,
+                home_score INTEGER NOT NULL, away_score INTEGER NOT NULL,
+                submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                qualifier TEXT, went_to_penalties INTEGER NOT NULL DEFAULT 0,
+                penalty_home_score INTEGER, penalty_away_score INTEGER
+             );
+             INSERT INTO users VALUES ('user');
+             INSERT INTO events VALUES ('event');
+             INSERT INTO pools VALUES ('pool', 'event');
+             INSERT INTO prediction_items VALUES ('item', 'event');
+             INSERT INTO matches VALUES ('match', 'item');
+             INSERT INTO predictions (id, user_id, match_id, home_score, away_score)
+             VALUES ('orphan', 'user', 'match', 2, 1);",
+        )
+        .execute(&db)
+        .await
+        .expect("preparar prediction sem pool");
+
+        let archived = reconcile_legacy_predictions(&db)
+            .await
+            .expect("reconciliar prediction sem pool");
+        assert_eq!(archived, 1);
+
+        sqlx::raw_sql(include_str!("../migrations/0021_generic_predictions.sql"))
+            .execute(&db)
+            .await
+            .expect("migrar após arquivar prediction sem pool");
+
+        let preserved: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM legacy_predictions_without_pool WHERE source_id='orphan'",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("consultar prediction arquivada");
+        assert_eq!(preserved.0, 1);
     }
 
     #[tokio::test]

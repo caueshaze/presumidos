@@ -20,6 +20,9 @@ fi
 
 APP_CONTAINER="$(docker compose ps -q ferrugem-web 2>/dev/null || true)"
 if [ -z "$APP_CONTAINER" ]; then
+  APP_CONTAINER="$(docker compose ps -aq ferrugem-web 2>/dev/null || true)"
+fi
+if [ -z "$APP_CONTAINER" ]; then
   echo "container ferrugem-web atual não encontrado; deploy.sh exige backup pre-deploy" >&2
   exit 1
 fi
