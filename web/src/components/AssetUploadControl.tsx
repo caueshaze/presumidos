@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ImageOff } from "lucide-react";
 import { api } from "@/lib/api";
 import type { AssetResponse } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -100,8 +101,14 @@ export function AssetUploadControl({
           }}
         />
       ) : (
-        <div className={compact ? "flex h-12 w-12 items-center justify-center rounded-lg bg-mint/10 text-xs text-ink-muted" : "flex h-28 items-center justify-center rounded-lg bg-mint/10 text-sm text-ink-muted"}>
-          Sem imagem
+        <div
+          className={compact
+            ? "flex h-12 min-w-[4.5rem] flex-col items-center justify-center gap-1 rounded-lg bg-mint/10 px-2 text-[10px] font-medium leading-none text-ink-muted"
+            : "flex h-28 w-full flex-col items-center justify-center gap-2 rounded-lg bg-mint/10 text-sm text-ink-muted"}
+          title={`${label}: sem imagem selecionada`}
+        >
+          <ImageOff className={compact ? "h-4 w-4" : "h-5 w-5"} aria-hidden="true" />
+          <span className="whitespace-nowrap">Sem imagem</span>
         </div>
       )}
       <div className={compact ? "flex flex-wrap gap-1" : "mt-2 flex flex-wrap items-center gap-2"}>

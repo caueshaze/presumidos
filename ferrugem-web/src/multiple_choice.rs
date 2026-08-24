@@ -54,7 +54,7 @@ pub async fn submit_prediction(
     let db = crate::db::pool();
     let row: Option<(String, String, i64, Option<i64>, i64)> = sqlx::query_as(
         "SELECT pi.kind,pi.lock_at,q.min_selections,q.max_selections,COUNT(o.id)
-         FROM pools p JOIN events e ON e.id=p.event_id JOIN prediction_items pi ON pi.event_id=p.event_id
+         FROM pools p JOIN events e ON e.id=p.event_id JOIN prediction_items pi ON pi.event_version_id=p.event_version_id
          JOIN multiple_choice_questions q ON q.item_id=pi.id
          LEFT JOIN custom_question_options o ON o.item_id=pi.id
          WHERE p.id=?1 AND pi.id=?2 AND e.status='active' GROUP BY pi.id",
@@ -151,9 +151,9 @@ pub async fn set_result_authorized(
         return Err(crate::security::public_error("Selecione opções únicas."));
     }
     let db = crate::db::pool();
-    let row:Option<(i64,Option<i64>,i64)>=sqlx::query_as("SELECT q.min_selections,q.max_selections,COUNT(o.id) FROM prediction_items pi JOIN multiple_choice_questions q ON q.item_id=pi.id JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 LEFT JOIN custom_question_options o ON o.item_id=pi.id WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1) GROUP BY pi.id")
+    let row:Option<(i64,Option<i64>,i64,String)>=sqlx::query_as("SELECT q.min_selections,q.max_selections,COUNT(o.id),pi.event_version_id FROM prediction_items pi JOIN multiple_choice_questions q ON q.item_id=pi.id JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 LEFT JOIN custom_question_options o ON o.item_id=pi.id WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1) GROUP BY pi.id")
         .bind(&item_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("multiple_choice_result_authorization",e))?;
-    let Some((min, max, option_count)) = row else {
+    let Some((min, max, option_count, version_id)) = row else {
         return Err(crate::security::public_error(
             "Somente o dono do evento ou admin pode definir o resultado.",
         ));
@@ -186,6 +186,9 @@ pub async fn set_result_authorized(
     tx.commit()
         .await
         .map_err(|e| crate::security::internal_error("multiple_choice_result_commit", e))?;
+    sqlx::query("INSERT INTO official_results(id,event_version_id,item_id,kind,state,option_ids_json,updated_at) VALUES(?1,?2,?3,'multiple_choice','resolved',?4,datetime('now')) ON CONFLICT(event_version_id,item_id) DO UPDATE SET state='resolved',option_id=NULL,option_ids_json=excluded.option_ids_json,value_scaled=NULL,reason=NULL,updated_at=datetime('now')")
+        .bind(uuid::Uuid::new_v4().to_string()).bind(&version_id).bind(&item_id).bind(serde_json::to_string(&option_ids).unwrap())
+        .execute(db).await.map_err(|e| crate::security::internal_error("multiple_choice_result_official", e))?;
     crate::scoring::recalculate_custom_breakdowns().await?;
     crate::security::append_audit_log(
         db,

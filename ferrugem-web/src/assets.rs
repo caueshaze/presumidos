@@ -315,10 +315,17 @@ async fn authorize_editor(
         .fetch_one(crate::db::pool())
         .await
         .map_err(|e| crate::security::internal_error("asset_event_admin", e))?;
-    // Imagens são metadata editorial segura. O dono continua autorizado a
-    // trocar/remover mídia do próprio Event publicado; a estrutura semântica
-    // permanece protegida pelos endpoints do Builder e do Manifest Service.
     if is_admin.0 || owner == session.user_id {
+        let status: (String,) = sqlx::query_as("SELECT status FROM events WHERE id=?1")
+            .bind(event_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .map_err(|e| crate::security::internal_error("asset_event_status", e))?;
+        if status.0 != "draft" && !is_admin.0 {
+            return Err(crate::security::public_error(
+                "A mídia de evento publicado só pode ser alterada por um administrador.",
+            ));
+        }
         Ok(())
     } else {
         Err(crate::security::public_error(
@@ -431,7 +438,7 @@ pub async fn remove_unreferenced_asset(sha256: &str) -> Result<bool, ServerFnErr
         return Ok(true);
     };
     let referenced: (i64,) = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM events WHERE cover_asset_id=?1) OR EXISTS(SELECT 1 FROM custom_question_options WHERE image_asset_id=?1)",
+        "SELECT EXISTS(SELECT 1 FROM events WHERE cover_asset_id=?1) OR EXISTS(SELECT 1 FROM event_versions WHERE cover_asset_id=?1) OR EXISTS(SELECT 1 FROM custom_question_options WHERE image_asset_id=?1)",
     )
     .bind(&asset_id.0)
     .fetch_one(&mut *tx)
@@ -462,6 +469,7 @@ pub async fn remove_unreferenced_asset(sha256: &str) -> Result<bool, ServerFnErr
 
 async fn attach(
     event_id: &str,
+    version_id: &str,
     option_id: Option<&str>,
     asset_id: Option<&str>,
     actor: &str,
@@ -469,12 +477,12 @@ async fn attach(
 ) -> Result<(), ServerFnError> {
     let db = crate::db::pool();
     if let Some(option_id) = option_id {
-        sqlx::query("UPDATE custom_question_options SET image_asset_id=?2 WHERE id=?1 AND EXISTS(SELECT 1 FROM prediction_items pi WHERE pi.id=custom_question_options.item_id AND pi.event_id=?3)")
-            .bind(option_id).bind(asset_id).bind(event_id).execute(db).await
+        sqlx::query("UPDATE custom_question_options SET image_asset_id=?2 WHERE id=?1 AND EXISTS(SELECT 1 FROM prediction_items pi WHERE pi.id=custom_question_options.item_id AND pi.event_version_id=?3)")
+            .bind(option_id).bind(asset_id).bind(version_id).execute(db).await
             .map_err(|e| crate::security::internal_error("asset_option_attach", e))?;
     } else {
-        sqlx::query("UPDATE events SET cover_asset_id=?2,updated_at=datetime('now') WHERE id=?1")
-            .bind(event_id)
+        sqlx::query("UPDATE event_versions SET cover_asset_id=?2,updated_at=datetime('now') WHERE id=?1 AND state='working'")
+            .bind(version_id)
             .bind(asset_id)
             .execute(db)
             .await
@@ -501,10 +509,13 @@ pub async fn upload_cover(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     authorize_editor(&session, &event_id).await?;
+    let version_id =
+        crate::custom_event_manifest::ensure_working_revision(&event_id, &session.user_id).await?;
     let normalized = normalize_image(&bytes)?;
     let asset_id = persist_asset(&normalized, &session.user_id).await?;
     attach(
         &event_id,
+        &version_id,
         None,
         Some(&asset_id),
         &session.user_id,
@@ -524,8 +535,10 @@ pub async fn upload_option(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     authorize_editor(&session, &event_id).await?;
-    let owns: Option<(String,)> = sqlx::query_as("SELECT o.id FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.id=?1 AND pi.event_id=?2")
-        .bind(&option_id).bind(&event_id).fetch_optional(crate::db::pool()).await
+    let version_id =
+        crate::custom_event_manifest::ensure_working_revision(&event_id, &session.user_id).await?;
+    let owns: Option<(String,)> = sqlx::query_as("SELECT o.id FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.id=?1 AND pi.event_version_id=?2")
+        .bind(&option_id).bind(&version_id).fetch_optional(crate::db::pool()).await
         .map_err(|e| crate::security::internal_error("asset_option_access", e))?;
     if owns.is_none() {
         return Err(crate::security::public_error("Opção não encontrada."));
@@ -534,6 +547,7 @@ pub async fn upload_option(
     let asset_id = persist_asset(&normalized, &session.user_id).await?;
     attach(
         &event_id,
+        &version_id,
         Some(&option_id),
         Some(&asset_id),
         &session.user_id,
@@ -551,8 +565,11 @@ pub async fn remove_cover(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     authorize_editor(&session, &event_id).await?;
+    let version_id =
+        crate::custom_event_manifest::ensure_working_revision(&event_id, &session.user_id).await?;
     attach(
         &event_id,
+        &version_id,
         None,
         None,
         &session.user_id,
@@ -570,11 +587,13 @@ pub async fn remove_option(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     authorize_editor(&session, &event_id).await?;
+    let version_id =
+        crate::custom_event_manifest::ensure_working_revision(&event_id, &session.user_id).await?;
     let owns: Option<(String,)> = sqlx::query_as(
-        "SELECT o.id FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.id=?1 AND pi.event_id=?2",
+        "SELECT o.id FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.id=?1 AND pi.event_version_id=?2",
     )
     .bind(&option_id)
-    .bind(&event_id)
+    .bind(&version_id)
     .fetch_optional(crate::db::pool())
     .await
     .map_err(|e| crate::security::internal_error("asset_option_remove_access", e))?;
@@ -583,6 +602,7 @@ pub async fn remove_option(
     }
     attach(
         &event_id,
+        &version_id,
         Some(&option_id),
         None,
         &session.user_id,
@@ -638,7 +658,7 @@ pub async fn read_variant(
 
 pub async fn can_read(asset_id: &str) -> Result<bool, ServerFnError> {
     let db = crate::db::pool();
-    let published: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM events WHERE status IN ('active','finished') AND (cover_asset_id=?1 OR EXISTS(SELECT 1 FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.image_asset_id=?1 AND pi.event_id=events.id)))")
+    let published: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM events e JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.status IN ('active','finished') AND (v.cover_asset_id=?1 OR EXISTS(SELECT 1 FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.image_asset_id=?1 AND pi.event_version_id=v.id)))")
         .bind(asset_id).fetch_one(db).await.map_err(|e| crate::security::internal_error("asset_public_access", e))?;
     if published.0 != 0 {
         return Ok(true);
@@ -647,7 +667,7 @@ pub async fn can_read(asset_id: &str) -> Result<bool, ServerFnError> {
     let Some(user) = state.user else {
         return Ok(false);
     };
-    let allowed: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM events e WHERE e.status='draft' AND (e.cover_asset_id=?1 OR EXISTS(SELECT 1 FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.image_asset_id=?1 AND pi.event_id=e.id)) AND (e.created_by=?2 OR EXISTS(SELECT 1 FROM users u WHERE u.id=?2 AND u.is_admin=1)))")
+    let allowed: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM events e JOIN event_versions v ON v.event_id=e.id AND v.state='working' WHERE e.status='draft' AND (v.cover_asset_id=?1 OR EXISTS(SELECT 1 FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.image_asset_id=?1 AND pi.event_version_id=v.id)) AND (e.created_by=?2 OR EXISTS(SELECT 1 FROM users u WHERE u.id=?2 AND u.is_admin=1)))")
         .bind(asset_id).bind(user.id).fetch_one(db).await.map_err(|e| crate::security::internal_error("asset_private_access", e))?;
     Ok(allowed.0 != 0)
 }

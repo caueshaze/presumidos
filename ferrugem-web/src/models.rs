@@ -107,6 +107,8 @@ pub struct Event {
     pub cover_asset_id: Option<String>,
     pub cover_asset_url: Option<String>,
     pub external_url: Option<String>,
+    pub pool_creation_enabled: bool,
+    pub current_published_version_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -131,6 +133,10 @@ pub struct AdminEventRecord {
     pub cover_url: Option<String>,
     pub cover_asset_url: Option<String>,
     pub external_url: Option<String>,
+    pub pool_creation_enabled: bool,
+    pub current_published_version_id: Option<String>,
+    pub working_version_id: Option<String>,
+    pub current_version_number: Option<i64>,
     pub item_count: i64,
     pub option_count: i64,
     pub pool_count: i64,
@@ -243,6 +249,8 @@ pub struct CustomQuestion {
     pub current_value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exact_points: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]

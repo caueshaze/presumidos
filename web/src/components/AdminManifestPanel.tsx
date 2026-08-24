@@ -13,7 +13,7 @@ function actionLabel(action: ManifestPreview["action"]): string {
   switch (action) {
     case "create": return "Novo evento";
     case "noChange": return "Nenhuma alteração";
-    case "safeUpdate": return "Atualização segura";
+    case "safeUpdate": return "Nova revisão de conteúdo";
     case "conflict": return "Conflito bloqueado";
     default: return "Rejeitado";
   }
@@ -79,7 +79,7 @@ export function AdminManifestPanel({ onApplied }: { onApplied?: () => void }) {
           : api.post<ManifestApplyResult>("/admin/events/import/apply", { content, baseFingerprint: preview.baseFingerprint, filename: file?.name }),
         (password) => reauth.mutateAsync(password),
       );
-      setSuccess(result.action === "create" ? "Evento importado como rascunho." : "Evento atualizado com sucesso.");
+      setSuccess(result.state === "working" ? "Revisão criada. O conteúdo público continua na versão anterior até a publicação." : "Versão publicada.");
       onApplied?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "A importação falhou; nada foi alterado.");
@@ -113,9 +113,9 @@ export function AdminManifestPanel({ onApplied }: { onApplied?: () => void }) {
             <span>Links: <strong>{preview.linkCount}</strong></span>
           </div>
           {packagePreview && <div className="mt-3 rounded-lg border border-mint/15 bg-card/60 px-3 py-2 text-sm"><strong>Assets:</strong> {packagePreview.assetCount} no pacote · {packagePreview.existingAssetCount} já existentes · {packagePreview.addedAssetCount} serão adicionados</div>}
-          <DiffGroup title="Alterações editoriais seguras" entries={preview.safeChanges} />
-          <DiffGroup title="Alterações bloqueadas" entries={preview.blockedChanges} />
-          {preview.action === "conflict" && <p className="mt-4 rounded-lg bg-danger-bg px-3 py-2 text-sm font-semibold text-danger">Este manifesto tenta alterar a estrutura de um evento publicado. A importação foi bloqueada.</p>}
+          <DiffGroup title="Alterações da próxima revisão" entries={preview.safeChanges} />
+          <DiffGroup title="Conflitos que precisam de correção" entries={preview.blockedChanges} />
+          {preview.action === "conflict" && <p className="mt-4 rounded-lg bg-danger-bg px-3 py-2 text-sm font-semibold text-danger">Há um conflito de base, identidade ou validação. A revisão não foi criada.</p>}
           {preview.action === "noChange" && <p className="mt-4 rounded-lg bg-card px-3 py-2 text-sm text-ink-muted">O evento já está semanticamente igual ao manifesto.</p>}
           <div className="mt-4 flex justify-end">
             {!confirming ? (

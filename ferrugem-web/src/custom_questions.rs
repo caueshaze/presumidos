@@ -19,6 +19,7 @@ struct QuestionRow {
     max_scaled: Option<i64>,
     current_scaled: Option<i64>,
     result_scaled: Option<i64>,
+    result_status: Option<String>,
     correct_points: Option<i64>,
     incorrect_points: Option<i64>,
     exact_points: Option<i64>,
@@ -50,7 +51,7 @@ pub async fn submit_single_choice_prediction(
     let db = pool();
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT pi.kind, pi.lock_at, o.item_id
-         FROM pools p JOIN events e ON e.id = p.event_id JOIN prediction_items pi ON pi.event_id = p.event_id
+         FROM pools p JOIN events e ON e.id = p.event_id JOIN prediction_items pi ON pi.event_version_id = p.event_version_id
          LEFT JOIN custom_question_options o ON o.id = ?3
          WHERE p.id = ?1 AND pi.id = ?2 AND e.status = 'active'",
     )
@@ -225,16 +226,18 @@ pub async fn list_custom_questions(
     }
     let rows: Vec<QuestionRow> = sqlx::query_as(
         "SELECT pi.id AS item_id,pi.kind,pi.title,pi.lock_at,pi.reveal_at,pi.sort_order,pi.status AS stored_status,cpv.option_id AS current_option_id,
-                CASE WHEN datetime(pi.reveal_at)<=datetime('now') THEN q.correct_option_id ELSE NULL END AS correct_option_id,
+                CASE WHEN datetime(pi.reveal_at)<=datetime('now') THEN COALESCE(orx.option_id,q.correct_option_id) ELSE NULL END AS correct_option_id,
                 n.decimal_places,n.unit_label,n.min_value_scaled AS min_scaled,n.max_value_scaled AS max_scaled,npv.value_scaled AS current_scaled,
-                CASE WHEN datetime(pi.reveal_at)<=datetime('now') THEN n.result_value_scaled ELSE NULL END AS result_scaled,
+                CASE WHEN datetime(pi.reveal_at)<=datetime('now') THEN COALESCE(orx.value_scaled,n.result_value_scaled) ELSE NULL END AS result_scaled,
+                orx.state AS result_status,
                 s.correct_points,s.incorrect_points,ns.exact_points,ns.tolerance_scaled,ns.within_tolerance_points,
                 mq.min_selections,mq.max_selections,ms.exact_points AS multiple_exact_points,ms.partial_points,ms.incorrect_points AS multiple_incorrect_points,
-                EXISTS(SELECT 1 FROM multiple_choice_results mr WHERE mr.item_id=pi.id) AS multiple_resolved
-         FROM prediction_items pi JOIN pools p ON p.event_id=pi.event_id
+                (EXISTS(SELECT 1 FROM multiple_choice_results mr WHERE mr.item_id=pi.id) OR (orx.state='resolved' AND orx.kind='multiple_choice')) AS multiple_resolved
+         FROM prediction_items pi JOIN pools p ON p.event_version_id=pi.event_version_id
          LEFT JOIN custom_questions q ON q.item_id=pi.id LEFT JOIN custom_pool_item_scoring s ON s.pool_id=p.id AND s.item_id=pi.id
          LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN numeric_pool_item_scoring ns ON ns.pool_id=p.id AND ns.item_id=pi.id
          LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id LEFT JOIN multiple_choice_pool_item_scoring ms ON ms.pool_id=p.id AND ms.item_id=pi.id
+         LEFT JOIN official_results orx ON orx.event_version_id=pi.event_version_id AND orx.item_id=pi.id
          LEFT JOIN predictions pr ON pr.pool_id=p.id AND pr.user_id=?2 AND pr.item_id=pi.id
          LEFT JOIN custom_prediction_values cpv ON cpv.prediction_id=pr.id LEFT JOIN numeric_prediction_values npv ON npv.prediction_id=pr.id
          WHERE p.id=?1 AND pi.kind IN ('single_choice','numeric','multiple_choice') ORDER BY pi.sort_order")
@@ -257,6 +260,7 @@ pub async fn list_custom_questions(
             max_scaled,
             current_scaled,
             result_scaled,
+            result_status,
             correct_points,
             incorrect_points,
             exact_points,
@@ -355,6 +359,7 @@ pub async fn list_custom_questions(
             result_value: result_scaled
                 .zip(decimal_places)
                 .map(|(v, p)| crate::numeric::display_scaled(v, p as u8)),
+            result_status,
             exact_points: if kind == "multiple_choice" {
                 multiple_exact_points
             } else {
@@ -386,7 +391,7 @@ pub async fn set_option_media_seen(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
     let db = crate::db::pool();
-    let allowed: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM pool_members pm JOIN pools p ON p.id=pm.pool_id JOIN prediction_items pi ON pi.event_id=p.event_id JOIN custom_question_options o ON o.item_id=pi.id JOIN option_links l ON l.option_id=o.id WHERE pm.pool_id=?1 AND pm.user_id=?2 AND o.id=?3)")
+    let allowed: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM pool_members pm JOIN pools p ON p.id=pm.pool_id JOIN prediction_items pi ON pi.event_version_id=p.event_version_id JOIN custom_question_options o ON o.item_id=pi.id JOIN option_links l ON l.option_id=o.id WHERE pm.pool_id=?1 AND pm.user_id=?2 AND o.id=?3)")
         .bind(&pool_id).bind(&session.user_id).bind(&option_id).fetch_one(db).await.map_err(|e| crate::security::internal_error("set_option_media_seen_allowed", e))?;
     if allowed.0 == 0 {
         return Err(crate::security::public_error(
@@ -413,7 +418,7 @@ pub async fn event_showcase(
 ) -> Result<crate::models::EventShowcase, ServerFnError> {
     let session = crate::auth::require_user(&token).await?;
     let db = crate::db::pool();
-    let row: Option<(String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,String,i64,i64)> = sqlx::query_as("SELECT e.name,e.description,e.cover_url,e.external_url,e.cover_asset_id,e.starts_at,e.ends_at,e.status,(SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_id=e.id),(SELECT COUNT(*) FROM predictions pr WHERE pr.pool_id=p.id AND pr.user_id=?2) FROM pools p JOIN events e ON e.id=p.event_id JOIN pool_members pm ON pm.pool_id=p.id AND pm.user_id=?2 WHERE p.id=?1")
+    let row: Option<(String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,String,i64,i64)> = sqlx::query_as("SELECT v.name,v.description,v.cover_url,v.external_url,v.cover_asset_id,e.starts_at,e.ends_at,e.status,(SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_version_id=p.event_version_id),(SELECT COUNT(*) FROM predictions pr WHERE pr.pool_id=p.id AND pr.user_id=?2) FROM pools p JOIN events e ON e.id=p.event_id JOIN event_versions v ON v.id=p.event_version_id JOIN pool_members pm ON pm.pool_id=p.id AND pm.user_id=?2 WHERE p.id=?1")
         .bind(&pool_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e| crate::security::internal_error("event_showcase", e))?;
     let Some((
         name,
@@ -473,11 +478,22 @@ pub async fn custom_prediction_value(
 /// A resolução é armazenada, mas não muda status nem aciona scoring nesta fase.
 #[cfg(feature = "server")]
 pub async fn set_correct_option(item_id: &str, option_id: &str) -> Result<(), ServerFnError> {
+    let version: Option<(String,)> = sqlx::query_as(
+        "SELECT pi.event_version_id FROM prediction_items pi WHERE pi.id=?1 AND EXISTS(SELECT 1 FROM custom_question_options o WHERE o.id=?2 AND o.item_id=pi.id)",
+    )
+    .bind(item_id)
+    .bind(option_id)
+    .fetch_optional(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("set_correct_option_version", e))?;
+    let Some((version_id,)) = version else {
+        return Err(crate::security::public_error(
+            "Opção correta incompatível com a pergunta.",
+        ));
+    };
     let changed = sqlx::query(
         "UPDATE custom_questions SET correct_option_id=?2, updated_at=datetime('now')
-         WHERE item_id=?1 AND EXISTS (
-             SELECT 1 FROM custom_question_options o WHERE o.id=?2 AND o.item_id=?1
-         )",
+         WHERE item_id=?1",
     )
     .bind(item_id)
     .bind(option_id)
@@ -489,6 +505,10 @@ pub async fn set_correct_option(item_id: &str, option_id: &str) -> Result<(), Se
             "Opção correta incompatível com a pergunta.",
         ));
     }
+    sqlx::query("INSERT INTO official_results(id,event_version_id,item_id,kind,state,option_id,updated_at) VALUES(?1,?2,?3,'single_choice','resolved',?4,datetime('now')) ON CONFLICT(event_version_id,item_id) DO UPDATE SET state='resolved',option_id=excluded.option_id,option_ids_json=NULL,value_scaled=NULL,reason=NULL,updated_at=datetime('now')")
+        .bind(uuid::Uuid::new_v4().to_string()).bind(&version_id).bind(item_id).bind(option_id)
+        .execute(crate::db::pool()).await
+        .map_err(|e| crate::security::internal_error("set_correct_option_official", e))?;
     crate::scoring::recalculate_custom_breakdowns().await?;
     Ok(())
 }
@@ -518,6 +538,52 @@ pub async fn set_correct_option_authorized(
         Some(&item_id),
         None,
         serde_json::json!({ "option_id": option_id }),
+    )
+    .await
+}
+
+#[cfg(feature = "server")]
+pub async fn mark_result_not_representable_authorized(
+    token: String,
+    item_id: String,
+    reason: String,
+    csrf: String,
+) -> Result<(), ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    let reason = crate::security::normalize_required_text("Motivo", reason, 1, 1000)?;
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT pi.event_version_id,pi.kind FROM prediction_items pi JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)",
+    )
+    .bind(&item_id)
+    .bind(&session.user_id)
+    .fetch_optional(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("result_not_representable_access", e))?;
+    let Some((version_id, kind)) = row else {
+        return Err(crate::security::public_error(
+            "Somente o dono do evento ou admin pode decidir este resultado.",
+        ));
+    };
+    match kind.as_str() {
+        "single_choice" => sqlx::query("UPDATE custom_questions SET correct_option_id=NULL,updated_at=datetime('now') WHERE item_id=?1").bind(&item_id).execute(crate::db::pool()).await,
+        "numeric" => sqlx::query("UPDATE numeric_questions SET result_value_scaled=NULL,updated_at=datetime('now') WHERE item_id=?1").bind(&item_id).execute(crate::db::pool()).await,
+        "multiple_choice" => sqlx::query("DELETE FROM multiple_choice_results WHERE item_id=?1").bind(&item_id).execute(crate::db::pool()).await,
+        _ => return Err(crate::security::public_error("Tipo de resultado não suportado.")),
+    }
+    .map_err(|e| crate::security::internal_error("result_not_representable_clear", e))?;
+    sqlx::query("INSERT INTO official_results(id,event_version_id,item_id,kind,state,reason,updated_by,updated_at) VALUES(?1,?2,?3,?4,'not_representable',?5,?6,datetime('now')) ON CONFLICT(event_version_id,item_id) DO UPDATE SET state='not_representable',option_id=NULL,option_ids_json=NULL,value_scaled=NULL,reason=excluded.reason,updated_by=excluded.updated_by,updated_at=datetime('now')")
+        .bind(uuid::Uuid::new_v4().to_string()).bind(&version_id).bind(&item_id).bind(&kind).bind(&reason).bind(&session.user_id)
+        .execute(crate::db::pool()).await
+        .map_err(|e| crate::security::internal_error("result_not_representable_save", e))?;
+    crate::security::append_audit_log(
+        crate::db::pool(),
+        Some(&session.user_id),
+        "event_official_result_not_representable",
+        "prediction_item",
+        Some(&item_id),
+        None,
+        serde_json::json!({"eventVersionId":version_id,"reason":reason}),
     )
     .await
 }

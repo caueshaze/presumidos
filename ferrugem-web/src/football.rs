@@ -1063,11 +1063,14 @@ async fn load_candidates(
         CycleScope::Backfill => "datetime(kickoff) < datetime('now')",
     };
     let sql = format!(
-        "SELECT id, kickoff, external_fixture_id, phase, result_source, home_score, away_score,
+        "SELECT m.id, m.kickoff, m.external_fixture_id, m.phase, m.result_source, m.home_score, m.away_score,
                 home_team, away_team, source_last_payload_hash
-         FROM matches
-         WHERE finished = 0
-           AND external_fixture_id IS NOT NULL
+         FROM matches m
+         JOIN prediction_items pi ON pi.id=m.prediction_item_id
+         JOIN event_versions v ON v.id=pi.event_version_id
+         WHERE m.finished = 0
+           AND v.state = 'published'
+           AND m.external_fixture_id IS NOT NULL
            AND {window}",
     );
     sqlx::query_as::<_, PollCandidate>(&sql)

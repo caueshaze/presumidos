@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Check, ChevronDown, Image as ImageIcon, Pencil, Trophy, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ErrorBanner } from "@/components/ui/field";
+import { ErrorBanner, Select } from "@/components/ui/field";
 import { AssetUploadControl } from "@/components/AssetUploadControl";
 import { SingleChoicePredictionCard } from "@/components/SingleChoicePredictionCard";
 import { NumericPredictionCard } from "@/components/NumericPredictionCard";
@@ -72,6 +73,9 @@ export function EventBuilderPage() {
   const [revealAt, setRevealAt] = useState("");
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [mediaDrafts, setMediaDrafts] = useState<Record<string, { imageUrl: string; links: OptionLink[] }>>({});
+  const [openMediaOptionId, setOpenMediaOptionId] = useState<string | null>(null);
+  const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
+  const [optionLabelDraft, setOptionLabelDraft] = useState("");
   const [results, setResults] = useState<Record<string, string>>({});
   const [multipleResults, setMultipleResults] = useState<
     Record<string, string[]>
@@ -165,14 +169,16 @@ export function EventBuilderPage() {
       setBusy(false);
     }
   };
-  const action = async (path: string, body?: unknown) => {
-    if (!draft) return;
+  const action = async (path: string, body?: unknown): Promise<boolean> => {
+    if (!draft) return false;
     setBusy(true);
     try {
       await api.post(path, body);
       await load(draft.event.id);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Operação recusada.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -199,13 +205,27 @@ export function EventBuilderPage() {
         revealAt: nextReveal,
       });
   };
-  const editOption = async (item: Item, option: Option) => {
-    const label = window.prompt("Opção", option.label);
-    if (label && draft)
-      await action(
-        `/custom/events/${draft.event.id}/items/${item.id}/options/${option.id}/update`,
-        { label },
-      );
+  const startOptionEdit = (option: Option) => {
+    setError("");
+    setEditingOptionId(option.id);
+    setOptionLabelDraft(option.label);
+  };
+  const cancelOptionEdit = () => {
+    setEditingOptionId(null);
+    setOptionLabelDraft("");
+  };
+  const saveOptionLabel = async (item: Item, option: Option) => {
+    const label = optionLabelDraft.trim();
+    if (!label) {
+      setError("O nome da opção não pode ficar vazio.");
+      return;
+    }
+    if (!draft) return;
+    const saved = await action(
+      `/custom/events/${draft.event.id}/items/${item.id}/options/${option.id}/update`,
+      { label },
+    );
+    if (saved) cancelOptionEdit();
   };
   const saveOptionMedia = async (item: Item, option: Option) => {
     if (!draft) return;
@@ -290,7 +310,7 @@ export function EventBuilderPage() {
       </PageShell>
     );
   const editable = draft.event.status === "draft";
-  const editorialEditable = editable || isAdmin;
+  const metadataEditable = editable || isAdmin;
   const mediaEditable = editable || isAdmin || draft.event.createdBy === user?.id;
   const hasInternalAssets = Boolean(
     draft.event.coverAssetId ||
@@ -351,7 +371,7 @@ export function EventBuilderPage() {
           <label>
             Nome do evento
             <Input
-              disabled={!editorialEditable}
+              disabled={!metadataEditable}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -376,7 +396,7 @@ export function EventBuilderPage() {
           </label>
           <label>
             Descrição <span className="text-ink-muted">(opcional)</span>
-            <textarea disabled={!editorialEditable} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1200} className="mt-1 min-h-24 w-full rounded-xl border border-mint/25 bg-card/60 px-3 py-2" />
+            <textarea disabled={!metadataEditable} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1200} className="mt-1 min-h-24 w-full rounded-xl border border-mint/25 bg-card/60 px-3 py-2" />
           </label>
           <label>
             Capa do evento
@@ -392,13 +412,13 @@ export function EventBuilderPage() {
               />
             )}
             <span className="mt-2 block text-xs text-ink-muted">URL externa (opcional)</span>
-            <Input disabled={!editorialEditable} type="url" placeholder="https://..." value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} />
+            <Input disabled={!metadataEditable} type="url" placeholder="https://..." value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} />
           </label>
           <label>
             Site oficial <span className="text-ink-muted">(opcional)</span>
-            <Input disabled={!editorialEditable} type="url" placeholder="https://..." value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} />
+            <Input disabled={!metadataEditable} type="url" placeholder="https://..." value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} />
           </label>
-          {editorialEditable && (
+          {metadataEditable && (
             <Button
               variant="secondary"
               disabled={busy}
@@ -591,60 +611,120 @@ export function EventBuilderPage() {
             {(item.kind === "single_choice" ||
               item.kind === "multiple_choice") && (
               <>
-                <ol className="mt-3 list-decimal pl-5">
+                <ol className="mt-4 space-y-3 pl-0">
                   {item.options.map((o, optionIndex) => (
-                    <li key={o.id} className="flex justify-between gap-2">
+                    <li key={o.id} className="flex items-start gap-3 rounded-xl border border-mint/20 bg-card/35 p-3 shadow-sm transition-colors hover:border-mint/35 hover:bg-card/55">
+                      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-mint/15 text-xs font-bold text-mint-dark">
+                        {optionIndex + 1}
+                      </span>
                       <div className="min-w-0 flex-1">
-                        <span>{o.label}</span>
-                        {(editorialEditable || mediaEditable) && (() => {
-                          const media = mediaDrafts[o.id] ?? { imageUrl: o.imageUrl ?? "", links: o.links ?? [] };
-                          return (
-                            <div className="mt-2 rounded-lg border border-mint/15 bg-card/50 p-3">
-                              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink-muted">Mídia e links editoriais</p>
-                              <AssetUploadControl
-                                label={`Imagem da opção ${o.label}`}
-                                currentUrl={o.imageAssetUrl ?? o.imageUrl}
-                                fallbackUrl={o.imageAssetUrl ? o.imageUrl : undefined}
-                                uploadPath={`/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/image`}
-                                removePath={`/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/image/remove`}
-                                disabled={!mediaEditable}
-                                compact
-                                onChanged={() => void load(draft.event.id)}
-                              />
-                              <p className="mt-2 text-xs text-ink-muted">URL externa (opcional)</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {editingOptionId === o.id ? (
+                            <div className="flex min-w-0 max-w-xl flex-1 items-center gap-2">
                               <Input
-                                aria-label={`Imagem da opção ${o.label}`}
-                                className="mt-2"
-                                placeholder="URL da imagem (https://…)"
-                                value={media.imageUrl}
-                                onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, imageUrl: event.target.value } }))}
+                                autoFocus
+                                aria-label={`Nome da opção ${o.label}`}
+                                value={optionLabelDraft}
+                                onChange={(event) => setOptionLabelDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") void saveOptionLabel(item, o);
+                                  if (event.key === "Escape") cancelOptionEdit();
+                                }}
                               />
-                              {media.links.map((link, linkIndex) => (
-                                <div className="mt-2 grid gap-2 sm:grid-cols-[8rem_1fr_1fr_auto]" key={`${o.id}-link-${linkIndex}`}>
-                                  <Input aria-label={`Tipo do link ${o.label} ${linkIndex + 1}`} value={link.kind} placeholder="tipo" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, kind: event.target.value as OptionLink["kind"] } : entry) } }))} />
-                                  <Input aria-label={`Rótulo do link ${o.label} ${linkIndex + 1}`} value={link.label} placeholder="rótulo" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, label: event.target.value } : entry) } }))} />
-                                  <Input aria-label={`URL do link ${o.label} ${linkIndex + 1}`} value={link.url} placeholder="https://…" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, url: event.target.value } : entry) } }))} />
-                                  <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.filter((_, index) => index !== linkIndex) } }))}>Remover</Button>
-                                </div>
-                              ))}
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: [...media.links, { kind: "other", label: "", url: "", sortOrder: media.links.length }] } }))}>Adicionar link</Button>
-                                <Button size="sm" variant="secondary" disabled={busy} onClick={() => void saveOptionMedia(item, o)}>Salvar mídia</Button>
-                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                aria-label="Salvar nome da opção"
+                                className="rounded-lg px-2.5"
+                                disabled={busy}
+                                onClick={() => void saveOptionLabel(item, o)}
+                              >
+                                <Check className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                aria-label="Cancelar edição do nome"
+                                className="rounded-lg px-2.5"
+                                disabled={busy}
+                                onClick={cancelOptionEdit}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
                             </div>
+                          ) : (
+                            <span className="font-medium text-ink">{o.label}</span>
+                          )}
+                        {mediaEditable && (() => {
+                          const media = mediaDrafts[o.id] ?? { imageUrl: o.imageUrl ?? "", links: o.links ?? [] };
+                          const mediaOpen = openMediaOptionId === o.id;
+                          const hasMedia = Boolean(o.imageAssetUrl || o.imageUrl || o.links?.length);
+                          return (
+                            <>
+                              <button
+                                type="button"
+                                title={hasMedia ? "Editar mídia configurada" : "Adicionar mídia opcional"}
+                                aria-label={hasMedia ? "Editar mídia configurada" : "Adicionar mídia opcional"}
+                                aria-expanded={mediaOpen}
+                                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-dark/40 ${mediaOpen ? "border-mint-dark bg-mint/25 text-mint-dark shadow-glow" : hasMedia ? "border-mint-dark/40 bg-mint/15 text-mint-dark hover:bg-mint/25" : "border-mint/20 bg-card/70 text-ink-muted hover:border-mint/40 hover:bg-mint/10 hover:text-mint-dark"}`}
+                                onClick={() => setOpenMediaOptionId((current) => current === o.id ? null : o.id)}
+                              >
+                                <ImageIcon className="h-4 w-4" />
+                                <span>Mídia</span>
+                                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${mediaOpen ? "rotate-180" : ""}`} />
+                              </button>
+                              {mediaOpen && (
+                                <div className="basis-full rounded-xl border border-mint/15 bg-card/40 p-3">
+                                  <AssetUploadControl
+                                    label={`Imagem da opção ${o.label}`}
+                                    currentUrl={o.imageAssetUrl ?? o.imageUrl}
+                                    fallbackUrl={o.imageAssetUrl ? o.imageUrl : undefined}
+                                    uploadPath={`/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/image`}
+                                    removePath={`/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/image/remove`}
+                                    disabled={!mediaEditable}
+                                    compact
+                                    onChanged={() => void load(draft.event.id)}
+                                  />
+                                  <p className="mt-2 text-xs text-ink-muted">URL externa (opcional)</p>
+                                  <Input
+                                    aria-label={`Imagem da opção ${o.label}`}
+                                    className="mt-2"
+                                    placeholder="URL da imagem (https://…)"
+                                    value={media.imageUrl}
+                                    onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, imageUrl: event.target.value } }))}
+                                  />
+                                  {media.links.map((link, linkIndex) => (
+                                    <div className="mt-2 grid gap-2 sm:grid-cols-[8rem_1fr_1fr_auto]" key={`${o.id}-link-${linkIndex}`}>
+                                      <Input aria-label={`Tipo do link ${o.label} ${linkIndex + 1}`} value={link.kind} placeholder="tipo" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, kind: event.target.value as OptionLink["kind"] } : entry) } }))} />
+                                      <Input aria-label={`Rótulo do link ${o.label} ${linkIndex + 1}`} value={link.label} placeholder="rótulo" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, label: event.target.value } : entry) } }))} />
+                                      <Input aria-label={`URL do link ${o.label} ${linkIndex + 1}`} value={link.url} placeholder="https://…" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, url: event.target.value } : entry) } }))} />
+                                      <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.filter((_, index) => index !== linkIndex) } }))}>Remover</Button>
+                                    </div>
+                                  ))}
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: [...media.links, { kind: "other", label: "", url: "", sortOrder: media.links.length }] } }))}>Adicionar link</Button>
+                                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => void saveOptionMedia(item, o)}>Salvar mídia</Button>
+                                  </div>
+                                </div>
+                              )}
+                            </>
                           );
                         })()}
+                        </div>
                       </div>
-                      {editable && (
+                      {(editable || mediaEditable) && (
                         <span className="flex gap-1">
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => void editOption(item, o)}
+                            className="rounded-lg border-transparent bg-transparent px-2 text-ink-muted shadow-none hover:border-transparent hover:bg-mint/10 hover:text-ink"
+                            onClick={() => startOptionEdit(o)}
                           >
+                            <Pencil className="h-3.5 w-3.5" />
                             Editar
                           </Button>
-                          <Button
+                          {editable && <Button
                             size="sm"
                             variant="outline"
                             disabled={optionIndex === 0}
@@ -656,8 +736,8 @@ export function EventBuilderPage() {
                             }
                           >
                             ↑
-                          </Button>
-                          <Button
+                          </Button>}
+                          {editable && <Button
                             size="sm"
                             variant="outline"
                             disabled={optionIndex === item.options.length - 1}
@@ -669,8 +749,8 @@ export function EventBuilderPage() {
                             }
                           >
                             ↓
-                          </Button>
-                          <Button
+                          </Button>}
+                          {editable && <Button
                             size="sm"
                             variant="outline"
                             className="text-danger"
@@ -681,7 +761,7 @@ export function EventBuilderPage() {
                             }
                           >
                             Remover
-                          </Button>
+                          </Button>}
                         </span>
                       )}
                     </li>
@@ -713,23 +793,34 @@ export function EventBuilderPage() {
                   </div>
                 )}
                 {!editable && item.kind === "single_choice" && (
-                  <div className="mt-3 flex gap-2">
-                    <select
+                  <div className="mt-5 rounded-xl border border-sky/25 bg-sky/5 p-4">
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky/15 text-sky-dark">
+                        <Trophy className="h-4 w-4" />
+                      </span>
+                      <div>
+                        <p className="font-semibold text-ink">Resultado oficial</p>
+                        <p className="mt-0.5 text-xs text-ink-muted">Selecione o vencedor desta pergunta para fechar a apuração.</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Select
                       aria-label={`Resultado oficial: ${item.title}`}
                       value={results[item.id] ?? item.correctOptionId ?? ""}
                       onChange={(e) =>
                         setResults((v) => ({ ...v, [item.id]: e.target.value }))
                       }
                     >
-                      <option value="">Selecione</option>
+                      <option value="">Selecione o vencedor</option>
                       {item.options.map((o) => (
                         <option key={o.id} value={o.id}>
                           {o.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                     <Button
                       size="sm"
+                      className="w-full sm:w-auto"
                       disabled={!(results[item.id] ?? item.correctOptionId)}
                       onClick={() =>
                         action(`/admin/custom/questions/${item.id}/result`, {
@@ -737,8 +828,10 @@ export function EventBuilderPage() {
                         })
                       }
                     >
+                      <Check className="h-4 w-4" />
                       Salvar resultado
                     </Button>
+                    </div>
                   </div>
                 )}
                 {!editable && item.kind === "multiple_choice" && (

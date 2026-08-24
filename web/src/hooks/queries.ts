@@ -209,6 +209,30 @@ export function useFinishEvent() {
   });
 }
 
+export function useSetEventPoolCreation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { eventId: string; enabled: boolean }) =>
+      api.post<void>(`/admin/events/${input.eventId}/pool-creation`, { enabled: input.enabled }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-events"] });
+      qc.invalidateQueries({ queryKey: ["custom-events", "available"] });
+    },
+  });
+}
+
+export function usePublishEventVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { eventId: string; versionId: string }) =>
+      api.post<void>(`/admin/events/${input.eventId}/versions/${input.versionId}/publish`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-events"] });
+      qc.invalidateQueries({ queryKey: ["custom-events"] });
+    },
+  });
+}
+
 export function useCreatePool() {
   const qc = useQueryClient();
   return useMutation({

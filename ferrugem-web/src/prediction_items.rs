@@ -12,26 +12,28 @@ pub fn football_match_title(home_team: &str, away_team: &str) -> String {
 pub async fn create_football_match_item(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     event_id: &str,
+    event_version_id: &str,
     item_id: &str,
     home_team: &str,
     away_team: &str,
     kickoff: &str,
 ) -> Result<(), ServerFnError> {
     let sort_order: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM prediction_items WHERE event_id = ?1",
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM prediction_items WHERE event_version_id = ?1",
     )
-    .bind(event_id)
+    .bind(event_version_id)
     .fetch_one(&mut **tx)
     .await
     .map_err(|e| crate::security::internal_error("create_prediction_item_sort_order", e))?;
 
     sqlx::query(
         "INSERT INTO prediction_items
-            (id, event_id, kind, title, lock_at, reveal_at, sort_order, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, 'open')",
+            (id, event_id, event_version_id, kind, title, lock_at, reveal_at, sort_order, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, 'open')",
     )
     .bind(item_id)
     .bind(event_id)
+    .bind(event_version_id)
     .bind(FOOTBALL_MATCH_KIND)
     .bind(football_match_title(home_team, away_team))
     .bind(kickoff)

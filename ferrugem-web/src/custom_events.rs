@@ -82,27 +82,52 @@ async fn owner(
     token: String,
     event_id: &str,
     csrf: Option<String>,
-) -> Result<(crate::auth::AuthSession, &'static sqlx::SqlitePool), ServerFnError> {
+) -> Result<(crate::auth::AuthSession, &'static sqlx::SqlitePool, String), ServerFnError> {
     let session = crate::auth::require_user(&token).await?;
     if let Some(csrf) = csrf {
         crate::security::require_csrf(&session.csrf_token, &csrf)?;
     }
     let db = crate::db::pool();
-    let allowed: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM events WHERE id=?1 AND kind='custom' AND status='draft' AND
-         (created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1))",
+    let allowed: Option<(String, String)> = sqlx::query_as(
+        "SELECT e.id,e.status FROM events e WHERE e.id=?1 AND e.kind='custom' AND
+         ((e.status='draft' AND (e.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)))
+          OR (e.status IN ('active','finished') AND EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)))",
     )
     .bind(&event_id)
     .bind(&session.user_id)
     .fetch_optional(db)
     .await
     .map_err(|e| crate::security::internal_error("event_builder_owner", e))?;
-    if allowed.is_none() {
+    let Some((_id, status)) = allowed else {
         return Err(crate::security::public_error(
             "Somente o dono pode editar este rascunho.",
         ));
-    }
-    Ok((session, db))
+    };
+    let is_admin: (bool,) = sqlx::query_as("SELECT is_admin FROM users WHERE id=?1")
+        .bind(&session.user_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::security::internal_error("event_builder_admin", e))?;
+    let version_id: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(event_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("event_builder_working", e))?;
+    let version_id = match version_id {
+        Some((id,)) => id,
+        None if status == "draft" || is_admin.0 => {
+            crate::custom_event_manifest::ensure_working_revision(event_id, &session.user_id)
+                .await?
+        }
+        None => {
+            return Err(crate::security::public_error(
+                "Este evento publicado só pode ser editado por um administrador.",
+            ))
+        }
+    };
+    Ok((session, db, version_id))
 }
 
 pub async fn create(
@@ -133,6 +158,30 @@ pub async fn create(
     }
     let id = Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO events(id,name,slug,kind,status,created_by,starts_at,ends_at) VALUES(?1,?2,?3,'custom','draft',?4,?5,?6)").bind(&id).bind(&name).bind(&slug).bind(&session.user_id).bind(&starts_at).bind(&ends_at).execute(db).await.map_err(|e|crate::security::internal_error("event_create",e))?;
+    let initial = crate::custom_event_manifest::CustomEventManifest {
+        schema_version: crate::custom_event_manifest::CURRENT_SCHEMA_VERSION,
+        name: name.clone(),
+        slug: slug.clone(),
+        kind: "custom".into(),
+        description: None,
+        starts_at: starts_at.clone(),
+        ends_at: ends_at.clone(),
+        cover_url: None,
+        cover_asset: None,
+        external_url: None,
+        items: Vec::new(),
+    };
+    let initial_fingerprint = crate::custom_event_manifest::draft_fingerprint(&initial.slug);
+    sqlx::query("INSERT INTO event_versions(id,event_id,version_number,state,is_current_published,name,description,cover_url,external_url,fingerprint,base_fingerprint,created_by) VALUES(?1,?2,1,'working',0,?3,NULL,NULL,NULL,?4,?5,?6)")
+        .bind(Uuid::new_v4().to_string())
+        .bind(&id)
+        .bind(&name)
+        .bind(&initial_fingerprint)
+        .bind(&initial_fingerprint)
+        .bind(&session.user_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("event_create_version", e))?;
     crate::security::append_audit_log(
         db,
         Some(&session.user_id),
@@ -160,6 +209,8 @@ type EventRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
+    i64,
     Option<String>,
 );
 fn event(row: EventRow) -> Event {
@@ -189,11 +240,13 @@ fn event(row: EventRow) -> Event {
             .12
             .map(|asset_id| format!("/media/assets/{asset_id}/cover")),
         external_url: row.13,
+        pool_creation_enabled: row.14 != 0,
+        current_published_version_id: row.15,
     }
 }
 pub async fn mine(token: String) -> Result<Vec<Event>, ServerFnError> {
     let s = crate::auth::require_user(&token).await?;
-    let rows:Vec<EventRow>=sqlx::query_as("SELECT id,name,slug,kind,status,created_by,starts_at,ends_at,created_at,updated_at,description,cover_url,cover_asset_id,external_url FROM events WHERE created_by=?1 ORDER BY created_at DESC").bind(s.user_id).fetch_all(crate::db::pool()).await.map_err(|e|crate::security::internal_error("events_mine",e))?;
+    let rows:Vec<EventRow>=sqlx::query_as("SELECT e.id,COALESCE(v.name,e.name),e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description),COALESCE(v.cover_url,e.cover_url),COALESCE(v.cover_asset_id,e.cover_asset_id),COALESCE(v.external_url,e.external_url),e.pool_creation_enabled,e.current_published_version_id FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.created_by=?1 ORDER BY e.created_at DESC").bind(s.user_id).fetch_all(crate::db::pool()).await.map_err(|e|crate::security::internal_error("events_mine",e))?;
     Ok(rows.into_iter().map(event).collect())
 }
 
@@ -202,10 +255,10 @@ pub async fn mine(token: String) -> Result<Vec<Event>, ServerFnError> {
 pub async fn available(token: String) -> Result<Vec<Event>, ServerFnError> {
     crate::auth::require_user(&token).await?;
     let rows: Vec<EventRow> = sqlx::query_as(
-        "SELECT id,name,slug,kind,status,created_by,starts_at,ends_at,created_at,updated_at,description,cover_url,cover_asset_id,external_url
-         FROM events
-         WHERE status='active' AND (ends_at IS NULL OR datetime(ends_at) > datetime('now'))
-         ORDER BY CASE WHEN starts_at IS NULL THEN 1 ELSE 0 END, datetime(starts_at) ASC, name COLLATE NOCASE",
+        "SELECT e.id,COALESCE(v.name,e.name),e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description),COALESCE(v.cover_url,e.cover_url),COALESCE(v.cover_asset_id,e.cover_asset_id),COALESCE(v.external_url,e.external_url),e.pool_creation_enabled,e.current_published_version_id
+         FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id
+         WHERE e.status='active' AND e.pool_creation_enabled=1 AND (e.ends_at IS NULL OR datetime(e.ends_at) > datetime('now'))
+         ORDER BY CASE WHEN e.starts_at IS NULL THEN 1 ELSE 0 END, datetime(e.starts_at) ASC, COALESCE(v.name,e.name) COLLATE NOCASE",
     )
     .fetch_all(crate::db::pool())
     .await
@@ -219,9 +272,47 @@ pub async fn get(token: String, id: String) -> Result<Event, ServerFnError> {
 pub async fn draft(token: String, id: String) -> Result<BuilderDraft, ServerFnError> {
     let session = crate::auth::require_user(&token).await?;
     let mut event = get_owned(&session.user_id, &id).await?;
+    let working: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(&id)
+    .fetch_optional(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("event_draft_working", e))?;
+    let is_admin: (bool,) = sqlx::query_as("SELECT is_admin FROM users WHERE id=?1")
+        .bind(&session.user_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .map_err(|e| crate::security::internal_error("event_draft_admin", e))?;
+    let version_id = if let Some((id,)) = working {
+        id
+    } else if is_admin.0 && event.current_published_version_id.is_some() {
+        crate::custom_event_manifest::ensure_working_revision(&id, &session.user_id).await?
+    } else if let Some(id) = event.current_published_version_id.clone() {
+        id
+    } else {
+        return Err(crate::security::public_error(
+            "Evento sem versão para editar.",
+        ));
+    };
+    if let Some((name, description, cover_url, cover_asset_id, external_url)) = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, Option<String>)>(
+        "SELECT name,description,cover_url,cover_asset_id,external_url FROM event_versions WHERE id=?1",
+    )
+    .bind(&version_id)
+    .fetch_optional(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("event_draft_version_metadata", e))?
+    {
+        event.name = name;
+        event.description = description;
+        event.cover_url = cover_url;
+        event.cover_asset_id = cover_asset_id;
+        event.cover_asset_url = event.cover_asset_id.clone().map(|asset_id| format!("/media/assets/{asset_id}/cover"));
+        event.external_url = external_url;
+    }
     let cover_asset_id: Option<(String,)> =
-        sqlx::query_as("SELECT cover_asset_id FROM events WHERE id=?1")
-            .bind(&id)
+        sqlx::query_as("SELECT cover_asset_id FROM event_versions WHERE id=?1")
+            .bind(&version_id)
             .fetch_optional(crate::db::pool())
             .await
             .map_err(|e| crate::security::internal_error("event_draft_cover_asset", e))?;
@@ -230,7 +321,7 @@ pub async fn draft(token: String, id: String) -> Result<BuilderDraft, ServerFnEr
         .cover_asset_id
         .clone()
         .map(|asset_id| format!("/media/assets/{asset_id}/cover"));
-    let rows:Vec<(String,String,String,String,String,i64,Option<String>,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)>=sqlx::query_as("SELECT pi.id,pi.kind,pi.title,pi.lock_at,pi.reveal_at,pi.sort_order,q.correct_option_id,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,n.result_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN custom_questions q ON q.item_id=pi.id LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_id=?1 ORDER BY pi.sort_order,pi.id").bind(&id).fetch_all(crate::db::pool()).await.map_err(|e|crate::security::internal_error("event_draft_items",e))?;
+    let rows:Vec<(String,String,String,String,String,i64,Option<String>,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)>=sqlx::query_as("SELECT pi.id,pi.kind,pi.title,pi.lock_at,pi.reveal_at,pi.sort_order,q.correct_option_id,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,n.result_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN custom_questions q ON q.item_id=pi.id LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=?1 ORDER BY pi.sort_order,pi.id").bind(&version_id).fetch_all(crate::db::pool()).await.map_err(|e|crate::security::internal_error("event_draft_items",e))?;
     let mut items = Vec::with_capacity(rows.len());
     for (
         id,
@@ -352,19 +443,19 @@ pub async fn update_metadata(
     let external_url =
         crate::custom_event_manifest::validate_optional_http_url(external_url, "externalUrl")
             .map_err(crate::security::public_error)?;
-    sqlx::query(
-        "UPDATE events SET name=?2,starts_at=?3,ends_at=?4,description=?5,cover_url=?6,external_url=?7,updated_at=datetime('now') WHERE id=?1",
-    )
-    .bind(&event_id)
-    .bind(name)
-    .bind(starts_at)
-    .bind(ends_at)
-    .bind(description)
-    .bind(cover_url)
-    .bind(external_url)
-    .execute(db)
-    .await
-    .map_err(|e| crate::security::internal_error("event_update_metadata", e))?;
+    let version_id =
+        crate::custom_event_manifest::ensure_working_revision(&event_id, &session.user_id).await?;
+    sqlx::query("UPDATE events SET starts_at=?2,ends_at=?3,updated_at=datetime('now') WHERE id=?1")
+        .bind(&event_id)
+        .bind(&starts_at)
+        .bind(&ends_at)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("event_update_metadata", e))?;
+    sqlx::query("UPDATE event_versions SET name=?2,description=?3,cover_url=?4,external_url=?5,updated_at=datetime('now') WHERE id=?1 AND state='working'")
+        .bind(&version_id).bind(&name).bind(&description).bind(&cover_url).bind(&external_url)
+        .execute(db).await
+        .map_err(|e| crate::security::internal_error("event_update_version_metadata", e))?;
     crate::security::append_audit_log(
         db,
         Some(&session.user_id),
@@ -372,7 +463,7 @@ pub async fn update_metadata(
         "event",
         Some(&event_id),
         None,
-        serde_json::json!({"published": status != "draft", "fields": ["name", "description", "coverUrl", "externalUrl"]}),
+        serde_json::json!({"workingVersionId": version_id, "fields": ["name", "description", "coverUrl", "externalUrl"]}),
     )
     .await?;
     Ok(())
@@ -386,13 +477,13 @@ pub async fn update_item(
     reveal_at: String,
     csrf: String,
 ) -> Result<(), ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
     let title = text("Pergunta", title, 240)?;
     crate::custom_event_manifest::validate_single_choice_timing(
         &title, "builder", &lock_at, &reveal_at,
     )
     .map_err(crate::security::public_error)?;
-    let changed=sqlx::query("UPDATE prediction_items SET title=?3,lock_at=?4,reveal_at=?5,updated_at=datetime('now') WHERE id=?1 AND event_id=?2").bind(item_id).bind(event_id).bind(title).bind(lock_at).bind(reveal_at).execute(db).await.map_err(|e|crate::security::internal_error("event_update_item",e))?;
+    let changed=sqlx::query("UPDATE prediction_items SET title=?3,lock_at=?4,reveal_at=?5,updated_at=datetime('now') WHERE id=?1 AND event_version_id=?2").bind(item_id).bind(version_id).bind(title).bind(lock_at).bind(reveal_at).execute(db).await.map_err(|e|crate::security::internal_error("event_update_item",e))?;
     if changed.rows_affected() != 1 {
         return Err(crate::security::public_error("Pergunta inválida."));
     }
@@ -404,10 +495,10 @@ pub async fn delete_item(
     item_id: String,
     csrf: String,
 ) -> Result<(), ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
-    sqlx::query("DELETE FROM prediction_items WHERE id=?1 AND event_id=?2")
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
+    sqlx::query("DELETE FROM prediction_items WHERE id=?1 AND event_version_id=?2")
         .bind(item_id)
-        .bind(event_id)
+        .bind(version_id)
         .execute(db)
         .await
         .map_err(|e| crate::security::internal_error("event_delete_item", e))?;
@@ -420,18 +511,19 @@ pub async fn move_item(
     direction: i64,
     csrf: String,
 ) -> Result<(), ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
-    let current: Option<(i64,)> =
-        sqlx::query_as("SELECT sort_order FROM prediction_items WHERE id=?1 AND event_id=?2")
-            .bind(&item_id)
-            .bind(&event_id)
-            .fetch_optional(db)
-            .await
-            .map_err(|e| crate::security::internal_error("event_move_item", e))?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
+    let current: Option<(i64,)> = sqlx::query_as(
+        "SELECT sort_order FROM prediction_items WHERE id=?1 AND event_version_id=?2",
+    )
+    .bind(&item_id)
+    .bind(&version_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("event_move_item", e))?;
     let Some((order,)) = current else {
         return Err(crate::security::public_error("Pergunta inválida."));
     };
-    let adjacent:Option<(String,i64)>=sqlx::query_as(if direction<0{"SELECT id,sort_order FROM prediction_items WHERE event_id=?1 AND sort_order<?2 ORDER BY sort_order DESC LIMIT 1"}else{"SELECT id,sort_order FROM prediction_items WHERE event_id=?1 AND sort_order>?2 ORDER BY sort_order ASC LIMIT 1"}).bind(&event_id).bind(order).fetch_optional(db).await.map_err(|e|crate::security::internal_error("event_move_item_adjacent",e))?;
+    let adjacent:Option<(String,i64)>=sqlx::query_as(if direction<0{"SELECT id,sort_order FROM prediction_items WHERE event_version_id=?1 AND sort_order<?2 ORDER BY sort_order DESC LIMIT 1"}else{"SELECT id,sort_order FROM prediction_items WHERE event_version_id=?1 AND sort_order>?2 ORDER BY sort_order ASC LIMIT 1"}).bind(&version_id).bind(order).fetch_optional(db).await.map_err(|e|crate::security::internal_error("event_move_item_adjacent",e))?;
     if let Some((other, other_order)) = adjacent {
         let mut tx = db
             .begin()
@@ -463,12 +555,24 @@ pub async fn update_option(
     label: String,
     csrf: String,
 ) -> Result<(), ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
+    // O rótulo é conteúdo editorial: alterar o texto não muda o ID da opção,
+    // sua ordem, o gabarito nem a pontuação de palpites já registrados.
+    let (session, db, version_id) = editorial_owner(token, &event_id, csrf).await?;
     let label = text("Opção", label, 240)?;
-    let changed=sqlx::query("UPDATE custom_question_options SET label=?4 WHERE id=?1 AND item_id=?2 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?2 AND event_id=?3)").bind(option_id).bind(item_id).bind(event_id).bind(label).execute(db).await.map_err(|e|crate::security::internal_error("event_update_option",e))?;
+    let changed=sqlx::query("UPDATE custom_question_options SET label=?4 WHERE id=?1 AND item_id=?2 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?2 AND event_version_id=?3)").bind(&option_id).bind(&item_id).bind(&version_id).bind(label).execute(db).await.map_err(|e|crate::security::internal_error("event_update_option",e))?;
     if changed.rows_affected() != 1 {
         return Err(crate::security::public_error("Opção inválida."));
     }
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "event_option_label_changed",
+        "event",
+        Some(&event_id),
+        None,
+        serde_json::json!({"optionId": option_id}),
+    )
+    .await?;
     Ok(())
 }
 
@@ -476,24 +580,8 @@ async fn editorial_owner(
     token: String,
     event_id: &str,
     csrf: String,
-) -> Result<(crate::auth::AuthSession, &'static sqlx::SqlitePool), ServerFnError> {
-    let session = crate::auth::require_user(&token).await?;
-    crate::security::require_csrf(&session.csrf_token, &csrf)?;
-    let db = crate::db::pool();
-    let allowed: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM events WHERE id=?1 AND kind='custom' AND ((status='draft' AND (created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1))) OR (status IN ('active','finished') AND (created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1))))",
-    )
-    .bind(event_id)
-    .bind(&session.user_id)
-    .fetch_optional(db)
-    .await
-    .map_err(|e| crate::security::internal_error("event_editorial_owner", e))?;
-    if allowed.is_none() {
-        return Err(crate::security::public_error(
-            "Você não pode editar a mídia editorial deste evento.",
-        ));
-    }
-    Ok((session, db))
+) -> Result<(crate::auth::AuthSession, &'static sqlx::SqlitePool, String), ServerFnError> {
+    owner(token, event_id, Some(csrf)).await
 }
 
 pub async fn update_option_media(
@@ -505,7 +593,7 @@ pub async fn update_option_media(
     links: Vec<BuilderOptionLink>,
     csrf: String,
 ) -> Result<(), ServerFnError> {
-    let (session, db) = editorial_owner(token, &event_id, csrf).await?;
+    let (session, db, version_id) = editorial_owner(token, &event_id, csrf).await?;
     if links.len() > crate::custom_event_manifest::MAX_LINKS_PER_OPTION {
         return Err(crate::security::public_error("Limite de links atingido."));
     }
@@ -526,8 +614,8 @@ pub async fn update_option_media(
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|e| crate::security::internal_error("event_update_option_media_begin", e))?;
-    let changed = sqlx::query("UPDATE custom_question_options SET image_url=?4 WHERE id=?1 AND item_id=?2 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?2 AND event_id=?3)")
-        .bind(&option_id).bind(&item_id).bind(&event_id).bind(&image_url).execute(&mut *tx).await
+    let changed = sqlx::query("UPDATE custom_question_options SET image_url=?4 WHERE id=?1 AND item_id=?2 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?2 AND event_version_id=?3)")
+        .bind(&option_id).bind(&item_id).bind(&version_id).bind(&image_url).execute(&mut *tx).await
         .map_err(|e| crate::security::internal_error("event_update_option_media", e))?;
     if changed.rows_affected() != 1 {
         return Err(crate::security::public_error("Opção inválida."));
@@ -564,8 +652,8 @@ pub async fn delete_option(
     option_id: String,
     csrf: String,
 ) -> Result<(), ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
-    sqlx::query("DELETE FROM custom_question_options WHERE id=?1 AND item_id=?2 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?2 AND event_id=?3)").bind(option_id).bind(item_id).bind(event_id).execute(db).await.map_err(|e|crate::security::internal_error("event_delete_option",e))?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
+    sqlx::query("DELETE FROM custom_question_options WHERE id=?1 AND item_id=?2 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?2 AND event_version_id=?3)").bind(option_id).bind(item_id).bind(version_id).execute(db).await.map_err(|e|crate::security::internal_error("event_delete_option",e))?;
     Ok(())
 }
 pub async fn move_option(
@@ -576,8 +664,8 @@ pub async fn move_option(
     direction: i64,
     csrf: String,
 ) -> Result<(), ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
-    let current: Option<(i64,)> = sqlx::query_as("SELECT sort_order FROM custom_question_options WHERE id=?1 AND item_id=?2 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?2 AND event_id=?3)").bind(&option_id).bind(&item_id).bind(&event_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("event_move_option",e))?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
+    let current: Option<(i64,)> = sqlx::query_as("SELECT sort_order FROM custom_question_options WHERE id=?1 AND item_id=?2 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?2 AND event_version_id=?3)").bind(&option_id).bind(&item_id).bind(&version_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("event_move_option",e))?;
     let Some((order,)) = current else {
         return Err(crate::security::public_error("Opção inválida."));
     };
@@ -611,13 +699,13 @@ pub async fn move_option(
     Ok(())
 }
 pub async fn delete(token: String, event_id: String, csrf: String) -> Result<(), ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
     let mut tx = db
         .begin()
         .await
         .map_err(|e| crate::security::internal_error("event_delete_begin", e))?;
-    sqlx::query("DELETE FROM prediction_items WHERE event_id=?1")
-        .bind(&event_id)
+    sqlx::query("DELETE FROM prediction_items WHERE event_version_id=?1")
+        .bind(&version_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("event_delete_items", e))?;
@@ -632,7 +720,7 @@ pub async fn delete(token: String, event_id: String, csrf: String) -> Result<(),
     Ok(())
 }
 async fn get_owned(user: &str, id: &str) -> Result<Event, ServerFnError> {
-    let row:Option<EventRow>=sqlx::query_as("SELECT id,name,slug,kind,status,created_by,starts_at,ends_at,created_at,updated_at,description,cover_url,cover_asset_id,external_url FROM events WHERE id=?1 AND (created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1))").bind(id).bind(user).fetch_optional(crate::db::pool()).await.map_err(|e|crate::security::internal_error("event_get",e))?;
+    let row:Option<EventRow>=sqlx::query_as("SELECT e.id,COALESCE(v.name,e.name),e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description),COALESCE(v.cover_url,e.cover_url),COALESCE(v.cover_asset_id,e.cover_asset_id),COALESCE(v.external_url,e.external_url),e.pool_creation_enabled,e.current_published_version_id FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.id=?1 AND (e.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1))").bind(id).bind(user).fetch_optional(crate::db::pool()).await.map_err(|e|crate::security::internal_error("event_get",e))?;
     row.map(event)
         .ok_or_else(|| crate::security::public_error("Evento não encontrado."))
 }
@@ -645,31 +733,32 @@ pub async fn add_item(
     reveal_at: String,
     csrf: String,
 ) -> Result<String, ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
     let title = text("Pergunta", title, 240)?;
     crate::custom_event_manifest::validate_single_choice_timing(
         &title, "builder", &lock_at, &reveal_at,
     )
     .map_err(crate::security::public_error)?;
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE event_id=?1")
-        .bind(&event_id)
-        .fetch_one(db)
-        .await
-        .map_err(|e| crate::security::internal_error("event_items_count", e))?;
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE event_version_id=?1")
+            .bind(&version_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("event_items_count", e))?;
     if count.0 as usize >= MAX_ITEMS {
         return Err(crate::security::public_error(
             "Limite de perguntas atingido.",
         ));
     }
     let next_order: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(MAX(sort_order),-1)+1 FROM prediction_items WHERE event_id=?1",
+        "SELECT COALESCE(MAX(sort_order),-1)+1 FROM prediction_items WHERE event_version_id=?1",
     )
-    .bind(&event_id)
+    .bind(&version_id)
     .fetch_one(db)
     .await
     .map_err(|e| crate::security::internal_error("event_next_item_order", e))?;
     let id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO prediction_items(id,event_id,external_key,kind,title,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,'single_choice',?4,?5,?6,?7,'open')").bind(&id).bind(&event_id).bind(format!("builder-{}",Uuid::new_v4())).bind(title).bind(lock_at).bind(reveal_at).bind(next_order.0).execute(db).await.map_err(|e|crate::security::internal_error("event_add_item",e))?;
+    sqlx::query("INSERT INTO prediction_items(id,event_id,event_version_id,external_key,kind,title,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,?4,'single_choice',?5,?6,?7,?8,'open')").bind(&id).bind(&event_id).bind(&version_id).bind(format!("builder-{}",Uuid::new_v4())).bind(title).bind(lock_at).bind(reveal_at).bind(next_order.0).execute(db).await.map_err(|e|crate::security::internal_error("event_add_item",e))?;
     sqlx::query("INSERT INTO custom_questions(item_id,points) VALUES(?1,1)")
         .bind(&id)
         .execute(db)
@@ -690,7 +779,7 @@ pub async fn add_numeric_item(
     max_value: Option<String>,
     csrf: String,
 ) -> Result<String, ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
     let title = text("Pergunta", title, 240)?;
     crate::custom_event_manifest::validate_single_choice_timing(
         &title, "builder", &lock_at, &reveal_at,
@@ -713,20 +802,21 @@ pub async fn add_numeric_item(
         .map_err(crate::security::public_error)?;
     crate::numeric::validate_question(decimal_places, min, max)
         .map_err(crate::security::public_error)?;
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE event_id=?1")
-        .bind(&event_id)
-        .fetch_one(db)
-        .await
-        .map_err(|e| crate::security::internal_error("numeric_builder_count", e))?;
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE event_version_id=?1")
+            .bind(&version_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("numeric_builder_count", e))?;
     if count.0 as usize >= MAX_ITEMS {
         return Err(crate::security::public_error(
             "Limite de perguntas atingido.",
         ));
     }
     let order: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(MAX(sort_order),-1)+1 FROM prediction_items WHERE event_id=?1",
+        "SELECT COALESCE(MAX(sort_order),-1)+1 FROM prediction_items WHERE event_version_id=?1",
     )
-    .bind(&event_id)
+    .bind(&version_id)
     .fetch_one(db)
     .await
     .map_err(|e| crate::security::internal_error("numeric_builder_order", e))?;
@@ -735,7 +825,7 @@ pub async fn add_numeric_item(
         .begin()
         .await
         .map_err(|e| crate::security::internal_error("numeric_builder_begin", e))?;
-    sqlx::query("INSERT INTO prediction_items(id,event_id,external_key,kind,title,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,'numeric',?4,?5,?6,?7,'open')").bind(&id).bind(&event_id).bind(format!("builder-{}",Uuid::new_v4())).bind(title).bind(lock_at).bind(reveal_at).bind(order.0).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("numeric_builder_item",e))?;
+    sqlx::query("INSERT INTO prediction_items(id,event_id,event_version_id,external_key,kind,title,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,?4,'numeric',?5,?6,?7,?8,'open')").bind(&id).bind(&event_id).bind(&version_id).bind(format!("builder-{}",Uuid::new_v4())).bind(title).bind(lock_at).bind(reveal_at).bind(order.0).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("numeric_builder_item",e))?;
     sqlx::query("INSERT INTO numeric_questions(item_id,decimal_places,unit_label,min_value_scaled,max_value_scaled) VALUES(?1,?2,?3,?4,?5)").bind(&id).bind(decimal_places).bind(unit_label).bind(min).bind(max).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("numeric_builder_question",e))?;
     tx.commit()
         .await
@@ -752,7 +842,7 @@ pub async fn add_multiple_choice_item(
     max_selections: Option<i64>,
     csrf: String,
 ) -> Result<String, ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
     let title = text("Pergunta", title, 240)?;
     crate::custom_event_manifest::validate_single_choice_timing(
         &title, "builder", &lock_at, &reveal_at,
@@ -763,20 +853,21 @@ pub async fn add_multiple_choice_item(
             "Mínimo/máximo de escolhas inválido.",
         ));
     }
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE event_id=?1")
-        .bind(&event_id)
-        .fetch_one(db)
-        .await
-        .map_err(|e| crate::security::internal_error("multiple_choice_builder_count", e))?;
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE event_version_id=?1")
+            .bind(&version_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("multiple_choice_builder_count", e))?;
     if count.0 as usize >= MAX_ITEMS {
         return Err(crate::security::public_error(
             "Limite de perguntas atingido.",
         ));
     }
     let order: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(MAX(sort_order),-1)+1 FROM prediction_items WHERE event_id=?1",
+        "SELECT COALESCE(MAX(sort_order),-1)+1 FROM prediction_items WHERE event_version_id=?1",
     )
-    .bind(&event_id)
+    .bind(&version_id)
     .fetch_one(db)
     .await
     .map_err(|e| crate::security::internal_error("multiple_choice_builder_order", e))?;
@@ -785,7 +876,7 @@ pub async fn add_multiple_choice_item(
         .begin()
         .await
         .map_err(|e| crate::security::internal_error("multiple_choice_builder_begin", e))?;
-    sqlx::query("INSERT INTO prediction_items(id,event_id,external_key,kind,title,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,'multiple_choice',?4,?5,?6,?7,'open')").bind(&id).bind(&event_id).bind(format!("builder-{}",Uuid::new_v4())).bind(title).bind(lock_at).bind(reveal_at).bind(order.0).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("multiple_choice_builder_item",e))?;
+    sqlx::query("INSERT INTO prediction_items(id,event_id,event_version_id,external_key,kind,title,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,?4,'multiple_choice',?5,?6,?7,?8,'open')").bind(&id).bind(&event_id).bind(&version_id).bind(format!("builder-{}",Uuid::new_v4())).bind(title).bind(lock_at).bind(reveal_at).bind(order.0).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("multiple_choice_builder_item",e))?;
     sqlx::query("INSERT INTO multiple_choice_questions(item_id,min_selections,max_selections) VALUES(?1,?2,?3)").bind(&id).bind(min_selections).bind(max_selections).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("multiple_choice_builder_question",e))?;
     tx.commit()
         .await
@@ -799,7 +890,7 @@ pub async fn add_option(
     label: String,
     csrf: String,
 ) -> Result<String, ServerFnError> {
-    let (_, db) = owner(token, &event_id, Some(csrf)).await?;
+    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
     let label = text("Opção", label, 240)?;
     let count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM custom_question_options WHERE item_id=?1")
@@ -811,47 +902,22 @@ pub async fn add_option(
         return Err(crate::security::public_error("Limite de opções atingido."));
     }
     let next_order: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(MAX(sort_order),-1)+1 FROM custom_question_options WHERE item_id=?1",
+        "SELECT COALESCE(MAX(sort_order),-1)+1 FROM custom_question_options WHERE item_id=?1 AND EXISTS(SELECT 1 FROM prediction_items WHERE id=?1 AND event_version_id=?2)",
     )
     .bind(&item_id)
+    .bind(&version_id)
     .fetch_one(db)
     .await
     .map_err(|e| crate::security::internal_error("event_next_option_order", e))?;
     let id = Uuid::new_v4().to_string();
-    let changed=sqlx::query("INSERT INTO custom_question_options(id,item_id,external_key,label,sort_order) SELECT ?1,pi.id,?2,?3,?4 FROM prediction_items pi WHERE pi.id=?5 AND pi.event_id=?6 AND pi.kind IN ('single_choice','multiple_choice')").bind(&id).bind(format!("builder-{}",Uuid::new_v4())).bind(label).bind(next_order.0).bind(&item_id).bind(&event_id).execute(db).await.map_err(|e|crate::security::internal_error("event_add_option",e))?;
+    let changed=sqlx::query("INSERT INTO custom_question_options(id,item_id,external_key,label,sort_order) SELECT ?1,pi.id,?2,?3,?4 FROM prediction_items pi WHERE pi.id=?5 AND pi.event_version_id=?6 AND pi.kind IN ('single_choice','multiple_choice')").bind(&id).bind(format!("builder-{}",Uuid::new_v4())).bind(label).bind(next_order.0).bind(&item_id).bind(&version_id).execute(db).await.map_err(|e|crate::security::internal_error("event_add_option",e))?;
     if changed.rows_affected() != 1 {
         return Err(crate::security::public_error("Pergunta inválida."));
     }
     Ok(id)
 }
 pub async fn publish(token: String, event_id: String, csrf: String) -> Result<(), ServerFnError> {
-    let (s, db) = owner(token, &event_id, Some(csrf)).await?;
-    let invalid:Option<(String,)>=sqlx::query_as("SELECT pi.title FROM prediction_items pi LEFT JOIN custom_question_options o ON o.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_id=?1 AND pi.kind IN ('single_choice','multiple_choice') GROUP BY pi.id HAVING COUNT(o.id)<2 OR (pi.kind='multiple_choice' AND (mq.min_selections<1 OR COALESCE(mq.max_selections,COUNT(o.id))<mq.min_selections OR COALESCE(mq.max_selections,COUNT(o.id))>COUNT(o.id))) LIMIT 1").bind(&event_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("event_publish_validate",e))?;
-    if let Some((t,)) = invalid {
-        return Err(crate::security::public_error(&format!(
-            "{t} precisa ter pelo menos 2 opções."
-        )));
-    }
-    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE event_id=?1")
-        .bind(&event_id)
-        .fetch_one(db)
+    let (s, _db, version_id) = owner(token, &event_id, Some(csrf)).await?;
+    crate::custom_event_manifest::publish_working_revision(&event_id, Some(&version_id), &s.user_id)
         .await
-        .map_err(|e| crate::security::internal_error("event_publish_count", e))?;
-    if total.0 == 0 {
-        return Err(crate::security::public_error(
-            "O evento precisa ter pelo menos uma pergunta.",
-        ));
-    }
-    sqlx::query("UPDATE events SET status='active',updated_at=datetime('now') WHERE id=?1 AND status='draft'").bind(&event_id).execute(db).await.map_err(|e|crate::security::internal_error("event_publish",e))?;
-    crate::security::append_audit_log(
-        db,
-        Some(&s.user_id),
-        "event_published",
-        "event",
-        Some(&event_id),
-        None,
-        serde_json::json!({}),
-    )
-    .await?;
-    Ok(())
 }

@@ -39,6 +39,17 @@ pnpm-debug.log*
 /backups/
 
 # ==========================================
+# Assets gerados pela aplicação e pelos testes
+# ==========================================
+# Conteúdo enviado/processado em runtime nunca pertence ao repositório.
+# A regra é intencionalmente ampla para cobrir dev, produção e fixtures de teste.
+**/data/assets/
+**/data/uploads/
+**/data/media/
+**/test-assets/
+**/test-assets-*/
+
+# ==========================================
 # Arquivos de Ambiente e Segredos (NUNCA COMMITAR)
 # ==========================================
 .env

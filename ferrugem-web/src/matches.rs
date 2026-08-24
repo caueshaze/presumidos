@@ -85,6 +85,211 @@ pub async fn force_finish_matches_for_event(event_id: &str) -> Result<u64, Serve
     force_finish_matches_in(crate::db::pool(), "AND e.id = ?1", Some(event_id)).await
 }
 
+/// Cria uma revisão de trabalho para a definição de futebol. Partidas e itens
+/// recebem novos IDs; os registros antigos continuam representando a versão
+/// publicada usada pelos Pools existentes. Placares e estado ao vivo não são
+/// copiados, mas o vínculo externo é preservado para que o poller continue
+/// observando a mesma partida real em cada versão publicada.
+#[cfg(feature = "server")]
+pub(crate) async fn ensure_football_working_revision(
+    event_id: &str,
+    actor: &str,
+) -> Result<String, ServerFnError> {
+    use crate::db::pool;
+    use uuid::Uuid;
+
+    let db = pool();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("football_revision_begin", e))?;
+
+    if let Some((version_id,)) = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(event_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("football_revision_existing", e))?
+    {
+        tx.commit()
+            .await
+            .map_err(|e| crate::security::internal_error("football_revision_existing_commit", e))?;
+        return Ok(version_id);
+    }
+
+    let Some((published_id, published_number, name, description, cover_url, cover_asset_id, external_url, base_fingerprint)) = sqlx::query_as::<_, (String, i64, String, Option<String>, Option<String>, Option<String>, Option<String>, String)>(
+        "SELECT id,version_number,name,description,cover_url,cover_asset_id,external_url,fingerprint
+         FROM event_versions
+         WHERE event_id=?1 AND state='published'
+         ORDER BY is_current_published DESC, version_number DESC LIMIT 1",
+    )
+    .bind(event_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("football_revision_published", e))? else {
+        return Err(crate::security::public_error("O evento de futebol ainda não possui versão publicada."));
+    };
+
+    let version_id = Uuid::new_v4().to_string();
+    let next_number = published_number + 1;
+    sqlx::query(
+        "INSERT INTO event_versions
+         (id,event_id,version_number,state,is_current_published,name,description,cover_url,cover_asset_id,external_url,fingerprint,base_fingerprint,created_by)
+         VALUES(?1,?2,?3,'working',0,?4,?5,?6,?7,?8,?9,?10,?11)",
+    )
+    .bind(&version_id)
+    .bind(event_id)
+    .bind(next_number)
+    .bind(&name)
+    .bind(&description)
+    .bind(&cover_url)
+    .bind(&cover_asset_id)
+    .bind(&external_url)
+    .bind(format!("football-working-{version_id}"))
+    .bind(&base_fingerprint)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("football_revision_insert", e))?;
+
+    let items: Vec<(
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        i64,
+        String,
+    )> = sqlx::query_as(
+        "SELECT id,external_key,kind,title,description,lock_at,reveal_at,sort_order,status
+             FROM prediction_items WHERE event_version_id=?1 ORDER BY sort_order,id",
+    )
+    .bind(&published_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("football_revision_items", e))?;
+
+    for (
+        old_item_id,
+        external_key,
+        kind,
+        title,
+        item_description,
+        lock_at,
+        reveal_at,
+        sort_order,
+        status,
+    ) in &items
+    {
+        let new_item_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO prediction_items
+             (id,event_id,event_version_id,external_key,kind,title,description,lock_at,reveal_at,sort_order,status)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        )
+        .bind(&new_item_id)
+        .bind(event_id)
+        .bind(&version_id)
+        .bind(external_key)
+        .bind(kind)
+        .bind(title)
+        .bind(item_description)
+        .bind(lock_at)
+        .bind(reveal_at)
+        .bind(sort_order)
+        .bind(status)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("football_revision_item_copy", e))?;
+
+        let matches: Vec<(
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+        )> = sqlx::query_as(
+            "SELECT id,home_team,away_team,kickoff,group_name,phase,external_fixture_id
+                 FROM matches WHERE prediction_item_id=?1 AND event_version_id=?2",
+        )
+        .bind(old_item_id)
+        .bind(&published_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("football_revision_matches", e))?;
+
+        for (old_match_id, home, away, kickoff, group_name, phase, fixture_id) in matches {
+            sqlx::query(
+                "INSERT INTO matches
+                 (id,prediction_item_id,event_version_id,source_match_id,home_team,away_team,kickoff,group_name,phase,external_fixture_id)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(&new_item_id)
+            .bind(&version_id)
+            .bind(&old_match_id)
+            .bind(home)
+            .bind(away)
+            .bind(kickoff)
+            .bind(group_name)
+            .bind(phase)
+            .bind(fixture_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("football_revision_match_copy", e))?;
+        }
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("football_revision_commit", e))?;
+    Ok(version_id)
+}
+
+#[cfg(feature = "server")]
+async fn working_match_for(
+    db: &sqlx::SqlitePool,
+    event_id: &str,
+    match_id: &str,
+) -> Result<(String, String), ServerFnError> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT m.id,m.prediction_item_id
+         FROM matches m JOIN prediction_items pi ON pi.id=m.prediction_item_id
+         JOIN event_versions v ON v.id=pi.event_version_id
+         WHERE m.id=?1 AND pi.event_id=?2 AND v.state='working'",
+    )
+    .bind(match_id)
+    .bind(event_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("football_working_match_lookup", e))?;
+    if let Some(found) = row {
+        return Ok(found);
+    }
+
+    sqlx::query_as(
+        "SELECT m.id,m.prediction_item_id
+         FROM matches m JOIN prediction_items pi ON pi.id=m.prediction_item_id
+         JOIN event_versions v ON v.id=pi.event_version_id
+         WHERE m.source_match_id=?1 AND pi.event_id=?2 AND v.state='working'",
+    )
+    .bind(match_id)
+    .bind(event_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("football_working_match_source_lookup", e))?
+    .ok_or_else(|| {
+        crate::security::public_error(
+            "Não foi possível localizar a partida na revisão de trabalho.",
+        )
+    })
+}
+
 #[cfg(feature = "server")]
 async fn force_finish_matches_in(
     db: &sqlx::SqlitePool,
@@ -127,30 +332,40 @@ pub async fn list_matches(token: String) -> Result<Vec<MatchRecord>, ServerFnErr
     // Admin sempre vê tudo (para montar/conferir os confrontos antes de liberar);
     // os demais só veem o mata-mata depois que ele é liberado.
     let show_knockout = token_is_admin(&token).await || knockout_released_flag().await?;
+    let event_id = crate::events::world_cup_2026_event_id(crate::db::pool()).await?;
+    let version_selector = if token_is_admin(&token).await {
+        "COALESCE((SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1), (SELECT current_published_version_id FROM events WHERE id=?1))"
+    } else {
+        "(SELECT current_published_version_id FROM events WHERE id=?1)"
+    };
 
     let rows = if show_knockout {
-        sqlx::query_as::<_, MatchRow>(
-            "SELECT id, home_team, away_team, kickoff, group_name, phase,
+        sqlx::query_as::<_, MatchRow>(&format!(
+            "SELECT m.id, m.home_team, m.away_team, m.kickoff, m.group_name, m.phase,
                     home_score, away_score, qualifier, went_to_penalties,
                     penalty_home_score, penalty_away_score, finished,
                     live_home_score, live_away_score, live_status, live_elapsed,
                     result_source, result_synced_at, result_external_raw_status, live_updated_at
-             FROM matches
-             ORDER BY kickoff ASC",
-        )
+             FROM matches m
+             WHERE m.event_version_id = {version_selector}
+             ORDER BY m.kickoff ASC",
+        ))
+        .bind(&event_id)
         .fetch_all(pool())
         .await
     } else {
-        sqlx::query_as::<_, MatchRow>(
-            "SELECT id, home_team, away_team, kickoff, group_name, phase,
+        sqlx::query_as::<_, MatchRow>(&format!(
+            "SELECT m.id, m.home_team, m.away_team, m.kickoff, m.group_name, m.phase,
                     home_score, away_score, qualifier, went_to_penalties,
                     penalty_home_score, penalty_away_score, finished,
                     live_home_score, live_away_score, live_status, live_elapsed,
                     result_source, result_synced_at, result_external_raw_status, live_updated_at
-             FROM matches
-             WHERE phase = 'Fase de grupos'
-             ORDER BY kickoff ASC",
-        )
+             FROM matches m
+             WHERE m.event_version_id = {version_selector}
+               AND m.phase = 'Fase de grupos'
+             ORDER BY m.kickoff ASC",
+        ))
+        .bind(&event_id)
         .fetch_all(pool())
         .await
     }
@@ -765,6 +980,7 @@ pub async fn create_match(
     let id = Uuid::new_v4().to_string();
     let db = pool();
     let event_id = crate::events::world_cup_2026_event_id(db).await?;
+    let event_version_id = ensure_football_working_revision(&event_id, &session.user_id).await?;
     let prediction_item_id = Uuid::new_v4().to_string();
     let mut tx = db
         .begin()
@@ -773,6 +989,7 @@ pub async fn create_match(
     crate::prediction_items::create_football_match_item(
         &mut tx,
         &event_id,
+        &event_version_id,
         &prediction_item_id,
         &home,
         &away,
@@ -781,11 +998,12 @@ pub async fn create_match(
     .await?;
 
     sqlx::query(
-        "INSERT INTO matches (id, prediction_item_id, home_team, away_team, kickoff, group_name, phase)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
+        "INSERT INTO matches (id, prediction_item_id, event_version_id, home_team, away_team, kickoff, group_name, phase)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
     )
     .bind(&id)
     .bind(&prediction_item_id)
+    .bind(&event_version_id)
     .bind(&home)
     .bind(&away)
     .bind(&kickoff)
@@ -838,14 +1056,26 @@ pub async fn update_match_schedule(
     let (phase, kickoff) = normalize_knockout_match_input(phase, kickoff)?;
 
     let db = pool();
-    let before: Option<(String, String, Option<String>, String, String)> =
-        sqlx::query_as("SELECT home_team, away_team, phase, kickoff, prediction_item_id FROM matches WHERE id = ?1")
-            .bind(&match_id)
+    let event: Option<(String,)> = sqlx::query_as(
+        "SELECT pi.event_id FROM matches m JOIN prediction_items pi ON pi.id=m.prediction_item_id WHERE m.id=?1",
+    )
+    .bind(&match_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("update_match_event_lookup", e))?;
+    let Some((event_id,)) = event else {
+        return Err(crate::security::public_error("Partida nao encontrada."));
+    };
+    ensure_football_working_revision(&event_id, &session.user_id).await?;
+    let (target_match_id, target_item_id) = working_match_for(db, &event_id, &match_id).await?;
+    let before: Option<(String, String, Option<String>, String)> =
+        sqlx::query_as("SELECT home_team, away_team, phase, kickoff FROM matches WHERE id = ?1")
+            .bind(&target_match_id)
             .fetch_optional(db)
             .await
             .map_err(|e| crate::security::internal_error("update_match_schedule_lookup", e))?;
 
-    let Some((old_home, old_away, old_phase, old_kickoff, prediction_item_id)) = before else {
+    let Some((old_home, old_away, old_phase, old_kickoff)) = before else {
         return Err(crate::security::public_error("Partida nao encontrada."));
     };
 
@@ -860,14 +1090,14 @@ pub async fn update_match_schedule(
     .bind(&away)
     .bind(&phase)
     .bind(&kickoff)
-    .bind(&match_id)
+    .bind(&target_match_id)
     .execute(&mut *tx)
     .await
     .map_err(|e| crate::security::internal_error("update_match_schedule", e))?;
     sqlx::query("UPDATE prediction_items SET title = ?1, lock_at = ?2, reveal_at = ?2, updated_at = datetime('now') WHERE id = ?3")
         .bind(crate::prediction_items::football_match_title(&home, &away))
         .bind(&kickoff)
-        .bind(&prediction_item_id)
+        .bind(&target_item_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("update_match_schedule_prediction_item", e))?;
@@ -889,7 +1119,7 @@ pub async fn update_match_schedule(
     )
     .await?;
 
-    load_match_record(db, &match_id).await
+    load_match_record(db, &target_match_id).await
 }
 
 /// Define (ou limpa, com `None`) o id do evento no provedor externo de placares
@@ -974,47 +1204,50 @@ pub async fn delete_match(
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
     let db = pool();
-    let before: Option<(String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT home_team, away_team, phase, prediction_item_id FROM matches WHERE id = ?1",
+    let before: Option<(String, String, Option<String>, String, String)> = sqlx::query_as(
+        "SELECT m.home_team, m.away_team, m.phase, m.prediction_item_id, pi.event_id
+         FROM matches m JOIN prediction_items pi ON pi.id=m.prediction_item_id WHERE m.id = ?1",
     )
     .bind(&match_id)
     .fetch_optional(db)
     .await
     .map_err(|e| crate::security::internal_error("delete_match_lookup", e))?;
 
-    let Some((home, away, phase, prediction_item_id)) = before else {
+    let Some((home, away, phase, _published_item_id, event_id)) = before else {
         return Err(crate::security::public_error("Partida nao encontrada."));
     };
+    ensure_football_working_revision(&event_id, &session.user_id).await?;
+    let (target_match_id, target_item_id) = working_match_for(db, &event_id, &match_id).await?;
 
     let mut tx = db
         .begin()
         .await
         .map_err(|e| crate::security::internal_error("delete_match_begin_tx", e))?;
     sqlx::query("DELETE FROM prediction_score_breakdowns WHERE match_id = ?1")
-        .bind(&match_id)
+        .bind(&target_match_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("delete_match_breakdowns", e))?;
 
     sqlx::query("DELETE FROM prediction_reactions WHERE prediction_id IN (SELECT id FROM predictions WHERE match_id=?1)")
-        .bind(&match_id)
+        .bind(&target_match_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("delete_match_reactions", e))?;
 
     sqlx::query("DELETE FROM predictions WHERE match_id = ?1")
-        .bind(&match_id)
+        .bind(&target_match_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("delete_match_predictions", e))?;
 
     sqlx::query("DELETE FROM matches WHERE id = ?1")
-        .bind(&match_id)
+        .bind(&target_match_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("delete_match", e))?;
     sqlx::query("DELETE FROM prediction_items WHERE id = ?1")
-        .bind(&prediction_item_id)
+        .bind(&target_item_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("delete_match_prediction_item", e))?;

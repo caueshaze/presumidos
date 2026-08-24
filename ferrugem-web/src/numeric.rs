@@ -142,7 +142,7 @@ pub async fn submit_prediction(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     let db = crate::db::pool();
-    let row:Option<(String,Option<i64>,Option<i64>,i64,String)>=sqlx::query_as("SELECT pi.kind,n.min_value_scaled,n.max_value_scaled,n.decimal_places,pi.lock_at FROM pools p JOIN events e ON e.id=p.event_id JOIN prediction_items pi ON pi.event_id=p.event_id JOIN numeric_questions n ON n.item_id=pi.id WHERE p.id=?1 AND pi.id=?2 AND e.status='active'").bind(&pool_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_prediction_load",e))?;
+    let row:Option<(String,Option<i64>,Option<i64>,i64,String)>=sqlx::query_as("SELECT pi.kind,n.min_value_scaled,n.max_value_scaled,n.decimal_places,pi.lock_at FROM pools p JOIN events e ON e.id=p.event_id JOIN prediction_items pi ON pi.event_version_id=p.event_version_id JOIN numeric_questions n ON n.item_id=pi.id WHERE p.id=?1 AND pi.id=?2 AND e.status='active'").bind(&pool_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_prediction_load",e))?;
     let Some((kind, min, max, places, lock_at)) = row else {
         return Err(crate::security::public_error("Bolão ou pergunta inválida."));
     };
@@ -209,8 +209,8 @@ pub async fn set_result_authorized(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     let db = crate::db::pool();
-    let row:Option<(i64,Option<i64>,Option<i64>)>=sqlx::query_as("SELECT n.decimal_places,n.min_value_scaled,n.max_value_scaled FROM prediction_items pi JOIN numeric_questions n ON n.item_id=pi.id JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)").bind(&item_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_result_authorization",e))?;
-    let Some((places, min, max)) = row else {
+    let row:Option<(i64,Option<i64>,Option<i64>,String)>=sqlx::query_as("SELECT n.decimal_places,n.min_value_scaled,n.max_value_scaled,pi.event_version_id FROM prediction_items pi JOIN numeric_questions n ON n.item_id=pi.id JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)").bind(&item_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_result_authorization",e))?;
+    let Some((places, min, max, version_id)) = row else {
         return Err(crate::security::public_error(
             "Somente o dono do evento ou admin pode definir o resultado.",
         ));
@@ -223,6 +223,9 @@ pub async fn set_result_authorized(
         ));
     }
     sqlx::query("UPDATE numeric_questions SET result_value_scaled=?2,updated_at=datetime('now') WHERE item_id=?1").bind(&item_id).bind(scaled).execute(db).await.map_err(|e|crate::security::internal_error("numeric_result_update",e))?;
+    sqlx::query("INSERT INTO official_results(id,event_version_id,item_id,kind,state,value_scaled,updated_at) VALUES(?1,?2,?3,'numeric','resolved',?4,datetime('now')) ON CONFLICT(event_version_id,item_id) DO UPDATE SET state='resolved',option_id=NULL,option_ids_json=NULL,value_scaled=excluded.value_scaled,reason=NULL,updated_at=datetime('now')")
+        .bind(uuid::Uuid::new_v4().to_string()).bind(&version_id).bind(&item_id).bind(scaled)
+        .execute(db).await.map_err(|e|crate::security::internal_error("numeric_result_official",e))?;
     crate::scoring::recalculate_custom_breakdowns().await?;
     crate::security::append_audit_log(
         db,

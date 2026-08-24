@@ -334,6 +334,12 @@ struct ManifestApplyBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct EventAvailabilityBody {
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct JoinPoolBody {
     invite_code: String,
 }
@@ -402,6 +408,11 @@ struct CustomScoringBody {
 #[serde(rename_all = "camelCase")]
 struct CustomResultBody {
     option_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResultNotRepresentableBody {
+    reason: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1373,6 +1384,21 @@ async fn set_multiple_choice_result(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn mark_custom_result_not_representable(
+    Path(item_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<ResultNotRepresentableBody>,
+) -> ApiResult<StatusCode> {
+    crate::custom_questions::mark_result_not_representable_authorized(
+        String::new(),
+        item_id,
+        body.reason,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn custom_questions(
     Query(query): Query<CustomQuestionsQuery>,
 ) -> ApiResult<impl IntoResponse> {
@@ -1668,6 +1694,36 @@ async fn admin_overview() -> ApiResult<impl IntoResponse> {
 
 async fn admin_events() -> ApiResult<impl IntoResponse> {
     Ok(Json(crate::admin::list_events_admin(String::new()).await?))
+}
+
+async fn admin_event_availability(
+    Path(event_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<EventAvailabilityBody>,
+) -> ApiResult<StatusCode> {
+    crate::admin::set_pool_creation_enabled(
+        String::new(),
+        event_id,
+        body.enabled,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_event_version_publish(
+    Path((event_id, version_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    let session = crate::auth::require_recent_admin("").await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_header(&headers))?;
+    crate::custom_event_manifest::publish_working_revision(
+        &event_id,
+        Some(&version_id),
+        &session.user_id,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn admin_event_manifest_export(Path(event_id): Path<String>) -> ApiResult<Response> {
@@ -2301,6 +2357,10 @@ pub fn router() -> Router {
             post(set_custom_question_result),
         )
         .route(
+            "/admin/custom/questions/{item_id}/result-not-representable",
+            post(mark_custom_result_not_representable),
+        )
+        .route(
             "/admin/custom/numeric/{item_id}/result",
             post(set_numeric_question_result),
         )
@@ -2328,6 +2388,14 @@ pub fn router() -> Router {
         .route("/scoring/my-points", get(my_match_points))
         .route("/admin/overview", get(admin_overview))
         .route("/admin/events", get(admin_events))
+        .route(
+            "/admin/events/{event_id}/pool-creation",
+            post(admin_event_availability),
+        )
+        .route(
+            "/admin/events/{event_id}/versions/{version_id}/publish",
+            post(admin_event_version_publish),
+        )
         .route(
             "/admin/events/{event_id}/manifest",
             get(admin_event_manifest_export),

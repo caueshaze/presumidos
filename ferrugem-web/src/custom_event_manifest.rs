@@ -120,6 +120,8 @@ pub struct ManifestApplyResult {
     pub item_count: usize,
     pub option_count: usize,
     pub link_count: usize,
+    pub version_id: Option<String>,
+    pub state: String,
 }
 
 #[derive(Debug, Clone)]
@@ -448,6 +450,10 @@ fn counts(m: &CustomEventManifest) -> (usize, usize, usize) {
 fn absent_fingerprint(slug: &str) -> String {
     hex::encode(Sha256::digest(format!("absent:{slug}").as_bytes()))
 }
+
+pub fn draft_fingerprint(slug: &str) -> String {
+    hex::encode(Sha256::digest(format!("draft:{slug}").as_bytes()))
+}
 fn projection(m: &CustomEventManifest) -> CustomEventManifest {
     let mut v = m.clone();
     v.name.clear();
@@ -712,7 +718,7 @@ async fn load_manifest_conn(
     conn: &mut SqliteConnection,
     event_id: &str,
 ) -> Result<CustomEventManifest, ServerFnError> {
-    let event: Option<(String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>)> = sqlx::query_as("SELECT e.name,e.slug,e.kind,e.description,e.starts_at,e.ends_at,e.cover_url,e.external_url,e.cover_asset_id,a.sha256,a.media_type FROM events e LEFT JOIN assets a ON a.id=e.cover_asset_id WHERE e.id=?1").bind(event_id).fetch_optional(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_event", e))?;
+    let event: Option<(String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>)> = sqlx::query_as("SELECT v.name,e.slug,e.kind,v.description,e.starts_at,e.ends_at,v.cover_url,v.external_url,v.cover_asset_id,a.sha256,a.media_type FROM events e JOIN event_versions v ON v.id=COALESCE(e.current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=e.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) LEFT JOIN assets a ON a.id=v.cover_asset_id WHERE e.id=?1").bind(event_id).fetch_optional(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_event", e))?;
     let Some((
         name,
         slug,
@@ -729,7 +735,7 @@ async fn load_manifest_conn(
     else {
         return Err(crate::security::public_error("Evento não encontrado."));
     };
-    let rows: Vec<(String,String,String,Option<String>,String,String,i64,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)> = sqlx::query_as("SELECT pi.external_key,pi.kind,pi.title,pi.description,pi.lock_at,pi.reveal_at,pi.sort_order,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_id=?1 ORDER BY pi.sort_order,pi.id").bind(event_id).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_items", e))?;
+    let rows: Vec<(String,String,String,Option<String>,String,String,i64,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)> = sqlx::query_as("SELECT pi.external_key,pi.kind,pi.title,pi.description,pi.lock_at,pi.reveal_at,pi.sort_order,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1) ORDER BY pi.sort_order,pi.id").bind(event_id).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_items", e))?;
     let mut items = Vec::new();
     for (
         external_key,
@@ -750,10 +756,10 @@ async fn load_manifest_conn(
         let Some(external_key) = Some(external_key) else {
             return Err(crate::security::public_error("item custom sem externalKey"));
         };
-        let options_rows: Vec<(String,String,i64,Option<String>,Option<String>,Option<String>)> = sqlx::query_as("SELECT o.external_key,o.label,o.sort_order,o.image_url,a.sha256,a.media_type FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id LEFT JOIN assets a ON a.id=o.image_asset_id WHERE pi.event_id=?1 AND pi.external_key=?2 ORDER BY o.sort_order,o.id").bind(event_id).bind(&external_key).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_options", e))?;
+        let options_rows: Vec<(String,String,i64,Option<String>,Option<String>,Option<String>)> = sqlx::query_as("SELECT o.external_key,o.label,o.sort_order,o.image_url,a.sha256,a.media_type FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id LEFT JOIN assets a ON a.id=o.image_asset_id WHERE pi.event_version_id=(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1) AND pi.external_key=?2 ORDER BY o.sort_order,o.id").bind(event_id).bind(&external_key).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_options", e))?;
         let mut options = Vec::new();
         for (option_key, label, _sort, image_url, image_sha256, image_media_type) in options_rows {
-            let links: Vec<(String,String,String,i64)> = sqlx::query_as("SELECT l.kind,l.label,l.url,l.sort_order FROM option_links l JOIN custom_question_options o ON o.id=l.option_id JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_id=?1 AND pi.external_key=?2 AND o.external_key=?3 ORDER BY l.sort_order,l.id").bind(event_id).bind(&external_key).bind(&option_key).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_links", e))?;
+            let links: Vec<(String,String,String,i64)> = sqlx::query_as("SELECT l.kind,l.label,l.url,l.sort_order FROM option_links l JOIN custom_question_options o ON o.id=l.option_id JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_version_id=(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1) AND pi.external_key=?2 AND o.external_key=?3 ORDER BY l.sort_order,l.id").bind(event_id).bind(&external_key).bind(&option_key).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_links", e))?;
             options.push(CustomEventManifestOption {
                 external_key: option_key,
                 label,
@@ -834,6 +840,177 @@ async fn load_manifest(
     load_manifest_conn(&mut conn, event_id).await
 }
 
+/// Ensures that an editor has an isolated working copy.  The published
+/// version is never edited in place; the copy gets fresh item/option IDs and
+/// therefore cannot change the history of existing Pools.
+#[cfg(feature = "server")]
+pub async fn ensure_working_revision(event_id: &str, actor: &str) -> Result<String, ServerFnError> {
+    crate::security::validate_uuid("Evento", event_id)?;
+    let db = crate::db::pool();
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(event_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("working_revision_lookup", e))?
+    {
+        return Ok(id);
+    }
+
+    let event: (String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT id,name,slug,status,starts_at,ends_at,description,cover_url FROM events WHERE id=?1 AND kind='custom'")
+            .bind(event_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("working_revision_event", e))?
+            .ok_or_else(|| crate::security::public_error("Evento não encontrado."))?;
+
+    let current: Option<CustomEventManifest> = if sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM event_versions WHERE event_id=?1 AND state='published' ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(event_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("working_revision_published", e))?
+    .is_some()
+    {
+        Some(load_manifest(db, event_id).await?)
+    } else {
+        None
+    };
+    let current_cover_asset_id: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT cover_asset_id FROM event_versions WHERE event_id=?1 AND state='published' ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(event_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("working_revision_cover", e))?;
+
+    let version_id = uuid::Uuid::new_v4().to_string();
+    let number: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(MAX(version_number),0)+1 FROM event_versions WHERE event_id=?1",
+    )
+    .bind(event_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| crate::security::internal_error("working_revision_number", e))?;
+    let (name, description, cover_url, external_url, fingerprint_value, base) =
+        if let Some(m) = current.as_ref() {
+            (
+                m.name.clone(),
+                m.description.clone(),
+                m.cover_url.clone(),
+                m.external_url.clone(),
+                fingerprint(&m).map_err(crate::security::public_error)?,
+                fingerprint(&m).map_err(crate::security::public_error)?,
+            )
+        } else {
+            let m = CustomEventManifest {
+                schema_version: CURRENT_SCHEMA_VERSION,
+                name: event.1.clone(),
+                slug: event.2.clone(),
+                kind: "custom".into(),
+                description: event.6.clone(),
+                starts_at: event.4.clone(),
+                ends_at: event.5.clone(),
+                cover_url: event.7.clone(),
+                cover_asset: None,
+                external_url: None,
+                items: Vec::new(),
+            };
+            let fp = draft_fingerprint(&m.slug);
+            (
+                m.name,
+                m.description,
+                m.cover_url,
+                m.external_url,
+                fp.clone(),
+                fp,
+            )
+        };
+    sqlx::query("INSERT INTO event_versions(id,event_id,version_number,state,is_current_published,name,description,cover_url,cover_asset_id,external_url,fingerprint,base_fingerprint,created_by) VALUES(?1,?2,?3,'working',0,?4,?5,?6,?7,?8,?9,?10,?11)")
+        .bind(&version_id).bind(event_id).bind(number.0).bind(name).bind(description).bind(cover_url).bind(current_cover_asset_id.and_then(|v| v.0)).bind(external_url).bind(&fingerprint_value).bind(&base).bind(actor)
+        .execute(db).await
+        .map_err(|e| crate::security::internal_error("working_revision_create", e))?;
+
+    if current.is_some() {
+        let (manifest, _) = export_for_event(event_id).await?;
+        let mut tx = db
+            .begin()
+            .await
+            .map_err(|e| crate::security::internal_error("working_revision_copy_begin", e))?;
+        insert_items(&mut tx, event_id, &version_id, &manifest).await?;
+        tx.commit()
+            .await
+            .map_err(|e| crate::security::internal_error("working_revision_copy_commit", e))?;
+    }
+    Ok(version_id)
+}
+
+#[cfg(feature = "server")]
+pub async fn publish_working_revision(
+    event_id: &str,
+    version_id: Option<&str>,
+    actor: &str,
+) -> Result<(), ServerFnError> {
+    crate::security::validate_uuid("Evento", event_id)?;
+    let db = crate::db::pool();
+    let mut tx = db
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|e| crate::security::internal_error("working_publish_begin", e))?;
+    let version: (String, i64) = if let Some(version_id) = version_id {
+        sqlx::query_as("SELECT id,version_number FROM event_versions WHERE id=?1 AND event_id=?2 AND state='working'")
+            .bind(version_id).bind(event_id).fetch_optional(&mut *tx).await
+            .map_err(|e| crate::security::internal_error("working_publish_lookup", e))?
+            .ok_or_else(|| crate::security::public_error("Revisão de evento não encontrada ou já publicada."))?
+    } else {
+        sqlx::query_as("SELECT id,version_number FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1")
+            .bind(event_id).fetch_optional(&mut *tx).await
+            .map_err(|e| crate::security::internal_error("working_publish_latest", e))?
+            .ok_or_else(|| crate::security::public_error("Não há revisão pendente para publicar."))?
+    };
+    let invalid: Option<(String,)> = sqlx::query_as(
+        "SELECT pi.title FROM prediction_items pi LEFT JOIN custom_question_options o ON o.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=?1 AND pi.kind IN ('single_choice','multiple_choice') GROUP BY pi.id HAVING COUNT(o.id)<2 OR (pi.kind='multiple_choice' AND (mq.min_selections<1 OR COALESCE(mq.max_selections,COUNT(o.id))<mq.min_selections OR COALESCE(mq.max_selections,COUNT(o.id))>COUNT(o.id))) LIMIT 1",
+    )
+    .bind(&version.0).fetch_optional(&mut *tx).await
+    .map_err(|e| crate::security::internal_error("working_publish_validate", e))?;
+    if let Some((title,)) = invalid {
+        return Err(crate::security::public_error(&format!(
+            "{title} precisa ter pelo menos 2 opções."
+        )));
+    }
+    let total: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM prediction_items WHERE event_version_id=?1")
+            .bind(&version.0)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("working_publish_count", e))?;
+    if total.0 == 0 {
+        return Err(crate::security::public_error(
+            "O evento precisa ter pelo menos uma pergunta.",
+        ));
+    }
+    sqlx::query("UPDATE event_versions SET state='published',is_current_published=0,updated_at=datetime('now') WHERE event_id=?1 AND state='published'")
+        .bind(event_id).execute(&mut *tx).await
+        .map_err(|e| crate::security::internal_error("working_publish_previous", e))?;
+    sqlx::query("UPDATE event_versions SET state='published',is_current_published=1,updated_at=datetime('now') WHERE id=?1")
+        .bind(&version.0).execute(&mut *tx).await
+        .map_err(|e| crate::security::internal_error("working_publish_version", e))?;
+    sqlx::query("UPDATE events SET current_published_version_id=?2,status='active',updated_at=datetime('now') WHERE id=?1")
+        .bind(event_id).bind(&version.0).execute(&mut *tx).await
+        .map_err(|e| crate::security::internal_error("working_publish_event", e))?;
+    sqlx::query("INSERT INTO audit_logs(id,actor_user_id,action,target_type,target_id,ip_address,details_json) VALUES(?1,?2,'event_version_published','event',?3,NULL,?4)")
+        .bind(uuid::Uuid::new_v4().to_string()).bind(actor).bind(event_id)
+        .bind(serde_json::json!({"versionId":version.0,"versionNumber":version.1}).to_string())
+        .execute(&mut *tx).await.map_err(|e| crate::security::internal_error("working_publish_audit", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("working_publish_commit", e))?;
+    Ok(())
+}
+
 #[cfg(feature = "server")]
 pub async fn export_for_event(
     event_id: &str,
@@ -861,7 +1038,7 @@ async fn resolve_plan_inner(m: &CustomEventManifest) -> Result<ResolvedPlan, Ser
             .map_err(|e| crate::security::internal_error("manifest_plan_lookup", e))?;
     let (item_count, option_count, link_count) = counts(m);
     let mf = fingerprint(m).map_err(crate::security::public_error)?;
-    let Some((id, kind, status)) = row else {
+    let Some((id, kind, _status)) = row else {
         return Ok(ResolvedPlan {
             preview: ManifestPreview {
                 action: ImportAction::Create,
@@ -900,40 +1077,27 @@ async fn resolve_plan_inner(m: &CustomEventManifest) -> Result<ResolvedPlan, Ser
         });
     }
     let current = load_manifest(db, &id).await?;
-    let used: (i64,) = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM pools WHERE event_id=?1) OR EXISTS(SELECT 1 FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id WHERE pi.event_id=?1)",
-    )
-    .bind(&id)
-    .fetch_one(db)
-    .await
-    .map_err(|e| crate::security::internal_error("manifest_plan_usage", e))?;
     let base = fingerprint(&current).map_err(crate::security::public_error)?;
-    let safe = safe_diff(&current, m);
-    let blocked = structural_diff(&current, m);
+    let mut changes = safe_diff(&current, m);
+    let structural = structural_diff(&current, m);
+    let blocked: Vec<_> = structural
+        .iter()
+        .filter(|entry| entry.path == "Event.slug")
+        .cloned()
+        .collect();
+    for mut entry in structural {
+        if entry.path != "Event.slug" {
+            entry.category = "revision".into();
+            changes.push(entry);
+        }
+    }
     let action = if current == *m {
         ImportAction::NoChange
-    } else if status == "draft" && used.0 == 0 {
-        ImportAction::SafeUpdate
-    } else if status == "draft" && projection(&current) == projection(m) {
-        ImportAction::SafeUpdate
-    } else if projection(&current) != projection(m) {
+    } else if !blocked.is_empty() {
         ImportAction::Conflict
     } else {
         ImportAction::SafeUpdate
     };
-    let mut blocked_changes = if action == ImportAction::Conflict {
-        blocked
-    } else {
-        Vec::new()
-    };
-    if status == "draft" && used.0 != 0 && current != *m {
-        push(
-            &mut blocked_changes,
-            "blocked",
-            "Event.usage".into(),
-            "draft já possui Pools ou Predictions",
-        );
-    }
     Ok(ResolvedPlan {
         preview: ManifestPreview {
             action,
@@ -945,8 +1109,8 @@ async fn resolve_plan_inner(m: &CustomEventManifest) -> Result<ResolvedPlan, Ser
             link_count,
             manifest_fingerprint: mf,
             base_fingerprint: base,
-            safe_changes: safe,
-            blocked_changes,
+            safe_changes: changes,
+            blocked_changes: blocked,
         },
     })
 }
@@ -1009,11 +1173,12 @@ async fn insert_option(
 async fn insert_items(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     event_id: &str,
+    version_id: &str,
     m: &CustomEventManifest,
 ) -> Result<(), ServerFnError> {
     for (sort, item) in m.items.iter().enumerate() {
         let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO prediction_items(id,event_id,external_key,kind,title,description,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'open')").bind(&id).bind(event_id).bind(&item.external_key).bind(&item.kind).bind(&item.title).bind(&item.description).bind(&item.lock_at).bind(&item.reveal_at).bind(sort as i64).execute(&mut **tx).await.map_err(|e| crate::security::internal_error("manifest_item",e))?;
+        sqlx::query("INSERT INTO prediction_items(id,event_id,event_version_id,external_key,kind,title,description,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'open')").bind(&id).bind(event_id).bind(version_id).bind(&item.external_key).bind(&item.kind).bind(&item.title).bind(&item.description).bind(&item.lock_at).bind(&item.reveal_at).bind(sort as i64).execute(&mut **tx).await.map_err(|e| crate::security::internal_error("manifest_item",e))?;
         match item.kind.as_str() {
             "single_choice" => {
                 sqlx::query("INSERT INTO custom_questions(item_id,points) VALUES(?1,1)")
@@ -1057,7 +1222,7 @@ async fn insert_items(
 async fn apply_manifest(
     m: &CustomEventManifest,
     expected: &str,
-    actor: &str,
+    actor: Option<&str>,
 ) -> Result<ManifestApplyResult, ServerFnError> {
     crate::assets::ensure_manifest_assets(m).await?;
     let db = crate::db::pool();
@@ -1077,13 +1242,14 @@ async fn apply_manifest(
     } else {
         None
     };
-    let row: Option<(String, String, String)> =
-        sqlx::query_as("SELECT id,kind,status FROM events WHERE slug=?1")
-            .bind(&m.slug)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|e| crate::security::internal_error("manifest_apply_lookup", e))?;
-    let current = if let Some((id, kind, _)) = &row {
+    let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id,kind,status,current_published_version_id FROM events WHERE slug=?1",
+    )
+    .bind(&m.slug)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("manifest_apply_lookup", e))?;
+    let current = if let Some((id, kind, _, _)) = &row {
         if kind != "custom" {
             return Err(crate::security::public_error(
                 "slug já pertence a um evento não customizado",
@@ -1104,103 +1270,65 @@ async fn apply_manifest(
             "O evento mudou desde o preview. Valide o manifesto novamente.",
         ));
     }
-    let action = match (&row, &current) {
-        (None, None) => ImportAction::Create,
-        (Some((_id, _kind, _)), Some(old)) if *old == *m => ImportAction::NoChange,
-        (Some((id, _kind, status)), Some(_)) if status == "draft" => {
-            let used: (i64,) = sqlx::query_as(
-                "SELECT EXISTS(SELECT 1 FROM pools WHERE event_id=?1) OR EXISTS(SELECT 1 FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id WHERE pi.event_id=?1)",
-            )
-            .bind(id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| crate::security::internal_error("manifest_apply_usage", e))?;
-            if used.0 == 0
-                || current
-                    .as_ref()
-                    .is_some_and(|old| projection(old) == projection(m))
-            {
-                ImportAction::SafeUpdate
-            } else {
-                ImportAction::Conflict
-            }
-        }
-        (Some((_id, _kind, _)), Some(old)) if projection(old) != projection(m) => {
-            ImportAction::Conflict
-        }
-        (Some((_id, _kind, _)), Some(_)) => ImportAction::SafeUpdate,
-        _ => ImportAction::Rejected,
+    let action = if current.as_ref().is_some_and(|old| old == m) {
+        ImportAction::NoChange
+    } else if row.is_some() {
+        ImportAction::SafeUpdate
+    } else {
+        ImportAction::Create
     };
-    if matches!(action, ImportAction::Conflict | ImportAction::Rejected) {
-        return Err(crate::security::public_error(
-            "O manifesto contém alterações estruturais bloqueadas.",
-        ));
-    }
-    let event_id = if let Some((id, _kind, status)) = row {
+    let (event_id, version_id, state) = if let Some((id, _kind, _status, current_version_id)) = row
+    {
         if action == ImportAction::NoChange {
-            Some(id)
+            (Some(id), current_version_id, "published".to_string())
         } else {
-            if status == "draft"
-                && current
-                    .as_ref()
-                    .is_some_and(|old| projection(old) != projection(m))
+            let working: Option<(String, i64, String)> = sqlx::query_as(
+                "SELECT id,version_number,base_fingerprint FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
+            )
+            .bind(&id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("manifest_working_lookup", e))?;
+            let (version_id, version_number) = if let Some((version_id, number, base_fingerprint)) =
+                working
             {
-                sqlx::query("UPDATE events SET name=?2,slug=?3,starts_at=?4,ends_at=?5,description=?6,cover_url=?7,external_url=?8,cover_asset_id=?9,updated_at=datetime('now') WHERE id=?1").bind(&id).bind(&m.name).bind(&m.slug).bind(&m.starts_at).bind(&m.ends_at).bind(&m.description).bind(&m.cover_url).bind(&m.external_url).bind(&cover_asset_id).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_draft_metadata",e))?;
-                sqlx::query("DELETE FROM prediction_items WHERE event_id=?1")
-                    .bind(&id)
+                if current_version_id.is_some() && base_fingerprint != expected {
+                    return Err(crate::security::public_error("Já existe uma revisão pendente baseada em outra versão. Revise ou publique essa revisão antes de importar novamente."));
+                }
+                sqlx::query("DELETE FROM prediction_items WHERE event_version_id=?1")
+                    .bind(&version_id)
                     .execute(&mut *tx)
                     .await
-                    .map_err(|e| crate::security::internal_error("manifest_draft_items", e))?;
-                insert_items(&mut tx, &id, m).await?;
+                    .map_err(|e| crate::security::internal_error("manifest_working_replace", e))?;
+                (version_id, number)
             } else {
-                sqlx::query("UPDATE events SET name=?2,description=?3,cover_url=?4,external_url=?5,cover_asset_id=?6,updated_at=datetime('now') WHERE id=?1").bind(&id).bind(&m.name).bind(&m.description).bind(&m.cover_url).bind(&m.external_url).bind(&cover_asset_id).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_editorial_metadata",e))?;
-                for item in &m.items {
-                    for option in &item.options {
-                        let found:Option<(String,)>=sqlx::query_as("SELECT o.id FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_id=?1 AND pi.external_key=?2 AND o.external_key=?3").bind(&id).bind(&item.external_key).bind(&option.external_key).fetch_optional(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_editorial_option",e))?;
-                        let Some((oid,)) = found else {
-                            return Err(crate::security::public_error(
-                                "option não encontrada para atualização editorial",
-                            ));
-                        };
-                        let image_asset_id: Option<String> = if let Some(asset) =
-                            &option.image_asset
-                        {
-                            Some(
-                                sqlx::query_as::<_, (String,)>(
-                                    "SELECT id FROM assets WHERE sha256=?1",
-                                )
-                                .bind(&asset.sha256)
-                                .fetch_one(&mut *tx)
-                                .await
-                                .map_err(|e| {
-                                    crate::security::internal_error("manifest_editorial_asset", e)
-                                })?
-                                .0,
-                            )
-                        } else {
-                            None
-                        };
-                        sqlx::query("UPDATE custom_question_options SET image_url=?2,image_asset_id=?3,updated_at=datetime('now') WHERE id=?1").bind(&oid).bind(&option.image_url).bind(&image_asset_id).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_editorial_image",e))?;
-                        sqlx::query("DELETE FROM option_links WHERE option_id=?1")
-                            .bind(&oid)
-                            .execute(&mut *tx)
-                            .await
-                            .map_err(|e| {
-                                crate::security::internal_error("manifest_editorial_links", e)
-                            })?;
-                        for (s, link) in option.links.iter().enumerate() {
-                            sqlx::query("INSERT INTO option_links(id,option_id,kind,label,url,sort_order) VALUES(?1,?2,?3,?4,?5,?6)").bind(uuid::Uuid::new_v4().to_string()).bind(&oid).bind(&link.kind).bind(&link.label).bind(&link.url).bind(s as i64).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_editorial_link",e))?;
-                        }
-                    }
-                }
-            }
-            Some(id)
+                let next: (i64,) = sqlx::query_as("SELECT COALESCE(MAX(version_number),0)+1 FROM event_versions WHERE event_id=?1")
+                    .bind(&id).fetch_one(&mut *tx).await
+                    .map_err(|e| crate::security::internal_error("manifest_working_number", e))?;
+                let version_id = uuid::Uuid::new_v4().to_string();
+                sqlx::query("INSERT INTO event_versions(id,event_id,version_number,state,is_current_published,name,description,cover_url,cover_asset_id,external_url,fingerprint,base_fingerprint,created_by) VALUES(?1,?2,?3,'working',0,?4,?5,?6,?7,?8,?9,?10,?11)")
+                    .bind(&version_id).bind(&id).bind(next.0).bind(&m.name).bind(&m.description).bind(&m.cover_url).bind(&cover_asset_id).bind(&m.external_url).bind(fingerprint(m).map_err(crate::security::public_error)?).bind(expected).bind(actor)
+                    .execute(&mut *tx).await.map_err(|e| crate::security::internal_error("manifest_working_create", e))?;
+                (version_id, next.0)
+            };
+            sqlx::query("UPDATE event_versions SET name=?2,description=?3,cover_url=?4,cover_asset_id=?5,external_url=?6,fingerprint=?7,base_fingerprint=?8,updated_at=datetime('now') WHERE id=?1")
+                .bind(&version_id).bind(&m.name).bind(&m.description).bind(&m.cover_url).bind(&cover_asset_id).bind(&m.external_url).bind(fingerprint(m).map_err(crate::security::public_error)?).bind(expected)
+                .execute(&mut *tx).await.map_err(|e| crate::security::internal_error("manifest_working_metadata", e))?;
+            insert_items(&mut tx, &id, &version_id, m).await?;
+            let _ = version_number;
+            (Some(id), Some(version_id), "working".to_string())
         }
     } else {
         let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO events(id,name,slug,kind,status,created_by,starts_at,ends_at,description,cover_url,external_url,cover_asset_id) VALUES(?1,?2,?3,'custom','draft',?4,?5,?6,?7,?8,?9,?10)").bind(&id).bind(&m.name).bind(&m.slug).bind(actor).bind(&m.starts_at).bind(&m.ends_at).bind(&m.description).bind(&m.cover_url).bind(&m.external_url).bind(&cover_asset_id).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_create_event",e))?;
-        insert_items(&mut tx, &id, m).await?;
-        Some(id)
+        let version_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO events(id,name,slug,kind,status,created_by,starts_at,ends_at,description,cover_url,external_url,cover_asset_id,pool_creation_enabled) VALUES(?1,?2,?3,'custom','draft',?4,?5,?6,?7,?8,?9,?10,1)")
+            .bind(&id).bind(&m.name).bind(&m.slug).bind(actor).bind(&m.starts_at).bind(&m.ends_at).bind(&m.description).bind(&m.cover_url).bind(&m.external_url).bind(&cover_asset_id)
+            .execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_create_event",e))?;
+        sqlx::query("INSERT INTO event_versions(id,event_id,version_number,state,is_current_published,name,description,cover_url,cover_asset_id,external_url,fingerprint,base_fingerprint,created_by) VALUES(?1,?2,1,'working',0,?3,?4,?5,?6,?7,?8,?9,?10)")
+            .bind(&version_id).bind(&id).bind(&m.name).bind(&m.description).bind(&m.cover_url).bind(&cover_asset_id).bind(&m.external_url).bind(fingerprint(m).map_err(crate::security::public_error)?).bind(expected).bind(actor)
+            .execute(&mut *tx).await.map_err(|e|crate::security::internal_error("manifest_create_version",e))?;
+        insert_items(&mut tx, &id, &version_id, m).await?;
+        (Some(id), Some(version_id), "working".to_string())
     };
     let (i, o, l) = counts(m);
     sqlx::query("INSERT INTO audit_logs(id,actor_user_id,action,target_type,target_id,ip_address,details_json) VALUES(?1,?2,?3,?4,?5,?6,?7)")
@@ -1210,7 +1338,7 @@ async fn apply_manifest(
         .bind("event")
         .bind(event_id.as_deref())
         .bind(Option::<&str>::None)
-        .bind(serde_json::json!({"schemaVersion":m.schema_version,"action":format!("{:?}",action),"manifestFingerprint":fingerprint(m).unwrap_or_default(),"itemCount":i,"optionCount":o,"linkCount":l}).to_string())
+        .bind(serde_json::json!({"schemaVersion":m.schema_version,"action":format!("{:?}",action),"manifestFingerprint":fingerprint(m).unwrap_or_default(),"versionId":version_id,"state":state,"itemCount":i,"optionCount":o,"linkCount":l}).to_string())
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::security::internal_error("manifest_apply_audit", e))?;
@@ -1223,6 +1351,8 @@ async fn apply_manifest(
         item_count: i,
         option_count: o,
         link_count: l,
+        version_id,
+        state,
     })
 }
 
@@ -1234,7 +1364,7 @@ pub async fn apply_admin(
 ) -> Result<ManifestApplyResult, ServerFnError> {
     let mut m = parse_and_validate(bytes).map_err(crate::security::public_error)?;
     m.schema_version = CURRENT_SCHEMA_VERSION;
-    apply_manifest(&m, expected, actor).await
+    apply_manifest(&m, expected, Some(actor)).await
 }
 
 #[cfg(feature = "server")]
@@ -1243,10 +1373,11 @@ pub(crate) async fn apply_normalized(
     expected: &str,
     actor: &str,
 ) -> Result<ManifestApplyResult, ServerFnError> {
-    apply_manifest(m, expected, actor).await
+    apply_manifest(m, expected, Some(actor)).await
 }
 
-/// Compatibility wrapper used by the legacy CLI. It intentionally preserves active creation.
+/// Compatibility wrapper used by the legacy CLI. Importing is deliberately
+/// revision-only now; a separate publish operation is required.
 #[cfg(feature = "server")]
 pub async fn import(m: CustomEventManifest, apply: bool) -> Result<(usize, usize), ServerFnError> {
     let mut m = m;
@@ -1256,89 +1387,23 @@ pub async fn import(m: CustomEventManifest, apply: bool) -> Result<(usize, usize
         return Ok((i, o));
     }
     let db = crate::db::pool();
-    if let Some((id, _)) =
-        sqlx::query_as::<_, (String, String)>("SELECT id,status FROM events WHERE slug=?1")
+    let actor: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM users WHERE is_admin=1 ORDER BY created_at LIMIT 1")
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("legacy_manifest_actor", e))?;
+    let expected = if let Some((id,)) =
+        sqlx::query_as::<_, (String,)>("SELECT id FROM events WHERE slug=?1")
             .bind(&m.slug)
             .fetch_optional(db)
             .await
             .map_err(|e| crate::security::internal_error("legacy_manifest_lookup", e))?
     {
-        let current = load_manifest(db, &id).await?;
-        if current == m {
-            return Ok((i, o));
-        }
-        if projection(&current) != projection(&m) {
-            return Err(crate::security::public_error(
-                "Evento existente diverge do manifesto; importação não altera estrutura usada.",
-            ));
-        }
-        let mut tx = db
-            .begin()
-            .await
-            .map_err(|e| crate::security::internal_error("legacy_manifest_update_begin", e))?;
-        sqlx::query("UPDATE events SET name=?2,description=?3,cover_url=?4,external_url=?5,updated_at=datetime('now') WHERE id=?1")
-            .bind(&id)
-            .bind(&m.name)
-            .bind(&m.description)
-            .bind(&m.cover_url)
-            .bind(&m.external_url)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| crate::security::internal_error("legacy_manifest_update_event", e))?;
-        for item in &m.items {
-            for option in &item.options {
-                let Some((option_id,)) = sqlx::query_as::<_, (String,)>(
-                    "SELECT o.id FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_id=?1 AND pi.external_key=?2 AND o.external_key=?3",
-                )
-                .bind(&id)
-                .bind(&item.external_key)
-                .bind(&option.external_key)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| crate::security::internal_error("legacy_manifest_option", e))?
-                else {
-                    return Err(crate::security::public_error("option do manifesto não encontrada"));
-                };
-                sqlx::query("UPDATE custom_question_options SET image_url=?2,updated_at=datetime('now') WHERE id=?1")
-                    .bind(&option_id)
-                    .bind(&option.image_url)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| crate::security::internal_error("legacy_manifest_image", e))?;
-                sqlx::query("DELETE FROM option_links WHERE option_id=?1")
-                    .bind(&option_id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| crate::security::internal_error("legacy_manifest_links", e))?;
-                for (sort, link) in option.links.iter().enumerate() {
-                    sqlx::query("INSERT INTO option_links(id,option_id,kind,label,url,sort_order) VALUES(?1,?2,?3,?4,?5,?6)")
-                        .bind(uuid::Uuid::new_v4().to_string())
-                        .bind(&option_id)
-                        .bind(&link.kind)
-                        .bind(&link.label)
-                        .bind(&link.url)
-                        .bind(sort as i64)
-                        .execute(&mut *tx)
-                        .await
-                        .map_err(|e| crate::security::internal_error("legacy_manifest_link", e))?;
-                }
-            }
-        }
-        tx.commit()
-            .await
-            .map_err(|e| crate::security::internal_error("legacy_manifest_update_commit", e))?;
-        return Ok((i, o));
-    }
-    let mut tx = db
-        .begin()
-        .await
-        .map_err(|e| crate::security::internal_error("legacy_manifest_begin", e))?;
-    let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO events(id,name,slug,kind,status,starts_at,ends_at,description,cover_url,external_url) VALUES(?1,?2,?3,'custom','active',?4,?5,?6,?7,?8)").bind(&id).bind(&m.name).bind(&m.slug).bind(&m.starts_at).bind(&m.ends_at).bind(&m.description).bind(&m.cover_url).bind(&m.external_url).execute(&mut *tx).await.map_err(|e|crate::security::internal_error("legacy_manifest_event",e))?;
-    insert_items(&mut tx, &id, &m).await?;
-    tx.commit()
-        .await
-        .map_err(|e| crate::security::internal_error("legacy_manifest_commit", e))?;
+        fingerprint(&load_manifest(db, &id).await?).map_err(crate::security::public_error)?
+    } else {
+        absent_fingerprint(&m.slug)
+    };
+    let _ = apply_manifest(&m, &expected, actor.as_ref().map(|value| value.0.as_str())).await?;
     Ok((i, o))
 }
 

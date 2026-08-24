@@ -53,6 +53,8 @@ import {
   useUnblockUser,
   useUpdateMatchSchedule,
   useSetMatchFixture,
+  useSetEventPoolCreation,
+  usePublishEventVersion,
   useUserBreakdown,
   useUserPools,
 } from "@/hooks/queries";
@@ -438,6 +440,8 @@ export function AdminPage() {
   const removePoolMember = useRemovePoolMember();
   const saveSettings = useSaveAdminSettings();
   const finishEvent = useFinishEvent();
+  const setEventPoolCreation = useSetEventPoolCreation();
+  const publishEventVersion = usePublishEventVersion();
 
   useEffect(() => {
     if (!selectedUserId && adminUsers.data?.length) {
@@ -1095,7 +1099,7 @@ export function AdminPage() {
           </Card>
           {adminEvents.isLoading ? <Card><p className="text-ink-muted">Carregando edições...</p></Card> : adminEvents.isError ? <ErrorBanner>Não foi possível carregar as edições.</ErrorBanner> : adminEvents.data?.map((event: AdminEventRecord) => {
             const historical = event.status === "finished" || (event.endsAt != null && new Date(event.endsAt).getTime() <= Date.now());
-            return <Card key={event.id} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-lg">{event.name}</h3><p className="mt-1 text-sm text-ink-muted">{event.kind === "football" ? "Futebol" : "Evento customizado"} · {event.slug}{event.endsAt ? ` · termina em ${formatKickoff(event.endsAt)}` : " · sem data de término"}</p><p className="mt-2 text-sm font-semibold text-mint-dark">{historical ? "Encerrado / histórico" : event.status === "draft" ? "Rascunho" : "Em andamento"}</p><p className="mt-1 text-xs text-ink-muted">Autoria: {event.createdByUsername ? `@${event.createdByUsername}` : "sistema"} · {event.itemCount} perguntas · {event.optionCount} opções · {event.poolCount} pools</p><p className="mt-1 text-xs text-ink-muted">Atualizado em {formatKickoff(event.updatedAt)}</p></div><div className="flex flex-wrap gap-2">{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadManifest(event.id, event.slug)}>Exportar JSON</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadPackage(event.id, event.slug)}>Exportar pacote</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => navigate(`/events/${event.id}`)}>{event.status === "draft" ? "Abrir Builder" : "Abrir / editar"}</Button>}{historical ? <span className="rounded-pill bg-mint/25 px-3 py-1 text-sm font-semibold">Encerrado</span> : <Button variant="outline" onClick={() => handleFinishEvent(event.id, event.name)} disabled={finishEvent.isPending || !event.endsAt}>Encerrar edição</Button>}</div></Card>;
+            return <Card key={event.id} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-lg">{event.name}</h3><p className="mt-1 text-sm text-ink-muted">{event.kind === "football" ? "Futebol" : "Evento customizado"} · {event.slug}{event.endsAt ? ` · termina em ${formatKickoff(event.endsAt)}` : " · sem data de término"}</p><p className="mt-2 text-sm font-semibold text-mint-dark">{historical ? "Encerrado / histórico" : event.status === "draft" ? "Rascunho" : "Em andamento"}</p><p className="mt-1 text-xs text-ink-muted">Autoria: {event.createdByUsername ? `@${event.createdByUsername}` : "sistema"} · {event.itemCount} perguntas · {event.optionCount} opções · {event.poolCount} pools</p><p className="mt-1 text-xs text-ink-muted">Versão publicada: {event.currentVersionNumber ? `V${event.currentVersionNumber}` : "nenhuma"} · {event.workingVersionId ? "revisão pendente" : "sem revisão pendente"}</p><p className="mt-1 text-xs text-ink-muted">Atualizado em {formatKickoff(event.updatedAt)}</p></div><div className="flex flex-wrap gap-2">{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadManifest(event.id, event.slug)}>Exportar JSON</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadPackage(event.id, event.slug)}>Exportar pacote</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => navigate(`/events/${event.id}`)}>{event.status === "draft" ? "Abrir Builder" : "Abrir / editar"}</Button>}{event.kind === "custom" && event.workingVersionId && <Button size="sm" onClick={() => void runAdminAction(() => publishEventVersion.mutateAsync({ eventId: event.id, versionId: event.workingVersionId! }))} disabled={publishEventVersion.isPending}>Publicar revisão</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void runAdminAction(() => setEventPoolCreation.mutateAsync({ eventId: event.id, enabled: !event.poolCreationEnabled }))} disabled={setEventPoolCreation.isPending}>{event.poolCreationEnabled ? "Desativar novos pools" : "Permitir novos pools"}</Button>}{historical ? <span className="rounded-pill bg-mint/25 px-3 py-1 text-sm font-semibold">Encerrado</span> : <Button variant="outline" onClick={() => handleFinishEvent(event.id, event.name)} disabled={finishEvent.isPending || !event.endsAt}>Encerrar edição</Button>}</div></Card>;
           })}
         </div>
       )}

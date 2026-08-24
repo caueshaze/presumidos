@@ -29,6 +29,13 @@ export default defineConfig(() => {
           target: apiTarget,
           changeOrigin: true,
         },
+        // Assets internos também são servidos pelo backend. Sem este proxy,
+        // URLs persistidas como /media/assets/... caem no fallback do Vite e
+        // retornam o index.html em vez da imagem.
+        "/media": {
+          target: apiTarget,
+          changeOrigin: true,
+        },
       },
     },
   };

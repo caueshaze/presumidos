@@ -904,6 +904,14 @@ async fn custom_scoring_owner_can_edit_before_lock_and_is_frozen_after() {
 #[tokio::test]
 async fn vma_manifest_imports_as_generic_custom_event_without_matches() {
     let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let _admin = seed_user(
+        &format!("vma-admin-{suffix}"),
+        &format!("vma-admin-{suffix}@test"),
+        "senha-correta-123",
+        true,
+    )
+    .await;
     let manifest = crate::custom_event_manifest::parse_and_validate(include_str!(
         "../data/events/vma-2026.json"
     ))
@@ -912,6 +920,24 @@ async fn vma_manifest_imports_as_generic_custom_event_without_matches() {
         .await
         .expect("importação VMA idempotente");
     assert_eq!(summary, (19, 121));
+    let (event_id, actor, version_id): (String, String, String) = sqlx::query_as(
+        "SELECT e.id,u.id,v.id FROM events e JOIN users u ON u.is_admin=1 JOIN event_versions v ON v.event_id=e.id AND v.state='working' WHERE e.slug='vma-2026' LIMIT 1",
+    )
+    .fetch_one(crate::db::pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String,)>("SELECT status FROM events WHERE id=?1")
+            .bind(&event_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap()
+            .0,
+        "draft"
+    );
+    crate::custom_event_manifest::publish_working_revision(&event_id, Some(&version_id), &actor)
+        .await
+        .unwrap();
     let second_manifest = crate::custom_event_manifest::parse_and_validate(include_str!(
         "../data/events/vma-2026.json"
     ))
@@ -921,7 +947,7 @@ async fn vma_manifest_imports_as_generic_custom_event_without_matches() {
             .await
             .unwrap(),
         (19, 121),
-        "reimportação só reconcilia metadados editoriais"
+        "reimportação idempotente contra a versão publicada"
     );
     let counts: (i64, i64, i64) = sqlx::query_as(
         "SELECT
@@ -1079,6 +1105,117 @@ async fn vma_manifest_imports_as_generic_custom_event_without_matches() {
             .any(|option| option.id == media_option.id && option.media_seen),
         "progresso de mídia é isolado por usuário"
     );
+}
+
+#[tokio::test]
+async fn published_event_versions_preserve_old_pools_and_switch_new_ones() {
+    test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let admin = seed_user(
+        &format!("version-admin-{suffix}"),
+        &format!("version-admin-{suffix}@test"),
+        "senha-correta-123",
+        true,
+    )
+    .await;
+    let (token, csrf) = seed_session(&admin).await;
+    let event = crate::custom_events::create(
+        token.clone(),
+        "Versão 1".into(),
+        Some("2099-01-01T00:00:00Z".into()),
+        Some("2099-12-31T00:00:00Z".into()),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    let item = crate::custom_events::add_item(
+        token.clone(),
+        event.id.clone(),
+        "Pergunta V1".into(),
+        "2099-01-01T00:00:00Z".into(),
+        "2099-01-02T00:00:00Z".into(),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    crate::custom_events::add_option(
+        token.clone(),
+        event.id.clone(),
+        item.clone(),
+        "A".into(),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    crate::custom_events::add_option(
+        token.clone(),
+        event.id.clone(),
+        item,
+        "B".into(),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    crate::custom_events::publish(token.clone(), event.id.clone(), csrf.clone())
+        .await
+        .unwrap();
+    let pool_one = crate::pools::create_pool_for_event(
+        token.clone(),
+        "Pool V1".into(),
+        Some(event.id.clone()),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    let v1: (String,) = sqlx::query_as("SELECT event_version_id FROM pools WHERE id=?1")
+        .bind(&pool_one.id)
+        .fetch_one(crate::db::pool())
+        .await
+        .unwrap();
+
+    crate::custom_events::update_metadata(
+        token.clone(),
+        event.id.clone(),
+        "Versão 2".into(),
+        Some("2099-01-01T00:00:00Z".into()),
+        Some("2099-12-31T00:00:00Z".into()),
+        None,
+        None,
+        None,
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    let working: (String, String) =
+        sqlx::query_as("SELECT id,name FROM event_versions WHERE event_id=?1 AND state='working'")
+            .bind(&event.id)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap();
+    assert_ne!(working.0, v1.0);
+    assert_eq!(working.1, "Versão 2");
+    let old_name: (String,) = sqlx::query_as(
+        "SELECT v.name FROM pools p JOIN event_versions v ON v.id=p.event_version_id WHERE p.id=?1",
+    )
+    .bind(&pool_one.id)
+    .fetch_one(crate::db::pool())
+    .await
+    .unwrap();
+    assert_eq!(old_name.0, "Versão 1");
+    crate::custom_events::publish(token.clone(), event.id.clone(), csrf.clone())
+        .await
+        .unwrap();
+    let pool_two =
+        crate::pools::create_pool_for_event(token, "Pool V2".into(), Some(event.id), csrf)
+            .await
+            .unwrap();
+    let v2: (String,) = sqlx::query_as("SELECT event_version_id FROM pools WHERE id=?1")
+        .bind(&pool_two.id)
+        .fetch_one(crate::db::pool())
+        .await
+        .unwrap();
+    assert_eq!(v2.0, working.0);
+    assert_ne!(v1.0, v2.0);
 }
 
 #[tokio::test]
@@ -1240,17 +1377,18 @@ async fn admin_manifest_preview_apply_is_idempotent_and_blocks_published_structu
         .json()
         .await
         .expect("json preview structural conflict");
-    assert_eq!(structural_preview["action"], "conflict");
-    assert!(structural_preview["blockedChanges"]
+    assert_eq!(structural_preview["action"], "safeUpdate");
+    assert!(structural_preview["safeChanges"]
         .as_array()
         .unwrap()
         .iter()
         .any(|entry| entry["path"].as_str().unwrap_or_default().contains("label")));
-    let stored: (String,) = sqlx::query_as("SELECT name FROM events WHERE id=?1")
-        .bind(&event_id)
-        .fetch_one(crate::db::pool())
-        .await
-        .expect("evento preservado após conflict preview");
+    let stored: (String,) =
+        sqlx::query_as("SELECT name FROM event_versions WHERE event_id=?1 AND state='working'")
+            .bind(&event_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("evento preservado após conflict preview");
     assert_eq!(stored.0, "Manifest Smoke Renamed");
 }
 
@@ -3717,12 +3855,12 @@ async fn legacy_manifest_v1_import_works_without_tcp() {
         .unwrap(),
         (1, 2)
     );
-    let state: (String, i64, i64) = sqlx::query_as("SELECT e.status,(SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_id=e.id),(SELECT COUNT(*) FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_id=e.id) FROM events e WHERE e.slug=?1")
+    let state: (String, i64, i64) = sqlx::query_as("SELECT e.status,(SELECT COUNT(*) FROM prediction_items pi JOIN event_versions v ON v.id=pi.event_version_id WHERE v.event_id=e.id AND v.state='working'),(SELECT COUNT(*) FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id JOIN event_versions v ON v.id=pi.event_version_id WHERE v.event_id=e.id AND v.state='working') FROM events e WHERE e.slug=?1")
         .bind(&slug)
         .fetch_one(crate::db::pool())
         .await
         .expect("estado do import legado");
-    assert_eq!(state, ("active".into(), 1, 2));
+    assert_eq!(state, ("draft".into(), 1, 2));
     assert_eq!(
         crate::custom_event_manifest::import(
             crate::custom_event_manifest::parse_and_validate(&content).unwrap(),
@@ -4270,7 +4408,25 @@ async fn user_event_builder_asset_pool_flow_works_without_tcp() {
         ))
         .await
         .expect("editar mídia editorial publicada");
-    assert_eq!(published_media_update.status(), StatusCode::NO_CONTENT);
+    assert_eq!(published_media_update.status(), StatusCode::BAD_REQUEST);
+    let published_label_update = app
+        .clone()
+        .oneshot(json_request(
+            format!(
+                "/api/custom/events/{event_id}/items/{single_id}/options/{single_option}/update"
+            ),
+            json!({"label":"A renomeada"}),
+        ))
+        .await
+        .expect("editar nome editorial publicado");
+    assert_eq!(published_label_update.status(), StatusCode::BAD_REQUEST);
+    let saved_label: (String,) =
+        sqlx::query_as("SELECT label FROM custom_question_options WHERE id=?1")
+            .bind(&single_option)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("ler nome editorial publicado");
+    assert_eq!(saved_label.0, "A");
     let replacement_image = package_smoke_master([100, 50, 20]);
     let replacement_request = {
         let mut body = format!(
@@ -4302,7 +4458,7 @@ async fn user_event_builder_asset_pool_flow_works_without_tcp() {
         .oneshot(replacement_request)
         .await
         .expect("troca de imagem publicada");
-    assert_eq!(replacement.status(), StatusCode::OK);
+    assert_eq!(replacement.status(), StatusCode::BAD_REQUEST);
     let pool = response_json(
         app.clone()
             .oneshot(json_request(

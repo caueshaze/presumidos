@@ -51,7 +51,7 @@ pub async fn update_football_scoring_config(
         ));
     }
     let db = crate::db::pool();
-    let owner:Option<(String,)>=sqlx::query_as("SELECT created_by FROM pools WHERE id=?1 AND (created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND NOT EXISTS (SELECT 1 FROM prediction_items pi JOIN matches m ON m.prediction_item_id=pi.id WHERE pi.event_id=(SELECT event_id FROM pools WHERE id=?1) AND datetime(pi.lock_at)<=datetime('now'))").bind(&pool_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("football_config_owner",e))?;
+    let owner:Option<(String,)>=sqlx::query_as("SELECT created_by FROM pools p WHERE p.id=?1 AND (p.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND NOT EXISTS (SELECT 1 FROM prediction_items pi JOIN matches m ON m.prediction_item_id=pi.id WHERE pi.event_version_id=p.event_version_id AND datetime(pi.lock_at)<=datetime('now'))").bind(&pool_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("football_config_owner",e))?;
     if owner.is_none() {
         return Err(crate::security::public_error(
             "Apenas o dono ou admin pode alterar antes do primeiro lock.",
@@ -103,7 +103,7 @@ pub async fn update_custom_item_scoring_config(
         ));
     }
     let db = crate::db::pool();
-    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_id=p.event_id WHERE p.id=?1 AND (p.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND pi.id=?3 AND pi.kind='single_choice' AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("custom_config_owner",e))?;
+    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id WHERE p.id=?1 AND (p.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND pi.id=?3 AND pi.kind='single_choice' AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("custom_config_owner",e))?;
     if owner.is_none() {
         return Err(crate::security::public_error(
             "Apenas o dono ou admin pode alterar antes do lock.",
@@ -160,7 +160,7 @@ pub async fn update_numeric_item_scoring_config(
         ));
     }
     let db = crate::db::pool();
-    let places:Option<(i64,)>=sqlx::query_as("SELECT n.decimal_places FROM pools p JOIN prediction_items pi ON pi.event_id=p.event_id JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND (p.created_by=?2 OR u.is_admin=1) AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_config_owner",e))?;
+    let places:Option<(i64,)>=sqlx::query_as("SELECT n.decimal_places FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND (p.created_by=?2 OR u.is_admin=1) AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_config_owner",e))?;
     let Some((places,)) = places else {
         return Err(crate::security::public_error(
             "Somente o dono do bolão pode alterar regras antes do lock.",
@@ -208,7 +208,7 @@ pub async fn update_multiple_choice_item_scoring_config(
         ));
     }
     let db = crate::db::pool();
-    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_id=p.event_id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND pi.kind='multiple_choice' AND (p.created_by=?2 OR u.is_admin=1) AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("multiple_choice_config_owner",e))?;
+    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND pi.kind='multiple_choice' AND (p.created_by=?2 OR u.is_admin=1) AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("multiple_choice_config_owner",e))?;
     if owner.is_none() {
         return Err(crate::security::public_error(
             "Somente o dono do bolão pode alterar regras antes do lock.",
@@ -356,9 +356,10 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 p.created_by,
                 p.description,
                 p.visible_rules,
-                p.join_closed_at, e.name, e.slug, e.kind, e.status, e.ends_at
+                p.join_closed_at, v.name, e.slug, e.kind, e.status, e.ends_at
          FROM pools p
          JOIN events e ON e.id = p.event_id
+         JOIN event_versions v ON v.id = p.event_version_id
          JOIN pool_members pm ON pm.pool_id = p.id
          WHERE pm.user_id = ?1
          ORDER BY p.created_at DESC",
@@ -419,11 +420,12 @@ pub async fn dashboard_pools(token: String) -> Result<Vec<PoolDashboardSummary>,
         "SELECT p.id, p.event_id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id),
                 p.created_by, p.description, p.visible_rules, p.join_closed_at,
-                e.name, e.slug, e.kind, e.status, e.ends_at,
+                v.name, e.slug, e.kind, e.status, e.ends_at,
                 (SELECT COUNT(*) FROM predictions pr WHERE pr.pool_id = p.id AND pr.user_id = ?1),
-                (SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_id = p.event_id)
+                (SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_version_id = p.event_version_id)
          FROM pools p
          JOIN events e ON e.id = p.event_id
+         JOIN event_versions v ON v.id = p.event_version_id
          JOIN pool_members pm ON pm.pool_id = p.id
          WHERE pm.user_id = ?1
          ORDER BY CASE WHEN e.ends_at IS NULL THEN 0 ELSE 1 END, datetime(e.ends_at) DESC, p.created_at DESC",
@@ -499,7 +501,7 @@ pub async fn create_pool_for_event(
     let db = pool();
     let event_id = match requested_event_id {
         Some(id) => {
-            let allowed: Option<(String,)> = sqlx::query_as("SELECT id FROM events WHERE id=?1 AND status='active' AND (ends_at IS NULL OR datetime(ends_at) > datetime('now')) AND (kind='football' OR kind='custom')")
+            let allowed: Option<(String, String)> = sqlx::query_as("SELECT id, current_published_version_id FROM events WHERE id=?1 AND status='active' AND pool_creation_enabled=1 AND current_published_version_id IS NOT NULL AND (ends_at IS NULL OR datetime(ends_at) > datetime('now')) AND (kind='football' OR kind='custom')")
                 .bind(&id).fetch_optional(db).await.map_err(|e| crate::security::internal_error("create_pool_event_allowed", e))?;
             allowed.map(|v| v.0).ok_or_else(|| {
                 crate::security::public_error("Evento indisponível para criar bolão.")
@@ -518,9 +520,15 @@ pub async fn create_pool_for_event(
         .await
         .map_err(|e| crate::security::internal_error("create_pool_begin_tx", e))?;
 
-    sqlx::query("INSERT INTO pools (id, event_id, name, invite_code, created_by) VALUES (?1, ?2, ?3, ?4, ?5)")
+    let event_version_id: (String,) = sqlx::query_as("SELECT current_published_version_id FROM events WHERE id=?1 AND current_published_version_id IS NOT NULL")
+        .bind(&event_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::security::internal_error("create_pool_event_version", e))?;
+    sqlx::query("INSERT INTO pools (id, event_id, event_version_id, name, invite_code, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
         .bind(&pool_id)
         .bind(&event_id)
+        .bind(&event_version_id.0)
         .bind(&name)
         .bind(&invite_code)
         .bind(&session.user_id)
@@ -540,8 +548,9 @@ pub async fn create_pool_for_event(
         .map_err(|e| crate::security::internal_error("create_pool_commit", e))?;
 
     let event: (String, String, String, String, Option<String>) =
-        sqlx::query_as("SELECT name, slug, kind, status, ends_at FROM events WHERE id=?1")
+        sqlx::query_as("SELECT v.name, e.slug, e.kind, e.status, e.ends_at FROM events e JOIN event_versions v ON v.id=?2 WHERE e.id=?1")
             .bind(&event_id)
+            .bind(&event_version_id.0)
             .fetch_one(db)
             .await
             .map_err(|e| crate::security::internal_error("create_pool_event", e))?;
@@ -595,7 +604,7 @@ pub async fn join_pool(
     let db = pool();
 
     let row: Option<(String, String, String, String, String, String, Option<String>, String, String, String, String, Option<String>)> =
-        sqlx::query_as("SELECT p.id, p.event_id, p.name, p.created_by, p.description, p.visible_rules, p.join_closed_at, e.name, e.slug, e.kind, e.status, e.ends_at FROM pools p JOIN events e ON e.id=p.event_id WHERE p.invite_code = ?1")
+        sqlx::query_as("SELECT p.id, p.event_id, p.name, p.created_by, p.description, p.visible_rules, p.join_closed_at, v.name, e.slug, e.kind, e.status, e.ends_at FROM pools p JOIN events e ON e.id=p.event_id JOIN event_versions v ON v.id=p.event_version_id WHERE p.invite_code = ?1")
             .bind(&invite_code)
             .fetch_optional(db)
             .await
@@ -752,11 +761,13 @@ pub async fn get_pool_member_predictions(
                 pr.penalty_home_score AS penalty_home_score,
                 pr.penalty_away_score AS penalty_away_score
          FROM pool_members pm
+         JOIN pools pool ON pool.id = pm.pool_id
          JOIN predictions pr ON pr.user_id = pm.user_id AND pr.pool_id = pm.pool_id
          JOIN matches m ON m.id = pr.match_id AND m.prediction_item_id = pr.item_id
          JOIN prediction_items pi ON pi.id = pr.item_id
          WHERE pm.pool_id = ?1
            AND datetime(pi.reveal_at) <= datetime(?2)
+           AND pi.event_version_id = pool.event_version_id
            -- Consistente com o ranking: só palpites de jogos que começaram
            -- depois de o usuário entrar no bolão.
            AND datetime(pi.lock_at) >= datetime(pm.joined_at)
@@ -786,12 +797,14 @@ pub async fn get_pool_member_predictions(
                 pr.reactor_user_id AS reactor_user_id,
                 pr.updated_at AS updated_at
          FROM prediction_reactions pr
+         JOIN pools pool ON pool.id = pr.pool_id
          JOIN predictions p ON p.id = pr.prediction_id
          JOIN matches m ON m.id = p.match_id
          JOIN prediction_items pi ON pi.id = m.prediction_item_id
          JOIN pool_members pm ON pm.pool_id = pr.pool_id AND pm.user_id = pr.target_user_id
          WHERE pr.pool_id = ?1
            AND datetime(pi.reveal_at) <= datetime(?2)
+           AND pi.event_version_id = pool.event_version_id
            AND datetime(pi.lock_at) >= datetime(pm.joined_at)
          ORDER BY pr.updated_at ASC",
     )
@@ -928,6 +941,7 @@ pub async fn react_to_prediction(
     let target_prediction: Option<(String, String)> = sqlx::query_as(
         "SELECT p.id, COALESCE(m.home_team || ' x ' || m.away_team, pi.title)
          FROM pool_members pm
+         JOIN pools pool ON pool.id = pm.pool_id
          JOIN predictions p ON p.user_id = pm.user_id AND p.pool_id = pm.pool_id
          LEFT JOIN matches m ON m.id = p.match_id AND m.prediction_item_id = p.item_id
          JOIN prediction_items pi ON pi.id = p.item_id
@@ -935,6 +949,7 @@ pub async fn react_to_prediction(
            AND pm.user_id = ?3
            AND (p.id = ?2 OR (?5 IS NOT NULL AND p.match_id = ?5))
            AND datetime(pi.reveal_at) <= datetime(?4)
+           AND pi.event_version_id = pool.event_version_id
            AND datetime(pi.lock_at) >= datetime(pm.joined_at)",
     )
     .bind(&pool_id)
@@ -1104,9 +1119,10 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                 p.created_by,
                 p.description,
                 p.visible_rules,
-                p.join_closed_at, e.name, e.slug, e.kind, e.status, e.ends_at
+                p.join_closed_at, v.name, e.slug, e.kind, e.status, e.ends_at
          FROM pools p
          JOIN events e ON e.id = p.event_id
+         JOIN event_versions v ON v.id = p.event_version_id
          ORDER BY p.name COLLATE NOCASE",
     )
     .fetch_all(pool())

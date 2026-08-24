@@ -67,6 +67,8 @@ export interface EventRecord {
   coverUrl?: string | null;
   coverAssetUrl?: string | null;
   externalUrl?: string | null;
+  poolCreationEnabled?: boolean;
+  currentPublishedVersionId?: string | null;
 }
 
 export interface AdminEventRecord extends EventRecord {
@@ -74,6 +76,10 @@ export interface AdminEventRecord extends EventRecord {
   itemCount: number;
   optionCount: number;
   poolCount: number;
+  poolCreationEnabled: boolean;
+  currentPublishedVersionId: string | null;
+  workingVersionId: string | null;
+  currentVersionNumber: number | null;
 }
 
 export type ManifestAction = "create" | "noChange" | "safeUpdate" | "conflict" | "rejected";
@@ -97,6 +103,8 @@ export interface ManifestApplyResult {
   itemCount: number;
   optionCount: number;
   linkCount: number;
+  versionId: string | null;
+  state: "working" | "published";
 }
 
 export interface CustomQuestionOption {
@@ -154,6 +162,7 @@ export interface CustomQuestion {
   maxValue?: string | null;
   currentValue?: string | null;
   resultValue?: string | null;
+  resultStatus?: "resolved" | "not_representable" | "pending_decision" | null;
   exactPoints?: number;
   tolerance?: string;
   withinTolerancePoints?: number;
