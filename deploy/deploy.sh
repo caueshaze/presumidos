@@ -53,9 +53,16 @@ PRESUMIDOS_CLI_IMAGE="$IMAGE_NAME" ./deploy/backup.sh
 echo "==> Parando o app para aplicar migrations offline"
 docker compose stop ferrugem-web
 
+echo "==> Ajustando proprietário do volume de dados"
+docker run --rm --network none --user 0 \
+  --volumes-from "$APP_CONTAINER" \
+  --entrypoint /usr/bin/chown "$IMAGE_NAME" \
+  -R 10001:10001 /data
+
 echo "==> Aplicando migrations na imagem nova"
 PRESUMIDOS_APP_CONTAINER="$APP_CONTAINER" \
-PRESUMIDOS_CLI_IMAGE="$IMAGE_NAME" ./deploy/run-cli.sh migrate
+PRESUMIDOS_CLI_IMAGE="$IMAGE_NAME" \
+PRESUMIDOS_CLI_USER=10001 ./deploy/run-cli.sh migrate
 
 echo "==> Atualizando servicos"
 docker compose up -d ferrugem-web redis caddy

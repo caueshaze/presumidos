@@ -4,6 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 IMAGE="${PRESUMIDOS_CLI_IMAGE:-presumidos/ferrugem-web:local-prod}"
+CLI_USER="${PRESUMIDOS_CLI_USER:-0}"
 APP_CONTAINER="${PRESUMIDOS_APP_CONTAINER:-$(docker compose ps -q ferrugem-web 2>/dev/null || true)}"
 
 if [ -z "$APP_CONTAINER" ]; then
@@ -47,7 +48,7 @@ fi
 mkdir -p backups
 chmod 700 backups
 
-exec docker run --rm --network none --user 0 \
+exec docker run --rm --network none --user "$CLI_USER" \
   --env-file .env \
   -e APP_ENV=production \
   -e DEV_DISABLE_AUTH_EMAILS=false \
