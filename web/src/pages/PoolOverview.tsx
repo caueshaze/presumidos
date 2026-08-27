@@ -1,113 +1,15 @@
-import { ArrowRight, BookOpenText, Check, CheckCircle2, Copy, Flag, KeyRound, Link2, LogOut, MoreHorizontal, Share2, Sparkles, Trash2, Trophy, Users, X } from "lucide-react";
+import { ArrowRight, BookOpenText, CheckCircle2, Flag, LogOut, MoreHorizontal, Share2, Trash2, Trophy, Users, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { PageShell } from "@/components/PageShell";
+import { PoolShareModal } from "@/components/PoolShareModal";
+import { PredictionReuseModal } from "@/components/PredictionReuseModal";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorBanner, Label, Select } from "@/components/ui/field";
 import { useAuth } from "@/hooks/useAuth";
 import { useCopyPredictionsReuse, useCreatePoolReport, useDashboardPools, useDeletePool, useEventShowcase, useLeavePool, useLeaderboard, usePools, usePredictionReuseSuggestion, useStartPredictionsEmpty } from "@/hooks/queries";
 import type { PoolReportCategory, PredictionReuseSuggestion } from "@/types";
-
-type ShareModalProps = {
-  inviteUrl: string;
-  inviteCode: string;
-  poolName: string;
-  copied: "link" | "code" | null;
-  canShare: boolean;
-  onCopy: (value: string, target: "link" | "code") => void;
-  onShare: () => void;
-  onClose: () => void;
-};
-
-function ShareModal({ inviteUrl, inviteCode, poolName, copied, canShare, onCopy, onShare, onClose }: ShareModalProps) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4 backdrop-blur-sm"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="relative w-full max-w-lg overflow-hidden rounded-[28px] border border-mint/20 bg-card shadow-2xl shadow-black/25"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="share-pool-title"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-br from-mint/25 via-mint/5 to-transparent" />
-        <div className="relative p-5 sm:p-7">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-mint/20 text-mint-dark shadow-inner shadow-mint/10">
-              <Share2 className="h-6 w-6" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h2 id="share-pool-title" className="text-2xl leading-tight">Compartilhar bolão</h2>
-              <p className="mt-1 text-sm text-ink-muted">Convide seus amigos para participar de “{poolName}”.</p>
-            </div>
-            <Button
-              variant="link"
-              size="sm"
-              className="h-10 w-10 shrink-0 rounded-full p-0 text-ink-muted hover:bg-mint/10 hover:no-underline"
-              aria-label="Fechar compartilhamento"
-              onClick={onClose}
-            >
-              <X className="h-5 w-5" />
-            </Button>
-          </div>
-
-          <div className="mt-6 grid gap-3">
-            <div className="rounded-2xl border border-mint/15 bg-bg/35 p-4 transition-colors hover:border-mint/35 hover:bg-bg/55">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky/15 text-sky-dark">
-                    <Link2 className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-semibold">Link de convite</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" className="shrink-0" aria-label={copied === "link" ? "Link copiado" : "Copiar link"} onClick={() => onCopy(inviteUrl, "link")}>
-                  {copied === "link" ? <Check className="h-4 w-4 text-mint-dark" /> : <Copy className="h-4 w-4" />}
-                  {copied === "link" ? "Copiado" : "Copiar link"}
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-mint/15 bg-bg/35 p-4 transition-colors hover:border-mint/35 hover:bg-bg/55">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-yellow/20 text-yellow-dark">
-                    <KeyRound className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="font-semibold">Código do bolão</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" className="shrink-0" aria-label={copied === "code" ? "Código copiado" : "Copiar código"} onClick={() => onCopy(inviteCode, "code")}>
-                  {copied === "code" ? <Check className="h-4 w-4 text-mint-dark" /> : <Copy className="h-4 w-4" />}
-                  {copied === "code" ? "Copiado" : "Copiar código"}
-                </Button>
-              </div>
-              <code className="mt-3 inline-block rounded-xl border border-yellow/20 bg-yellow/15 px-3 py-2 font-heading text-lg font-semibold tracking-[0.2em] text-ink">{inviteCode}</code>
-            </div>
-          </div>
-
-          <div className="mt-5 flex items-start gap-3 rounded-2xl bg-mint/10 px-4 py-3 text-sm text-ink-muted">
-            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-mint-dark" />
-            <p>Compartilhe o link para facilitar a entrada. O código também funciona na opção “Entrar com código”.</p>
-          </div>
-
-          <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" className="justify-center" onClick={onClose}>Fechar</Button>
-            {canShare && <Button className="justify-center" onClick={onShare}><Share2 className="h-4 w-4" />Compartilhar pelo dispositivo</Button>}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 type PoolAction = "report" | "reportSubmitted" | "leave" | "delete";
 
@@ -201,38 +103,6 @@ function PoolActionModal({
       </div>
     </div>
   );
-}
-
-function PredictionReuseModal({
-  suggestion,
-  pending,
-  error,
-  onCopy,
-  onStartEmpty,
-  onClose,
-}: {
-  suggestion: { sourcePool: { name: string } | null; answered: number; copyable: number; total: number; locked: number };
-  pending: boolean;
-  error: string;
-  onCopy: () => void;
-  onStartEmpty: () => void;
-  onClose: () => void;
-}) {
-  const source = suggestion.sourcePool?.name ?? "outro bolão";
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose(); }}>
-    <div className="w-full max-w-lg rounded-[28px] border border-mint/20 bg-card p-6 shadow-2xl shadow-black/25 sm:p-7" role="dialog" aria-modal="true" aria-labelledby="prediction-reuse-title" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="flex items-start justify-between gap-4">
-        <div><h2 id="prediction-reuse-title" className="text-2xl">Você já tem palpites para este evento</h2><p className="mt-2 text-sm text-ink-muted">Encontramos {suggestion.answered} de {suggestion.total} palpites feitos no “{source}”.</p></div>
-        <Button variant="link" size="sm" className="h-10 w-10 shrink-0 rounded-full p-0" aria-label="Fechar" disabled={pending} onClick={onClose}><X className="h-5 w-5" /></Button>
-      </div>
-      {suggestion.locked > 0 && <p className="mt-4 rounded-2xl bg-yellow/15 px-4 py-3 text-sm text-ink-muted">{suggestion.copyable} ainda podem ser reutilizados neste bolão. {suggestion.locked} já estão bloqueados.</p>}
-      <div className="mt-6 space-y-3">
-        <Button className="h-auto w-full justify-start whitespace-normal px-5 py-4 text-left" disabled={pending} onClick={onCopy}><span><span className="block text-base">{pending ? "Copiando palpites…" : `Usar ${suggestion.copyable} palpites já feitos`}</span><span className="mt-1 block text-sm font-normal opacity-90">Eles serão apenas copiados. Depois você poderá alterá-los neste bolão sem afetar os outros.</span></span></Button>
-        <Button variant="outline" className="w-full" disabled={pending} onClick={onStartEmpty}>Começar do zero</Button>
-      </div>
-      {error && <div className="mt-4"><ErrorBanner>{error}</ErrorBanner></div>}
-    </div>
-  </div>;
 }
 
 export function PoolOverviewPage() {
@@ -434,7 +304,7 @@ export function PoolOverviewPage() {
         </div>
       </div>
     </Card>
-    {shareModalOpen && !historical && <ShareModal inviteUrl={inviteUrl} inviteCode={pool.inviteCode} poolName={pool.name} copied={copied} canShare={canShare} onCopy={(value, target) => void copyShareValue(value, target)} onShare={() => void shareInvite()} onClose={() => setShareModalOpen(false)} />}
+    {shareModalOpen && !historical && <PoolShareModal inviteUrl={inviteUrl} inviteCode={pool.inviteCode} poolName={pool.name} copied={copied} canShare={canShare} onCopy={(value, target) => void copyShareValue(value, target)} onShare={() => void shareInvite()} onClose={() => setShareModalOpen(false)} />}
     {reuseModalOpen && reuseOffer?.available && <PredictionReuseModal suggestion={reuseOffer} pending={copyPredictions.isPending || startEmpty.isPending} error={reuseError} onCopy={() => void reusePredictions()} onStartEmpty={() => void beginEmpty()} onClose={() => setReuseModalOpen(false)} />}
     {action && <PoolActionModal action={action} poolName={pool.name} reportCategory={reportCategory} reportDetails={reportDetails} reportPending={createReport.isPending} actionPending={leavePool.isPending || deletePool.isPending} error={actionError} onCategoryChange={setReportCategory} onDetailsChange={setReportDetails} onReport={() => void handleReport()} onLeave={() => void handleLeave()} onDelete={() => void handleDelete()} onClose={() => setAction(null)} />}
   </PageShell>;

@@ -11,6 +11,7 @@ mod error;
 mod football;
 mod matches;
 mod models;
+mod pool_scoring;
 mod pools;
 mod prediction_access;
 mod prediction_items;

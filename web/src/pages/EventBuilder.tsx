@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Check, ChevronDown, Image as ImageIcon, Pencil, Trophy, X } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { api } from "@/lib/api";
 import { withAdminReauth } from "@/lib/adminReauth";
 import { PageShell } from "@/components/PageShell";
@@ -15,30 +15,9 @@ import { MultipleChoicePredictionCard } from "@/components/MultipleChoicePredict
 import type { CustomQuestion, EventVersionHistory, OptionLink } from "@/types";
 import { useAuth } from "@/hooks/useAuth";
 import { useDeleteEvent, useReauth } from "@/hooks/queries";
+import { EventBuilderItems, type Item, type Option } from "@/components/EventBuilderItems";
+import { PtBrDateTimeInput, toIsoDateTime } from "@/components/PtBrDateTimeInput";
 
-type Option = { id: string; label: string; imageUrl?: string | null; imageAssetUrl?: string | null; links?: OptionLink[] };
-const optionLinkKinds: Array<{ value: OptionLink["kind"]; label: string }> = [
-  { value: "video", label: "Vídeo" },
-  { value: "audio", label: "Áudio" },
-  { value: "official", label: "Link oficial" },
-  { value: "other", label: "Outro" },
-];
-type Item = {
-  id: string;
-  kind: "single_choice" | "numeric" | "multiple_choice";
-  title: string;
-  lockAt: string;
-  revealAt: string;
-  correctOptionId: string | null;
-  options: Option[];
-  decimalPlaces?: number;
-  unitLabel?: string | null;
-  minValue?: string | null;
-  maxValue?: string | null;
-  resultValue?: string | null;
-  minSelections?: number;
-  maxSelections?: number | null;
-};
 type Draft = {
   event: {
     id: string;
@@ -71,69 +50,6 @@ function eventCreationError(cause: unknown): string {
   return message && /Nome do evento/i.test(message)
     ? message
     : "Não foi possível criar o rascunho. Confira os dados e tente novamente.";
-}
-
-function localDateTimeValue(value: string): string {
-  if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value.slice(0, 16);
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
-}
-
-function formatPtBrDate(value: string): string {
-  const local = localDateTimeValue(value);
-  if (!/^\d{4}-\d{2}-\d{2}/.test(local)) return "";
-  return `${local.slice(8, 10)}/${local.slice(5, 7)}/${local.slice(0, 4)}`;
-}
-
-function formatPtBrDateTime(value: string): string {
-  const local = localDateTimeValue(value);
-  return local ? `${formatPtBrDate(local)} às ${local.slice(11, 16)}` : "";
-}
-
-function combinePtBrDateTime(dateText: string, time: string): string | null {
-  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dateText);
-  if (!match || !/^\d{2}:\d{2}$/.test(time)) return null;
-  const [, day, month, year] = match;
-  const candidate = `${year}-${month}-${day}T${time}`;
-  const parsed = new Date(candidate);
-  return Number.isNaN(parsed.getTime()) || parsed.getFullYear() !== Number(year) || parsed.getMonth() + 1 !== Number(month) || parsed.getDate() !== Number(day)
-    ? null
-    : candidate;
-}
-
-function toIsoDateTime(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
-}
-
-function PtBrDateTimeInput({ value, onChange, disabled }: { value: string; onChange: (value: string) => void; disabled?: boolean }) {
-  const [dateText, setDateText] = useState(formatPtBrDate(value));
-  const [time, setTime] = useState(localDateTimeValue(value).slice(11, 16));
-
-  useEffect(() => {
-    setDateText(formatPtBrDate(value));
-    setTime(localDateTimeValue(value).slice(11, 16));
-  }, [value]);
-
-  const updateDate = (raw: string) => {
-    const digits = raw.replace(/\D/g, "").slice(0, 8);
-    const next = digits.length > 4 ? `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}` : digits.length > 2 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits;
-    setDateText(next);
-    const combined = combinePtBrDateTime(next, time);
-    if (combined) onChange(combined);
-  };
-
-  const updateTime = (next: string) => {
-    const digits = next.replace(/\D/g, "").slice(0, 4);
-    const formatted = digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
-    setTime(formatted);
-    const combined = combinePtBrDateTime(dateText, formatted);
-    if (combined) onChange(combined);
-  };
-
-  return <div className="grid grid-cols-[1fr_8rem] gap-2"><Input type="text" inputMode="numeric" placeholder="dd/mm/aaaa" value={dateText} onChange={(event) => updateDate(event.target.value)} disabled={disabled} aria-label="Data" maxLength={10} /><Input type="text" inputMode="numeric" placeholder="HH:mm" value={time} onChange={(event) => updateTime(event.target.value)} disabled={disabled} aria-label="Hora" maxLength={5} /></div>;
 }
 
 export function EventBuilderPage() {
@@ -733,440 +649,42 @@ export function EventBuilderPage() {
           )}
         </Card>
       )}
-      <div className="mt-4 flex flex-col gap-4">
-        {draft.items.map((item, index) => (
-          <Card key={item.id}>
-            <div className="flex items-start justify-between gap-3">
-              {editingItemId === item.id ? (
-                <div className="min-w-0 flex-1 space-y-2">
-                  <Input
-                    autoFocus
-                    aria-label={`Nome da pergunta ${item.title}`}
-                    value={itemTitleDraft}
-                    onChange={(event) => setItemTitleDraft(event.target.value)}
-                  />
-                  <div className="grid gap-2">
-                    <label className="text-sm text-ink-muted">Fecha palpites em<PtBrDateTimeInput value={itemLockDraft} onChange={setItemLockDraft} /></label>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <h2 className="text-xl">{item.title}</h2>
-                  <p className="text-sm text-ink-muted">
-                    {item.kind === "numeric"
-                      ? `Número${item.unitLabel ? ` · ${item.unitLabel}` : ""} · ${item.decimalPlaces ?? 0} casas`
-                      : item.kind === "multiple_choice"
-                        ? `Múltipla escolha · ${item.minSelections ?? 1}–${item.maxSelections ?? item.options.length} opções`
-                        : "Escolha única"}{" "}
-                    · Fecha: {formatPtBrDateTime(item.lockAt)}
-                  </p>
-                </div>
-              )}
-              {editable && (
-                <div className="flex shrink-0 flex-wrap items-start justify-end gap-1.5">
-                  {editingItemId === item.id ? (
-                    <>
-                      <Button size="sm" className="rounded-lg whitespace-nowrap" disabled={busy} onClick={() => void saveItemEdit(item)}>
-                        Salvar
-                      </Button>
-                      <Button size="sm" variant="outline" className="rounded-lg whitespace-nowrap" disabled={busy} onClick={cancelItemEdit}>
-                        Cancelar
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="rounded-lg border-danger/40 text-danger hover:border-danger hover:bg-danger/10"
-                        disabled={busy}
-                        onClick={() => {
-                          if (window.confirm(`Remover a pergunta "${item.title}"?`)) {
-                            void action(
-                              `/custom/events/${draft.event.id}/items/${item.id}/delete`,
-                            ).then(cancelItemEdit);
-                          }
-                        }}
-                      >
-                        Remover
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="rounded-lg whitespace-nowrap"
-                        disabled={busy}
-                        onClick={() => startItemEdit(item)}
-                      >
-                        Editar
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="rounded-lg px-2"
-                        disabled={busy || index === 0}
-                        onClick={() =>
-                          action(
-                            `/custom/events/${draft.event.id}/items/${item.id}/move`,
-                            { direction: -1 },
-                          )
-                        }
-                      >
-                        ↑
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="rounded-lg px-2"
-                        disabled={busy || index === draft.items.length - 1}
-                        onClick={() =>
-                          action(
-                            `/custom/events/${draft.event.id}/items/${item.id}/move`,
-                            { direction: 1 },
-                          )
-                        }
-                      >
-                        ↓
-                      </Button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-            {(item.kind === "single_choice" ||
-              item.kind === "multiple_choice") && (
-              <>
-                <ol className="mt-4 space-y-3 pl-0">
-                  {item.options.map((o, optionIndex) => (
-                    <li key={o.id} className="flex items-start gap-3 rounded-xl border border-mint/20 bg-card/35 p-3 shadow-sm transition-colors hover:border-mint/35 hover:bg-card/55">
-                      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-mint/15 text-xs font-bold text-mint-dark">
-                        {optionIndex + 1}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          {editingOptionId === o.id ? (
-                            <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
-                              <Input
-                                autoFocus
-                                aria-label={`Nome da opção ${o.label}`}
-                                className="min-w-0 flex-1 basis-full sm:basis-auto"
-                                value={optionLabelDraft}
-                                onChange={(event) => setOptionLabelDraft(event.target.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") void saveOptionLabel(item, o);
-                                  if (event.key === "Escape") cancelOptionEdit();
-                                }}
-                              />
-                              <Button
-                                type="button"
-                                size="sm"
-                                aria-label="Salvar nome da opção"
-                                className="rounded-lg px-2.5"
-                                disabled={busy}
-                                onClick={() => void saveOptionLabel(item, o)}
-                              >
-                                <Check className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                aria-label="Cancelar edição do nome"
-                                className="rounded-lg px-2.5"
-                                disabled={busy}
-                                onClick={cancelOptionEdit}
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                              {editable && (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="rounded-lg border-danger/40 px-2.5 text-danger hover:border-danger hover:bg-danger/10"
-                                  disabled={busy}
-                                  onClick={() => {
-                                    if (window.confirm(`Remover a opção "${o.label}"?`)) {
-                                      void action(
-                                        `/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/delete`,
-                                      );
-                                    }
-                                  }}
-                                >
-                                  Remover
-                                </Button>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="font-medium text-ink">{o.label}</span>
-                          )}
-                        {mediaEditable && editingOptionId === o.id && (() => {
-                          const media = mediaDrafts[o.id] ?? { imageUrl: o.imageUrl ?? "", links: o.links ?? [] };
-                          const mediaOpen = openMediaOptionId === o.id;
-                          const hasMedia = Boolean(o.imageAssetUrl || o.imageUrl || o.links?.length);
-                          return (
-                            <>
-                              <button
-                                type="button"
-                                title={hasMedia ? "Editar mídia configurada" : "Adicionar mídia opcional"}
-                                aria-label={hasMedia ? "Editar mídia configurada" : "Adicionar mídia opcional"}
-                                aria-expanded={mediaOpen}
-                                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-dark/40 ${mediaOpen ? "border-mint-dark bg-mint/25 text-mint-dark shadow-glow" : hasMedia ? "border-mint-dark/40 bg-mint/15 text-mint-dark hover:bg-mint/25" : "border-mint/20 bg-card/70 text-ink-muted hover:border-mint/40 hover:bg-mint/10 hover:text-mint-dark"}`}
-                                onClick={() => setOpenMediaOptionId((current) => current === o.id ? null : o.id)}
-                              >
-                                <ImageIcon className="h-4 w-4" />
-                                <span>Mídia</span>
-                                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${mediaOpen ? "rotate-180" : ""}`} />
-                              </button>
-                              {mediaOpen && (
-                                <div className="basis-full rounded-xl border border-mint/15 bg-card/40 p-3">
-                                  <AssetUploadControl
-                                    label={`Imagem da opção ${o.label}`}
-                                    currentUrl={o.imageAssetUrl ?? o.imageUrl}
-                                    fallbackUrl={o.imageAssetUrl ? o.imageUrl : undefined}
-                                    uploadPath={`/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/image`}
-                                    removePath={`/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/image/remove`}
-                                    disabled={!mediaEditable}
-                                    compact
-                                    onChanged={() => void load(draft.event.id)}
-                                  />
-                                  <p className="mt-2 text-xs text-ink-muted">URL externa (opcional)</p>
-                                  <Input
-                                    aria-label={`Imagem da opção ${o.label}`}
-                                    className="mt-2"
-                                    placeholder="URL da imagem (https://…)"
-                                    value={media.imageUrl}
-                                    onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, imageUrl: event.target.value } }))}
-                                  />
-                                  {media.links.map((link, linkIndex) => (
-                                    <div className="mt-3 rounded-xl border border-mint/15 bg-card/30 p-3" key={`${o.id}-link-${linkIndex}`}>
-                                      <div className="mb-3 flex items-center justify-between gap-3">
-                                        <p className="text-sm font-semibold text-ink">Link editorial {linkIndex + 1}</p>
-                                        <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.filter((_, index) => index !== linkIndex) } }))}>Remover</Button>
-                                      </div>
-                                      <div className="grid gap-3 sm:grid-cols-[11rem_1fr]">
-                                        <div>
-                                          <Label htmlFor={`${o.id}-link-kind-${linkIndex}`}>Tipo de conteúdo</Label>
-                                          <Select
-                                            id={`${o.id}-link-kind-${linkIndex}`}
-                                            aria-label={`Tipo de conteúdo do link ${o.label} ${linkIndex + 1}`}
-                                            value={link.kind}
-                                            onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, kind: event.target.value as OptionLink["kind"] } : entry) } }))}
-                                          >
-                                            {optionLinkKinds.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}
-                                          </Select>
-                                        </div>
-                                        <div>
-                                          <Label htmlFor={`${o.id}-link-label-${linkIndex}`}>Nome exibido</Label>
-                                          <Input id={`${o.id}-link-label-${linkIndex}`} aria-label={`Nome exibido do link ${o.label} ${linkIndex + 1}`} value={link.label} placeholder="Ex.: Ver vídeo oficial" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, label: event.target.value } : entry) } }))} />
-                                        </div>
-                                        <div className="sm:col-span-2">
-                                          <Label htmlFor={`${o.id}-link-url-${linkIndex}`}>Endereço do link</Label>
-                                          <Input id={`${o.id}-link-url-${linkIndex}`} aria-label={`Endereço do link ${o.label} ${linkIndex + 1}`} value={link.url} placeholder="Cole aqui uma URL começando com https://" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, url: event.target.value } : entry) } }))} />
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ))}
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: [...media.links, { kind: "other", label: "", url: "", sortOrder: media.links.length }] } }))}>Adicionar link</Button>
-                                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => void saveOptionMedia(item, o)}>Salvar mídia</Button>
-                                  </div>
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()}
-                        </div>
-                      </div>
-                      {(editable || mediaEditable) && editingOptionId !== o.id && (
-                        <span className="flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="rounded-lg border-transparent bg-transparent px-2 text-ink-muted shadow-none hover:border-transparent hover:bg-mint/10 hover:text-ink"
-                            onClick={() => startOptionEdit(o)}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            Editar
-                          </Button>
-                          {editable && <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={optionIndex === 0}
-                            onClick={() =>
-                              action(
-                                `/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/move`,
-                                { direction: -1 },
-                              )
-                            }
-                          >
-                            ↑
-                          </Button>}
-                          {editable && <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={optionIndex === item.options.length - 1}
-                            onClick={() =>
-                              action(
-                                `/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/move`,
-                                { direction: 1 },
-                              )
-                            }
-                          >
-                            ↓
-                          </Button>}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ol>
-                {editable && (
-                  <div className="mt-3">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      aria-expanded={openAddOptionItemId === item.id}
-                      onClick={() => setOpenAddOptionItemId((current) => current === item.id ? null : item.id)}
-                    >
-                      <span>{openAddOptionItemId === item.id ? "Fechar" : "Adicionar opção"}</span>
-                      <ChevronDown className={`h-4 w-4 transition-transform ${openAddOptionItemId === item.id ? "rotate-180" : ""}`} />
-                    </Button>
-                    {openAddOptionItemId === item.id && (
-                      <div className="mt-2 flex gap-2 rounded-xl border border-mint/15 bg-card/35 p-3">
-                        <Input
-                          autoFocus
-                          aria-label={`Nova opção para ${item.title}`}
-                          placeholder="Nome da opção"
-                          value={labels[item.id] ?? ""}
-                          onChange={(e) =>
-                            setLabels((v) => ({ ...v, [item.id]: e.target.value }))
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              void addOption(item);
-                            }
-                          }}
-                        />
-                        <Button type="button" disabled={busy || !labels[item.id]?.trim()} onClick={() => void addOption(item)}>
-                          Adicionar
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {!editable && item.kind === "single_choice" && (
-                  <div className="mt-5 rounded-xl border border-sky/25 bg-sky/5 p-4">
-                    <div className="flex items-start gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky/15 text-sky-dark">
-                        <Trophy className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <p className="font-semibold text-ink">Resultado oficial</p>
-                        <p className="mt-0.5 text-xs text-ink-muted">Selecione o vencedor desta pergunta para fechar a apuração.</p>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <Select
-                      aria-label={`Resultado oficial: ${item.title}`}
-                      value={results[item.id] ?? item.correctOptionId ?? ""}
-                      onChange={(e) =>
-                        setResults((v) => ({ ...v, [item.id]: e.target.value }))
-                      }
-                    >
-                      <option value="">Selecione o vencedor</option>
-                      {item.options.map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </Select>
-                    <Button
-                      size="sm"
-                      className="w-full sm:w-auto"
-                      disabled={!(results[item.id] ?? item.correctOptionId)}
-                      onClick={() =>
-                        action(`/admin/custom/questions/${item.id}/result`, {
-                          optionId: results[item.id] ?? item.correctOptionId,
-                        })
-                      }
-                    >
-                      <Check className="h-4 w-4" />
-                      Salvar resultado
-                    </Button>
-                    </div>
-                  </div>
-                )}
-                {!editable && item.kind === "multiple_choice" && (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-sm font-semibold">Resultado oficial</p>
-                    {item.options.map((option) => {
-                      const selected = multipleResults[item.id] ?? [];
-                      return (
-                        <label
-                          key={option.id}
-                          className="flex items-center gap-2"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selected.includes(option.id)}
-                            onChange={() =>
-                              setMultipleResults((all) => ({
-                                ...all,
-                                [item.id]: selected.includes(option.id)
-                                  ? selected.filter((id) => id !== option.id)
-                                  : [...selected, option.id],
-                              }))
-                            }
-                          />
-                          {option.label}
-                        </label>
-                      );
-                    })}
-                    <Button
-                      size="sm"
-                      disabled={
-                        (multipleResults[item.id]?.length ?? 0) <
-                        (item.minSelections ?? 1)
-                      }
-                      onClick={() =>
-                        action(
-                          `/admin/custom/multiple-choice/${item.id}/result`,
-                          { optionIds: multipleResults[item.id] ?? [] },
-                        )
-                      }
-                    >
-                      Salvar resultado
-                    </Button>
-                  </div>
-                )}
-              </>
-            )}
-            {item.kind === "numeric" && !editable && (
-              <div className="mt-3 flex gap-2">
-                <Input
-                  inputMode="decimal"
-                  aria-label={`Resultado oficial: ${item.title}`}
-                  value={results[item.id] ?? item.resultValue ?? ""}
-                  onChange={(e) =>
-                    setResults((v) => ({ ...v, [item.id]: e.target.value }))
-                  }
-                />
-                <Button
-                  size="sm"
-                  disabled={!(results[item.id] ?? item.resultValue)}
-                  onClick={() =>
-                    action(`/admin/custom/numeric/${item.id}/result`, {
-                      value: results[item.id] ?? item.resultValue,
-                    })
-                  }
-                >
-                  Salvar resultado
-                </Button>
-              </div>
-            )}
-          </Card>
-        ))}
+      <EventBuilderItems
+        draft={draft}
+        editable={editable}
+        mediaEditable={mediaEditable}
+        busy={busy}
+        editingItemId={editingItemId}
+        itemTitleDraft={itemTitleDraft}
+        setItemTitleDraft={setItemTitleDraft}
+        itemLockDraft={itemLockDraft}
+        setItemLockDraft={setItemLockDraft}
+        editingOptionId={editingOptionId}
+        optionLabelDraft={optionLabelDraft}
+        setOptionLabelDraft={setOptionLabelDraft}
+        openMediaOptionId={openMediaOptionId}
+        setOpenMediaOptionId={setOpenMediaOptionId}
+        mediaDrafts={mediaDrafts}
+        setMediaDrafts={setMediaDrafts}
+        openAddOptionItemId={openAddOptionItemId}
+        setOpenAddOptionItemId={setOpenAddOptionItemId}
+        labels={labels}
+        setLabels={setLabels}
+        results={results}
+        setResults={setResults}
+        multipleResults={multipleResults}
+        setMultipleResults={setMultipleResults}
+        action={action}
+        load={load}
+        addOption={addOption}
+        startItemEdit={startItemEdit}
+        cancelItemEdit={cancelItemEdit}
+        saveItemEdit={saveItemEdit}
+        startOptionEdit={startOptionEdit}
+        cancelOptionEdit={cancelOptionEdit}
+        saveOptionLabel={saveOptionLabel}
+        saveOptionMedia={saveOptionMedia}
+      />
         {draft.items.length > 0 && (
           <section>
             <h2 className="mb-3 text-2xl">Prévia</h2>
@@ -1255,7 +773,6 @@ export function EventBuilderPage() {
             )}
           </section>
         )}
-      </div>
     </PageShell>
   );
 }

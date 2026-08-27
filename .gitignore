@@ -65,6 +65,7 @@ Thumbs.db
 .claude/
 .codex/
 /.git/
+Doc/
 
 # Se usar VS Code ou JetBrains e quiser ignorar as configs locais:
 # .vscode/
