@@ -91,6 +91,20 @@ export interface PoolDashboardSummary {
   itemCount: number;
 }
 
+export interface PredictionReuseSuggestion {
+  available: boolean;
+  sourcePool: { name: string } | null;
+  answered: number;
+  copyable: number;
+  total: number;
+  locked: number;
+}
+
+export interface PredictionReuseResult {
+  copiedCount: number;
+  alreadyInitialized: boolean;
+}
+
 export interface EventRecord {
   id: string;
   name: string;

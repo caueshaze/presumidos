@@ -20,7 +20,8 @@ describe("PredictionItemRenderer", () => {
         item={{
           kind: "football_match",
           match: {
-            game: {} as never,
+          poolId: "pool-1",
+          game: {} as never,
             locked: false,
             isAdmin: false,
             index: 0,

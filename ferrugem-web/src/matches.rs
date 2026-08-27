@@ -400,7 +400,10 @@ pub async fn list_matches(token: String) -> Result<Vec<MatchRecord>, ServerFnErr
 }
 
 #[cfg(feature = "server")]
-pub async fn get_my_predictions(token: String) -> Result<Vec<PredictionRecord>, ServerFnError> {
+pub async fn get_my_predictions(
+    token: String,
+    pool_id: String,
+) -> Result<Vec<PredictionRecord>, ServerFnError> {
     use crate::auth::require_user;
     use crate::db::pool;
 
@@ -422,10 +425,10 @@ pub async fn get_my_predictions(token: String) -> Result<Vec<PredictionRecord>, 
     let rows = sqlx::query_as::<_, PredictionRow>(
         "SELECT item_id, match_id, home_score, away_score, qualifier, went_to_penalties,
                 penalty_home_score, penalty_away_score
-         FROM predictions WHERE user_id = ?1 AND match_id IS NOT NULL
-         GROUP BY item_id",
+         FROM predictions WHERE user_id = ?1 AND pool_id=?2 AND match_id IS NOT NULL",
     )
     .bind(&session.user_id)
+    .bind(&pool_id)
     .fetch_all(pool())
     .await
     .map_err(|e| crate::security::internal_error("get_my_predictions", e))?;
@@ -517,6 +520,7 @@ fn sanitize_knockout_input(
 #[cfg(feature = "server")]
 pub async fn submit_prediction(
     token: String,
+    pool_id: String,
     match_id: String,
     home_score: i64,
     away_score: i64,
@@ -526,7 +530,6 @@ pub async fn submit_prediction(
     use crate::auth::require_user;
     use crate::db::pool;
     use crate::models::is_knockout;
-    use chrono::Utc;
     use uuid::Uuid;
 
     crate::security::apply_security_headers();
@@ -545,10 +548,14 @@ pub async fn submit_prediction(
         "SELECT pi.id, pi.lock_at, m.phase
          FROM matches m
          JOIN prediction_items pi ON pi.id = m.prediction_item_id
-         JOIN events e ON e.id = pi.event_id
-         WHERE m.id = ?1 AND e.status = 'active'",
+         JOIN pools p ON p.event_version_id=pi.event_version_id
+         JOIN events e ON e.id = p.event_id
+         JOIN pool_members pm ON pm.pool_id=p.id AND pm.user_id=?2
+         WHERE m.id = ?1 AND p.id=?3 AND e.status = 'active'",
     )
     .bind(&match_id)
+    .bind(&session.user_id)
+    .bind(&pool_id)
     .fetch_optional(db)
     .await
     .map_err(|e| crate::security::internal_error("submit_prediction_match_lookup", e))?;
@@ -557,21 +564,18 @@ pub async fn submit_prediction(
         return Err(crate::security::public_error("Partida nao encontrada."));
     };
 
-    let lock_time = chrono::DateTime::parse_from_rfc3339(&lock_at)
-        .map_err(|e| crate::security::internal_error("submit_prediction_parse_lock_at", e))?;
-
-    let lock_minutes = crate::admin::prediction_lock_minutes().await?;
-    let locked_at = lock_time.with_timezone(&Utc) - chrono::Duration::minutes(lock_minutes);
-    let active_override = if Utc::now() >= locked_at {
-        crate::admin::active_prediction_override(&match_id, &session.user_id).await?
-    } else {
-        None
-    };
-    if Utc::now() >= locked_at && active_override.is_none() {
+    let active_override = crate::prediction_access::can_edit_item(
+        "football_match",
+        &lock_at,
+        Some(&match_id),
+        &session.user_id,
+    )
+    .await?;
+    let Some(active_override) = active_override else {
         return Err(crate::security::public_error(
             "Essa partida esta travada para palpite; use uma reabertura administrativa se necessario.",
         ));
-    }
+    };
 
     let ko = sanitize_knockout_input(
         is_knockout(phase.as_deref()),
@@ -580,30 +584,13 @@ pub async fn submit_prediction(
         knockout,
     )?;
 
-    let pools: Vec<(String,)> = sqlx::query_as(
-        "SELECT p.id FROM pool_members pm
-         JOIN pools p ON p.id = pm.pool_id
-         JOIN prediction_items pi ON pi.id = ?2 AND pi.event_id = p.event_id
-         WHERE pm.user_id = ?1",
-    )
-    .bind(&session.user_id)
-    .bind(&item_id)
-    .fetch_all(db)
-    .await
-    .map_err(|e| crate::security::internal_error("submit_prediction_pools", e))?;
-    if pools.is_empty() {
-        return Err(crate::security::public_error(
-            "Voce nao participa de um bolao deste evento.",
-        ));
-    }
     let mut tx = db
         .begin()
         .await
         .map_err(|e| crate::security::internal_error("submit_prediction_begin_tx", e))?;
-    for (pool_id,) in pools {
-        let id = Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO predictions
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO predictions
             (id, pool_id, user_id, item_id, match_id, home_score, away_score,
              qualifier, went_to_penalties, penalty_home_score, penalty_away_score)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
@@ -615,28 +602,27 @@ pub async fn submit_prediction(
             went_to_penalties = excluded.went_to_penalties,
             penalty_home_score = excluded.penalty_home_score,
             penalty_away_score = excluded.penalty_away_score",
-        )
-        .bind(&id)
-        .bind(&pool_id)
-        .bind(&session.user_id)
-        .bind(&item_id)
-        .bind(&match_id)
-        .bind(home_score)
-        .bind(away_score)
-        .bind(&ko.qualifier)
-        .bind(ko.went_to_penalties)
-        .bind(ko.penalty_home)
-        .bind(ko.penalty_away)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| crate::security::internal_error("submit_prediction_upsert", e))?;
-    }
+    )
+    .bind(&id)
+    .bind(&pool_id)
+    .bind(&session.user_id)
+    .bind(&item_id)
+    .bind(&match_id)
+    .bind(home_score)
+    .bind(away_score)
+    .bind(&ko.qualifier)
+    .bind(ko.went_to_penalties)
+    .bind(ko.penalty_home)
+    .bind(ko.penalty_away)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("submit_prediction_upsert", e))?;
     tx.commit()
         .await
         .map_err(|e| crate::security::internal_error("submit_prediction_commit", e))?;
 
-    if let Some(override_info) = active_override {
-        crate::admin::mark_prediction_override_used(&override_info.id).await?;
+    if !active_override.is_empty() {
+        crate::admin::mark_prediction_override_used(&active_override).await?;
     }
     let _ = crate::scoring::recalculate_match_breakdowns(&match_id, Some(&session.user_id)).await?;
 

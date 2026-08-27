@@ -81,12 +81,10 @@ pub async fn submit_single_choice_prediction(
             "Voce nao participa deste bolao.",
         ));
     }
-    let locked: (i64,) = sqlx::query_as("SELECT datetime(?1) <= datetime('now')")
-        .bind(&lock_at)
-        .fetch_one(db)
-        .await
-        .map_err(|e| crate::security::internal_error("submit_single_choice_lock", e))?;
-    if locked.0 != 0 {
+    if crate::prediction_access::can_edit_item("single_choice", &lock_at, None, &session.user_id)
+        .await?
+        .is_none()
+    {
         return Err(crate::security::public_error(
             "Esta pergunta esta travada para palpite.",
         ));

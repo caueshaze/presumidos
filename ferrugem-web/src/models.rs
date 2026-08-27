@@ -91,6 +91,42 @@ pub struct PoolDashboardSummary {
     pub item_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PredictionReuseSource {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PredictionReuseSuggestion {
+    pub available: bool,
+    pub source_pool: Option<PredictionReuseSource>,
+    pub answered: i64,
+    pub copyable: i64,
+    pub total: i64,
+    pub locked: i64,
+}
+impl PredictionReuseSuggestion {
+    pub fn unavailable() -> Self {
+        Self {
+            available: false,
+            source_pool: None,
+            answered: 0,
+            copyable: 0,
+            total: 0,
+            locked: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PredictionReuseResult {
+    pub copied_count: i64,
+    pub already_initialized: bool,
+}
+
 /// Dados leves do evento necessários para contextualizar um bolão.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

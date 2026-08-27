@@ -160,6 +160,7 @@ function PredictionSummary({
 }
 
 interface Props {
+  poolId: string;
   game: MatchRecord;
   prediction?: PredictionRecord;
   locked: boolean;
@@ -171,6 +172,7 @@ interface Props {
 }
 
 export function MatchCard({
+  poolId,
   game,
   prediction,
   locked,
@@ -274,6 +276,7 @@ export function MatchCard({
     }
     try {
       await submit.mutateAsync({
+        poolId,
         matchId: game.id,
         homeScore: home,
         awayScore: away,

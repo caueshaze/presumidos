@@ -12,7 +12,9 @@ mod football;
 mod matches;
 mod models;
 mod pools;
+mod prediction_access;
 mod prediction_items;
+mod prediction_reuse;
 mod scoring;
 
 mod assets;

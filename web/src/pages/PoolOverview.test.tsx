@@ -23,6 +23,9 @@ const pool = {
   visibleRules: "",
   joinClosedAt: null,
 };
+const reuseRefetch = vi.fn();
+const copyReuse = vi.fn();
+const startEmpty = vi.fn();
 
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { id: "user-1" } }),
@@ -36,6 +39,9 @@ vi.mock("@/hooks/queries", () => ({
   useLeavePool: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useDeletePool: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useCreatePoolReport: () => ({ mutateAsync: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  usePredictionReuseSuggestion: () => ({ isFetching: false, data: null, refetch: reuseRefetch }),
+  useCopyPredictionsReuse: () => ({ mutateAsync: copyReuse, isPending: false }),
+  useStartPredictionsEmpty: () => ({ mutateAsync: startEmpty, isPending: false }),
 }));
 
 function renderOverview() {
@@ -83,4 +89,19 @@ it("shows leaving to participants instead of pool deletion", () => {
   expect(screen.getByRole("menuitem", { name: /Sair do bolão/ })).toBeTruthy();
   expect(screen.queryByRole("menuitem", { name: /Excluir bolão/ })).toBeNull();
   pool.createdBy = "user-1";
+});
+
+it("offers a one-time copy only after Palpitar and explains independence", async () => {
+  reuseRefetch.mockReset();
+  reuseRefetch.mockResolvedValue({ data: { available: true, sourcePool: { name: "Bolão da firma" }, answered: 17, copyable: 12, total: 19, locked: 5 } });
+  renderOverview();
+  fireEvent.click(screen.getByRole("button", { name: "Palpitar" }));
+  await waitFor(() => expect(reuseRefetch).toHaveBeenCalledTimes(1));
+  expect(await screen.findByRole("dialog", { name: "Você já tem palpites para este evento" })).toBeTruthy();
+  expect(screen.getByText(/17 de 19 palpites feitos no “Bolão da firma”/)).toBeTruthy();
+  expect(screen.getByText(/12 ainda podem ser reutilizados/)).toBeTruthy();
+  expect(screen.getByText(/sem afetar os outros/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Começar do zero" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

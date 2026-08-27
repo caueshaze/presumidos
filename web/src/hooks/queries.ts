@@ -32,6 +32,8 @@ import type {
   PredictionReopenOverride,
   PredictionScoreBreakdown,
   PredictionRecord,
+  PredictionReuseResult,
+  PredictionReuseSuggestion,
   ScoringJob,
   SyncStatus,
   UserPublic,
@@ -341,10 +343,11 @@ export function useMatches() {
   });
 }
 
-export function useMyPredictions() {
+export function useMyPredictions(poolId: string | null) {
   return useQuery({
-    queryKey: ["predictions"],
-    queryFn: () => api.get<PredictionRecord[]>("/predictions"),
+    queryKey: ["predictions", poolId],
+    queryFn: () => api.get<PredictionRecord[]>(`/predictions?poolId=${encodeURIComponent(poolId ?? "")}`),
+    enabled: !!poolId,
   });
 }
 
@@ -374,6 +377,7 @@ export function useKnockoutReleased() {
 }
 
 export interface PredictionInput {
+  poolId: string;
   matchId: string;
   homeScore: number;
   awayScore: number;
@@ -385,7 +389,37 @@ export function useSubmitPrediction() {
   return useMutation({
     mutationFn: (input: PredictionInput) =>
       api.post<void>("/predictions", input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["predictions"] }),
+    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ["predictions", vars.poolId] }),
+  });
+}
+
+export function usePredictionReuseSuggestion(poolId: string | null) {
+  return useQuery({
+    queryKey: ["prediction-reuse", poolId],
+    queryFn: () => api.get<PredictionReuseSuggestion>(`/pools/${encodeURIComponent(poolId ?? "")}/prediction-reuse`),
+    enabled: false,
+    retry: false,
+  });
+}
+
+export function useCopyPredictionsReuse() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string) => api.post<PredictionReuseResult>(`/pools/${encodeURIComponent(poolId)}/prediction-reuse/copy`),
+    onSuccess: (_data, poolId) => {
+      qc.invalidateQueries({ queryKey: ["prediction-reuse", poolId] });
+      qc.invalidateQueries({ queryKey: ["custom-questions", poolId] });
+      qc.invalidateQueries({ queryKey: ["predictions", poolId] });
+      qc.invalidateQueries({ queryKey: ["pools", "dashboard"] });
+    },
+  });
+}
+
+export function useStartPredictionsEmpty() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string) => api.post<PredictionReuseResult>(`/pools/${encodeURIComponent(poolId)}/prediction-reuse/start-empty`),
+    onSuccess: (_data, poolId) => qc.invalidateQueries({ queryKey: ["prediction-reuse", poolId] }),
   });
 }
 

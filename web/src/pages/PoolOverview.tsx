@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorBanner, Label, Select } from "@/components/ui/field";
 import { useAuth } from "@/hooks/useAuth";
-import { useCreatePoolReport, useDashboardPools, useDeletePool, useEventShowcase, useLeavePool, useLeaderboard, usePools } from "@/hooks/queries";
-import type { PoolReportCategory } from "@/types";
+import { useCopyPredictionsReuse, useCreatePoolReport, useDashboardPools, useDeletePool, useEventShowcase, useLeavePool, useLeaderboard, usePools, usePredictionReuseSuggestion, useStartPredictionsEmpty } from "@/hooks/queries";
+import type { PoolReportCategory, PredictionReuseSuggestion } from "@/types";
 
 type ShareModalProps = {
   inviteUrl: string;
@@ -203,6 +203,38 @@ function PoolActionModal({
   );
 }
 
+function PredictionReuseModal({
+  suggestion,
+  pending,
+  error,
+  onCopy,
+  onStartEmpty,
+  onClose,
+}: {
+  suggestion: { sourcePool: { name: string } | null; answered: number; copyable: number; total: number; locked: number };
+  pending: boolean;
+  error: string;
+  onCopy: () => void;
+  onStartEmpty: () => void;
+  onClose: () => void;
+}) {
+  const source = suggestion.sourcePool?.name ?? "outro bolão";
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose(); }}>
+    <div className="w-full max-w-lg rounded-[28px] border border-mint/20 bg-card p-6 shadow-2xl shadow-black/25 sm:p-7" role="dialog" aria-modal="true" aria-labelledby="prediction-reuse-title" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="flex items-start justify-between gap-4">
+        <div><h2 id="prediction-reuse-title" className="text-2xl">Você já tem palpites para este evento</h2><p className="mt-2 text-sm text-ink-muted">Encontramos {suggestion.answered} de {suggestion.total} palpites feitos no “{source}”.</p></div>
+        <Button variant="link" size="sm" className="h-10 w-10 shrink-0 rounded-full p-0" aria-label="Fechar" disabled={pending} onClick={onClose}><X className="h-5 w-5" /></Button>
+      </div>
+      {suggestion.locked > 0 && <p className="mt-4 rounded-2xl bg-yellow/15 px-4 py-3 text-sm text-ink-muted">{suggestion.copyable} ainda podem ser reutilizados neste bolão. {suggestion.locked} já estão bloqueados.</p>}
+      <div className="mt-6 space-y-3">
+        <Button className="h-auto w-full justify-start whitespace-normal px-5 py-4 text-left" disabled={pending} onClick={onCopy}><span><span className="block text-base">{pending ? "Copiando palpites…" : `Usar ${suggestion.copyable} palpites já feitos`}</span><span className="mt-1 block text-sm font-normal opacity-90">Eles serão apenas copiados. Depois você poderá alterá-los neste bolão sem afetar os outros.</span></span></Button>
+        <Button variant="outline" className="w-full" disabled={pending} onClick={onStartEmpty}>Começar do zero</Button>
+      </div>
+      {error && <div className="mt-4"><ErrorBanner>{error}</ErrorBanner></div>}
+    </div>
+  </div>;
+}
+
 export function PoolOverviewPage() {
   const { poolId = "" } = useParams();
   const navigate = useNavigate();
@@ -214,26 +246,33 @@ export function PoolOverviewPage() {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [action, setAction] = useState<PoolAction | null>(null);
+  const [reuseModalOpen, setReuseModalOpen] = useState(false);
+  const [reuseError, setReuseError] = useState("");
+  const [reuseOffer, setReuseOffer] = useState<PredictionReuseSuggestion | null>(null);
   const [reportCategory, setReportCategory] = useState<PoolReportCategory>("inappropriate_content");
   const [reportDetails, setReportDetails] = useState("");
   const optionsRef = useRef<HTMLDivElement>(null);
   const leavePool = useLeavePool();
   const deletePool = useDeletePool();
   const createReport = useCreatePoolReport();
+  const reuseSuggestion = usePredictionReuseSuggestion(poolId || null);
+  const copyPredictions = useCopyPredictionsReuse();
+  const startEmpty = useStartPredictionsEmpty();
   const pool = pools.data?.find((item) => item.id === poolId);
   const summary = dashboard.data?.find((item) => item.pool.id === poolId);
   const showcase = useEventShowcase(poolId || null);
   useEffect(() => {
-    if (!shareModalOpen && !optionsOpen && !action) return;
+    if (!shareModalOpen && !optionsOpen && !action && !reuseModalOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (action) setAction(null);
+      else if (reuseModalOpen) setReuseModalOpen(false);
       else if (shareModalOpen) setShareModalOpen(false);
       else setOptionsOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [action, optionsOpen, shareModalOpen]);
+  }, [action, optionsOpen, reuseModalOpen, shareModalOpen]);
   useEffect(() => {
     if (!optionsOpen) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -322,6 +361,42 @@ export function PoolOverviewPage() {
     }
   };
 
+  const startPredictions = async () => {
+    setReuseError("");
+    try {
+      const result = await reuseSuggestion.refetch();
+      if (result.data?.available) {
+        setReuseOffer(result.data);
+        setReuseModalOpen(true);
+      }
+      else navigate(`/pools/${pool.id}/predictions`);
+    } catch {
+      navigate(`/pools/${pool.id}/predictions`);
+    }
+  };
+
+  const reusePredictions = async () => {
+    setReuseError("");
+    try {
+      await copyPredictions.mutateAsync(pool.id);
+      setReuseModalOpen(false);
+      navigate(`/pools/${pool.id}/predictions`);
+    } catch (error) {
+      setReuseError(error instanceof Error ? error.message : "Não foi possível copiar os palpites.");
+    }
+  };
+
+  const beginEmpty = async () => {
+    setReuseError("");
+    try {
+      await startEmpty.mutateAsync(pool.id);
+      setReuseModalOpen(false);
+      navigate(`/pools/${pool.id}/predictions`);
+    } catch (error) {
+      setReuseError(error instanceof Error ? error.message : "Não foi possível iniciar os palpites.");
+    }
+  };
+
   return <PageShell>
     <Button variant="link" size="sm" onClick={() => navigate("/pools")}>← Voltar aos bolões</Button>
     {(event?.coverAssetUrl ?? event?.coverUrl) && <div className="mt-4 overflow-hidden rounded-2xl border border-mint/20 bg-card"><img src={event.coverAssetUrl ?? event.coverUrl ?? undefined} alt="" loading="lazy" className="aspect-[3/1] w-full object-cover" onError={(item) => {
@@ -345,7 +420,7 @@ export function PoolOverviewPage() {
     <Card className="mt-6">
       <h2 className="text-xl">{historical ? "Consultar edição" : "Ações do bolão"}</h2>
       <div className="mt-4 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap">
-        <Button className="col-span-2 h-[52px] w-full justify-center sm:w-full" onClick={() => navigate(`/pools/${pool.id}/${historical ? "leaderboard" : "predictions"}`)}>{historical ? "Ver resultados" : "Continuar palpites"}<ArrowRight className="h-4 w-4" /></Button>
+        <Button className="col-span-2 h-[52px] w-full justify-center sm:w-full" disabled={reuseSuggestion.isFetching} onClick={() => historical ? navigate(`/pools/${pool.id}/leaderboard`) : void startPredictions()}>{historical ? "Ver resultados" : reuseSuggestion.isFetching ? "Verificando palpites…" : "Palpitar"}<ArrowRight className="h-4 w-4" /></Button>
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/leaderboard`)}><Trophy className="h-4 w-4 shrink-0 text-yellow-dark" />{historical ? "Ranking final" : "Ranking"}</Button>
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/members`)}><Users className="h-4 w-4 shrink-0 text-mint-dark" />Participantes</Button>
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/scoring`)}><BookOpenText className="h-4 w-4 shrink-0 text-mint-dark" />Regras</Button>
@@ -360,6 +435,7 @@ export function PoolOverviewPage() {
       </div>
     </Card>
     {shareModalOpen && !historical && <ShareModal inviteUrl={inviteUrl} inviteCode={pool.inviteCode} poolName={pool.name} copied={copied} canShare={canShare} onCopy={(value, target) => void copyShareValue(value, target)} onShare={() => void shareInvite()} onClose={() => setShareModalOpen(false)} />}
+    {reuseModalOpen && reuseOffer?.available && <PredictionReuseModal suggestion={reuseOffer} pending={copyPredictions.isPending || startEmpty.isPending} error={reuseError} onCopy={() => void reusePredictions()} onStartEmpty={() => void beginEmpty()} onClose={() => setReuseModalOpen(false)} />}
     {action && <PoolActionModal action={action} poolName={pool.name} reportCategory={reportCategory} reportDetails={reportDetails} reportPending={createReport.isPending} actionPending={leavePool.isPending || deletePool.isPending} error={actionError} onCategoryChange={setReportCategory} onDetailsChange={setReportDetails} onReport={() => void handleReport()} onLeave={() => void handleLeave()} onDelete={() => void handleDelete()} onClose={() => setAction(null)} />}
   </PageShell>;
 }

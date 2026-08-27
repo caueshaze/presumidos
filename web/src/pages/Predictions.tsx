@@ -97,7 +97,7 @@ export function PredictionsPage() {
   const [phaseFilter, setPhaseFilter] = useState<string | null>(null);
   const [hideFinished, setHideFinished] = useState(true);
   const matches = useMatches();
-  const predictions = useMyPredictions();
+  const predictions = useMyPredictions(poolId);
   const overrides = useMyPredictionOverrides();
   const matchPoints = useMyMatchPoints();
   const knockout = useKnockoutReleased();
@@ -395,6 +395,7 @@ export function PredictionsPage() {
                     item={{
                       kind: "football_match",
                       match: {
+                        poolId: poolId!,
                         index: i,
                         game,
                         prediction: predictions.data?.find((p) => p.matchId === game.id),

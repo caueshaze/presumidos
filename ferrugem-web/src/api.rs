@@ -361,6 +361,7 @@ struct JoinPoolBody {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PredictionBody {
+    pool_id: String,
     match_id: String,
     home_score: i64,
     away_score: i64,
@@ -1400,9 +1401,9 @@ async fn knockout_released() -> ApiResult<impl IntoResponse> {
     Ok(Json(json!({ "released": released })))
 }
 
-async fn my_predictions() -> ApiResult<impl IntoResponse> {
+async fn my_predictions(Query(query): Query<PoolIdQuery>) -> ApiResult<impl IntoResponse> {
     Ok(Json(
-        crate::matches::get_my_predictions(String::new()).await?,
+        crate::matches::get_my_predictions(String::new(), query.pool_id).await?,
     ))
 }
 
@@ -1422,6 +1423,7 @@ async fn submit_prediction(
 ) -> ApiResult<StatusCode> {
     crate::matches::submit_prediction(
         String::new(),
+        body.pool_id,
         body.match_id,
         body.home_score,
         body.away_score,
@@ -1430,6 +1432,30 @@ async fn submit_prediction(
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn prediction_reuse_suggestion(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::prediction_reuse::suggestion(String::new(), pool_id).await?,
+    ))
+}
+
+async fn prediction_reuse_copy(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::prediction_reuse::copy(String::new(), pool_id, csrf_header(&headers)).await?,
+    ))
+}
+
+async fn prediction_reuse_start_empty(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::prediction_reuse::start_empty(String::new(), pool_id, csrf_header(&headers)).await?,
+    ))
 }
 
 async fn submit_single_choice_prediction(
@@ -2449,6 +2475,18 @@ pub fn router() -> Router {
         )
         .route("/pools/join", post(join_pool))
         .route("/pools/{pool_id}/leave", post(leave_pool))
+        .route(
+            "/pools/{pool_id}/prediction-reuse",
+            get(prediction_reuse_suggestion),
+        )
+        .route(
+            "/pools/{pool_id}/prediction-reuse/copy",
+            post(prediction_reuse_copy),
+        )
+        .route(
+            "/pools/{pool_id}/prediction-reuse/start-empty",
+            post(prediction_reuse_start_empty),
+        )
         .route("/pools/{pool_id}/reports", post(create_pool_report))
         .route(
             "/pools/{pool_id}/member-predictions",
