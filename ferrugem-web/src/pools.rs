@@ -2,8 +2,28 @@ use crate::error::ServerFnError;
 
 use crate::models::{
     EventKind, EventStatus, EventSummary, MemberPredictions, PointAdjustment, PoolDashboardSummary,
-    PoolPredictionRecord, PoolSummary, PredictionReactionGroup, UserPublic,
+    PoolPredictionRecord, PoolReport, PoolSummary, PredictionReactionGroup,
+    PublicPoolInvitePreview, UserPublic,
 };
+
+#[cfg(feature = "server")]
+#[derive(sqlx::FromRow)]
+struct PoolReportRow {
+    id: String,
+    pool_id: String,
+    pool_name: String,
+    invite_code: String,
+    reporter_user_id: Option<String>,
+    reporter_username: Option<String>,
+    category: String,
+    details: String,
+    status: String,
+    reviewed_by: Option<String>,
+    reviewed_by_username: Option<String>,
+    reviewed_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
 
 #[cfg(feature = "server")]
 pub async fn football_scoring_config(
@@ -343,6 +363,204 @@ async fn generate_invite_code(pool: &sqlx::SqlitePool) -> Result<String, ServerF
 }
 
 #[cfg(feature = "server")]
+fn normalize_invite_code(value: String) -> Result<String, ServerFnError> {
+    let value = crate::security::normalize_required_text("Codigo de convite", value, 6, 64)?;
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(crate::security::public_error("Codigo de convite invalido."));
+    }
+    Ok(value.to_uppercase())
+}
+
+#[cfg(feature = "server")]
+fn timestamp_elapsed(value: &str) -> bool {
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(value) {
+        return parsed <= chrono::Utc::now();
+    }
+    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+        .map(|parsed| parsed <= chrono::Utc::now().naive_utc())
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "server")]
+#[derive(sqlx::FromRow)]
+struct InviteRecord {
+    pool_id: String,
+    event_id: String,
+    pool_name: String,
+    created_by: String,
+    description: String,
+    visible_rules: String,
+    join_closed_at: Option<String>,
+    event_name: String,
+    event_slug: String,
+    event_kind: String,
+    event_status: String,
+    event_ends_at: Option<String>,
+    event_description: Option<String>,
+    cover_url: Option<String>,
+    cover_asset_id: Option<String>,
+    creator_display_name: String,
+    member_count: i64,
+    lock_deadline: Option<String>,
+}
+
+#[cfg(feature = "server")]
+async fn resolve_invite(
+    db: &sqlx::SqlitePool,
+    invite_code: &str,
+) -> Result<Option<InviteRecord>, ServerFnError> {
+    sqlx::query_as::<_, InviteRecord>(
+        "SELECT p.id AS pool_id,p.event_id,p.name AS pool_name,p.created_by,p.description,p.visible_rules,p.join_closed_at,
+                v.name AS event_name,e.slug AS event_slug,e.kind AS event_kind,e.status AS event_status,
+                e.ends_at AS event_ends_at,v.description AS event_description,v.cover_url,v.cover_asset_id,
+                u.username AS creator_display_name,
+                (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id=p.id) AS member_count,
+                COALESCE((SELECT MIN(pi.lock_at) FROM prediction_items pi
+                          WHERE pi.event_version_id=p.event_version_id),e.ends_at) AS lock_deadline
+         FROM pools p
+         JOIN event_versions v ON v.id=p.event_version_id
+         JOIN events e ON e.id=p.event_id
+         JOIN users u ON u.id=p.created_by
+         WHERE upper(p.invite_code)=?1",
+    )
+    .bind(invite_code)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("invite_resolve", e))
+}
+
+#[cfg(feature = "server")]
+pub async fn public_invite_preview(
+    invite_code: String,
+) -> Result<PublicPoolInvitePreview, ServerFnError> {
+    use std::time::Duration;
+
+    crate::security::apply_security_headers();
+    let headers = crate::security::current_headers();
+    let client_ip = crate::security::client_ip(&headers);
+    crate::security::enforce_rate_limit(crate::security::RateLimitRequest {
+        key: format!("rl:invite_preview:ip:{client_ip}"),
+        rule: crate::security::RateLimitRule {
+            window: Duration::from_secs(60),
+            max_attempts: 60,
+        },
+        blocked_event: "rate_limit_triggered_invite_preview_ip",
+        failure_policy: crate::security::RateLimitFailurePolicy::FailOpen,
+        audit_fields: serde_json::json!({ "client_ip": client_ip }),
+    })
+    .await?;
+    crate::operability::metrics()
+        .invite_preview
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    let invite_code = match normalize_invite_code(invite_code) {
+        Ok(value) => value,
+        Err(_) => {
+            return Ok(PublicPoolInvitePreview {
+                pool_name: None,
+                event_name: None,
+                event_description: None,
+                cover_asset_url: None,
+                cover_url: None,
+                creator_display_name: None,
+                member_count: None,
+                lock_deadline: None,
+                join_status: "invalid".to_string(),
+                pool_id: None,
+            });
+        }
+    };
+
+    let db = crate::db::pool();
+    let Some(invite) = resolve_invite(db, &invite_code).await? else {
+        return Ok(PublicPoolInvitePreview {
+            pool_name: None,
+            event_name: None,
+            event_description: None,
+            cover_asset_url: None,
+            cover_url: None,
+            creator_display_name: None,
+            member_count: None,
+            lock_deadline: None,
+            join_status: "invalid".to_string(),
+            pool_id: None,
+        });
+    };
+
+    let ended = invite.event_status == "finished"
+        || invite
+            .event_ends_at
+            .as_deref()
+            .is_some_and(timestamp_elapsed);
+    let closed = invite.join_closed_at.is_some() || ended;
+    let user_id = crate::auth::current_user(String::new())
+        .await?
+        .user
+        .map(|u| u.id);
+    let already_member = if let Some(user_id) = &user_id {
+        sqlx::query_as::<_, (i64,)>(
+            "SELECT EXISTS(SELECT 1 FROM pool_members WHERE pool_id=?1 AND user_id=?2)",
+        )
+        .bind(&invite.pool_id)
+        .bind(user_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::security::internal_error("invite_preview_membership", e))?
+        .0 != 0
+    } else {
+        false
+    };
+    let can_rejoin_ended = if ended {
+        if let Some(user_id) = user_id.as_deref() {
+            sqlx::query_as::<_, (i64,)>(
+                "SELECT EXISTS(
+                    SELECT 1 FROM audit_logs
+                    WHERE action = 'pool_member_left'
+                      AND target_type = 'pool'
+                      AND target_id = ?1
+                      AND actor_user_id = ?2
+                )",
+            )
+            .bind(&invite.pool_id)
+            .bind(user_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("invite_preview_rejoin", e))?
+            .0 != 0
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    Ok(PublicPoolInvitePreview {
+        pool_name: Some(invite.pool_name),
+        event_name: Some(invite.event_name),
+        event_description: invite.event_description,
+        cover_asset_url: invite
+            .cover_asset_id
+            .map(|asset_id| format!("/media/assets/{asset_id}/cover")),
+        cover_url: invite.cover_url,
+        creator_display_name: Some(invite.creator_display_name),
+        member_count: Some(invite.member_count),
+        lock_deadline: invite.lock_deadline,
+        join_status: if already_member {
+            "already_member"
+        } else if invite.join_closed_at.is_some() || (closed && !can_rejoin_ended) {
+            "closed"
+        } else {
+            "joinable"
+        }
+        .to_string(),
+        pool_id: already_member.then_some(invite.pool_id),
+    })
+}
+
+#[cfg(feature = "server")]
 pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnError> {
     use crate::auth::require_user;
     use crate::db::pool;
@@ -583,9 +801,7 @@ pub async fn join_pool(
     let session = require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
 
-    let invite_code =
-        crate::security::normalize_required_text("Codigo de convite", invite_code, 6, 12)?
-            .to_uppercase();
+    let invite_code = normalize_invite_code(invite_code)?;
     let client_ip = crate::security::client_ip(&headers);
     crate::security::enforce_rate_limit(crate::security::RateLimitRequest {
         key: format!("rl:join_pool:ip:{client_ip}"),
@@ -603,87 +819,294 @@ pub async fn join_pool(
 
     let db = pool();
 
-    let row: Option<(String, String, String, String, String, String, Option<String>, String, String, String, String, Option<String>)> =
-        sqlx::query_as("SELECT p.id, p.event_id, p.name, p.created_by, p.description, p.visible_rules, p.join_closed_at, v.name, e.slug, e.kind, e.status, e.ends_at FROM pools p JOIN events e ON e.id=p.event_id JOIN event_versions v ON v.id=p.event_version_id WHERE p.invite_code = ?1")
-            .bind(&invite_code)
-            .fetch_optional(db)
-            .await
-            .map_err(|e| crate::security::internal_error("join_pool_lookup", e))?;
-
-    let Some((
-        pool_id,
-        event_id,
-        name,
-        created_by,
-        description,
-        visible_rules,
-        join_closed_at,
-        event_name,
-        event_slug,
-        event_kind,
-        event_status,
-        event_ends_at,
-    )) = row
-    else {
+    let Some(invite) = resolve_invite(db, &invite_code).await? else {
         return Err(crate::security::public_error("Codigo de convite invalido."));
     };
 
-    if join_closed_at.is_some() {
+    if invite.join_closed_at.is_some() {
         return Err(crate::security::public_error(
             "Este bolao esta fechado para novos participantes.",
         ));
     }
-    if event_status == "finished"
-        || event_ends_at
+    let ended = invite.event_status == "finished"
+        || invite
+            .event_ends_at
             .as_deref()
-            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-            .is_some_and(|value| value <= chrono::Utc::now())
-    {
+            .is_some_and(timestamp_elapsed);
+    let can_rejoin_ended = if ended {
+        sqlx::query_as::<_, (i64,)>(
+            "SELECT EXISTS(
+                SELECT 1 FROM audit_logs
+                WHERE action = 'pool_member_left'
+                  AND target_type = 'pool'
+                  AND target_id = ?1
+                  AND actor_user_id = ?2
+            )",
+        )
+        .bind(&invite.pool_id)
+        .bind(&session.user_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::security::internal_error("join_pool_rejoin_check", e))?
+        .0 != 0
+    } else {
+        false
+    };
+    if ended && !can_rejoin_ended {
         return Err(crate::security::public_error(
             "Este bolão pertence a uma edição encerrada.",
         ));
     }
 
     sqlx::query("INSERT OR IGNORE INTO pool_members (pool_id, user_id) VALUES (?1, ?2)")
-        .bind(&pool_id)
+        .bind(&invite.pool_id)
         .bind(&session.user_id)
         .execute(db)
         .await
         .map_err(|e| crate::security::internal_error("join_pool_insert_member", e))?;
 
     let _ = crate::scoring::recalculate_pool_user_breakdowns(
-        &pool_id,
+        &invite.pool_id,
         &session.user_id,
         Some(&session.user_id),
     )
     .await?;
 
+    crate::operability::metrics()
+        .invite_join_success
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     let member_count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id = ?1")
-            .bind(&pool_id)
+            .bind(&invite.pool_id)
             .fetch_one(db)
             .await
             .map_err(|e| crate::security::internal_error("join_pool_count_members", e))?;
 
     Ok(PoolSummary {
-        id: pool_id,
+        id: invite.pool_id,
         event: event_summary(
-            event_id.clone(),
-            event_name,
-            event_slug,
-            event_kind,
-            event_status,
-            event_ends_at,
+            invite.event_id.clone(),
+            invite.event_name,
+            invite.event_slug,
+            invite.event_kind,
+            invite.event_status,
+            invite.event_ends_at,
         ),
-        event_id,
-        name,
+        event_id: invite.event_id,
+        name: invite.pool_name,
         invite_code,
         member_count: member_count.0,
-        created_by,
-        description,
-        visible_rules,
-        join_closed_at,
+        created_by: invite.created_by,
+        description: invite.description,
+        visible_rules: invite.visible_rules,
+        join_closed_at: invite.join_closed_at,
     })
+}
+
+/// Remove a membership without deleting the member's pool-scoped predictions.
+#[cfg(feature = "server")]
+pub async fn leave_pool(
+    token: String,
+    pool_id: String,
+    csrf_token: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::require_user;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    crate::security::validate_uuid("Bolao", &pool_id)?;
+    let headers = crate::security::current_headers();
+    let session = require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+    let db = pool();
+
+    let membership: Option<(String,)> = sqlx::query_as(
+        "SELECT p.created_by
+         FROM pools p
+         JOIN pool_members pm ON pm.pool_id = p.id
+         WHERE p.id = ?1 AND pm.user_id = ?2",
+    )
+    .bind(&pool_id)
+    .bind(&session.user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("leave_pool_membership", e))?;
+    let Some((created_by,)) = membership else {
+        return Err(crate::security::public_error(
+            "Voce nao participa deste bolao.",
+        ));
+    };
+    if created_by == session.user_id {
+        return Err(crate::security::public_error(
+            "O dono nao pode sair. Exclua o bolao pelas opcoes.",
+        ));
+    }
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("leave_pool_begin_tx", e))?;
+    sqlx::query("DELETE FROM pool_members WHERE pool_id = ?1 AND user_id = ?2")
+        .bind(&pool_id)
+        .bind(&session.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("leave_pool_delete_membership", e))?;
+    sqlx::query(
+        "INSERT INTO audit_logs
+            (id, actor_user_id, action, target_type, target_id, ip_address, details_json)
+         VALUES (?1, ?2, 'pool_member_left', 'pool', ?3, ?4, ?5)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&session.user_id)
+    .bind(&pool_id)
+    .bind(crate::security::client_ip(&headers))
+    .bind(serde_json::json!({ "preserved_pool_data": true }).to_string())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("leave_pool_audit", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("leave_pool_commit", e))?;
+    Ok(())
+}
+
+/// Creates an internal report for a pool while preserving a snapshot of its
+/// public identity, even if the pool is deleted later.
+#[cfg(feature = "server")]
+pub async fn create_pool_report(
+    token: String,
+    pool_id: String,
+    category: String,
+    details: String,
+    csrf_token: String,
+) -> Result<PoolReport, ServerFnError> {
+    use crate::auth::require_user;
+    use crate::db::pool;
+
+    crate::security::apply_security_headers();
+    crate::security::validate_uuid("Bolao", &pool_id)?;
+    let headers = crate::security::current_headers();
+    let session = require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+    let category = crate::security::normalize_required_text("Motivo", category, 1, 40)?;
+    if !matches!(
+        category.as_str(),
+        "inappropriate_content" | "spam_or_fraud" | "harassment" | "other"
+    ) {
+        return Err(crate::security::public_error(
+            "Motivo de denuncia invalido.",
+        ));
+    }
+    let details = crate::security::normalize_optional_text(details, 1000)?;
+    let db = pool();
+    let Some((pool_name, invite_code)) = sqlx::query_as::<_, (String, String)>(
+        "SELECT p.name, p.invite_code
+         FROM pools p
+         JOIN pool_members pm ON pm.pool_id = p.id
+         WHERE p.id = ?1 AND pm.user_id = ?2",
+    )
+    .bind(&pool_id)
+    .bind(&session.user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("create_pool_report_membership", e))?
+    else {
+        return Err(crate::security::public_error(
+            "Voce nao participa deste bolao.",
+        ));
+    };
+    let duplicate: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM pool_reports
+         WHERE pool_id = ?1 AND reporter_user_id = ?2 AND status IN ('open', 'reviewing')
+         LIMIT 1",
+    )
+    .bind(&pool_id)
+    .bind(&session.user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("create_pool_report_duplicate", e))?;
+    if duplicate.is_some() {
+        return Err(crate::security::public_error(
+            "Voce ja possui uma denuncia aberta para este bolao.",
+        ));
+    }
+
+    let report_id = uuid::Uuid::new_v4().to_string();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("create_pool_report_begin_tx", e))?;
+    sqlx::query(
+        "INSERT INTO pool_reports
+            (id, pool_id, pool_name, invite_code, reporter_user_id, category, details)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )
+    .bind(&report_id)
+    .bind(&pool_id)
+    .bind(&pool_name)
+    .bind(&invite_code)
+    .bind(&session.user_id)
+    .bind(&category)
+    .bind(&details)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("create_pool_report_insert", e))?;
+    sqlx::query(
+        "INSERT INTO audit_logs
+            (id, actor_user_id, action, target_type, target_id, ip_address, details_json)
+         VALUES (?1, ?2, 'pool_report_created', 'pool', ?3, ?4, ?5)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&session.user_id)
+    .bind(&pool_id)
+    .bind(crate::security::client_ip(&headers))
+    .bind(
+        serde_json::json!({ "report_id": report_id.clone(), "category": category.clone() })
+            .to_string(),
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("create_pool_report_audit", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("create_pool_report_commit", e))?;
+
+    let row: PoolReportRow = sqlx::query_as(
+        "SELECT r.id, r.pool_id, r.pool_name, r.invite_code, r.reporter_user_id,
+                reporter.username AS reporter_username, r.category, r.details, r.status, r.reviewed_by,
+                reviewer.username AS reviewed_by_username, r.reviewed_at, r.created_at, r.updated_at
+         FROM pool_reports r
+         LEFT JOIN users reporter ON reporter.id = r.reporter_user_id
+         LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+         WHERE r.id = ?1",
+    )
+    .bind(&report_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| crate::security::internal_error("create_pool_report_load", e))?;
+    Ok(pool_report_from_row(row))
+}
+
+#[cfg(feature = "server")]
+fn pool_report_from_row(row: PoolReportRow) -> PoolReport {
+    PoolReport {
+        id: row.id,
+        pool_id: row.pool_id,
+        pool_name: row.pool_name,
+        invite_code: row.invite_code,
+        reporter_user_id: row.reporter_user_id,
+        reporter_username: row.reporter_username,
+        category: row.category,
+        details: row.details,
+        status: row.status,
+        reviewed_by: row.reviewed_by,
+        reviewed_by_username: row.reviewed_by_username,
+        reviewed_at: row.reviewed_at,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
 }
 
 /// Palpites dos membros de um bolão, na visão "perfil por membro".
@@ -1322,6 +1745,106 @@ pub async fn remove_pool_member_admin(
     .await?;
 
     Ok(())
+}
+
+#[cfg(feature = "server")]
+pub async fn list_pool_reports_admin(
+    token: String,
+    status: Option<String>,
+) -> Result<Vec<PoolReport>, ServerFnError> {
+    use crate::auth::require_admin;
+
+    crate::security::apply_security_headers();
+    require_admin(&token).await?;
+    if let Some(value) = status.as_deref() {
+        if !matches!(value, "open" | "reviewing" | "resolved" | "dismissed") {
+            return Err(crate::security::public_error(
+                "Status de denuncia invalido.",
+            ));
+        }
+    }
+    let rows: Vec<PoolReportRow> = sqlx::query_as(
+        "SELECT r.id, r.pool_id, r.pool_name, r.invite_code, r.reporter_user_id,
+                reporter.username AS reporter_username, r.category, r.details, r.status, r.reviewed_by,
+                reviewer.username AS reviewed_by_username, r.reviewed_at, r.created_at, r.updated_at
+         FROM pool_reports r
+         LEFT JOIN users reporter ON reporter.id = r.reporter_user_id
+         LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+         WHERE (?1 IS NULL OR r.status = ?1)
+         ORDER BY CASE r.status WHEN 'open' THEN 0 WHEN 'reviewing' THEN 1 ELSE 2 END,
+                  datetime(r.created_at) DESC",
+    )
+    .bind(status)
+    .fetch_all(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("list_pool_reports_admin", e))?;
+    Ok(rows.into_iter().map(pool_report_from_row).collect())
+}
+
+#[cfg(feature = "server")]
+pub async fn update_pool_report_status_admin(
+    token: String,
+    report_id: String,
+    status: String,
+    csrf_token: String,
+) -> Result<PoolReport, ServerFnError> {
+    use crate::auth::require_recent_admin;
+
+    crate::security::apply_security_headers();
+    crate::security::validate_uuid("Denuncia", &report_id)?;
+    if !matches!(
+        status.as_str(),
+        "open" | "reviewing" | "resolved" | "dismissed"
+    ) {
+        return Err(crate::security::public_error(
+            "Status de denuncia invalido.",
+        ));
+    }
+    let headers = crate::security::current_headers();
+    let session = require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+    let db = crate::db::pool();
+    let result = sqlx::query(
+        "UPDATE pool_reports
+         SET status = ?2,
+             reviewed_by = CASE WHEN ?2 = 'open' THEN NULL ELSE ?3 END,
+             reviewed_at = CASE WHEN ?2 = 'open' THEN NULL ELSE datetime('now') END,
+             updated_at = datetime('now')
+         WHERE id = ?1",
+    )
+    .bind(&report_id)
+    .bind(&status)
+    .bind(&session.user_id)
+    .execute(db)
+    .await
+    .map_err(|e| crate::security::internal_error("update_pool_report_status", e))?;
+    if result.rows_affected() == 0 {
+        return Err(crate::security::public_error("Denuncia nao encontrada."));
+    }
+    crate::security::append_audit_log(
+        db,
+        Some(&session.user_id),
+        "pool_report_status_changed",
+        "pool_report",
+        Some(&report_id),
+        Some(&crate::security::client_ip(&headers)),
+        serde_json::json!({ "status": status }),
+    )
+    .await?;
+    let row: PoolReportRow = sqlx::query_as(
+        "SELECT r.id, r.pool_id, r.pool_name, r.invite_code, r.reporter_user_id,
+                reporter.username AS reporter_username, r.category, r.details, r.status, r.reviewed_by,
+                reviewer.username AS reviewed_by_username, r.reviewed_at, r.created_at, r.updated_at
+         FROM pool_reports r
+         LEFT JOIN users reporter ON reporter.id = r.reporter_user_id
+         LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+         WHERE r.id = ?1",
+    )
+    .bind(&report_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| crate::security::internal_error("update_pool_report_load", e))?;
+    Ok(pool_report_from_row(row))
 }
 
 // ---------------------------------------------------------------------------

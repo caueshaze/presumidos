@@ -11,7 +11,14 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     return <AuthPendingCard message="Verificando sua sessão no Presumidos..." />;
   }
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    const from = `${location.pathname}${location.search}${location.hash}`;
+    const legacyInvite = location.pathname === "/dashboard"
+      ? new URLSearchParams(location.search).get("invite")
+      : null;
+    const returnTo = legacyInvite
+      ? `/pools/join/${encodeURIComponent(legacyInvite)}`
+      : from;
+    return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />;
   }
   return <>{children}</>;
 }

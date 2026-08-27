@@ -204,15 +204,31 @@ pub async fn set_result_authorized(
     token: String,
     item_id: String,
     value: String,
+    pool_id: Option<String>,
     csrf: String,
 ) -> Result<(), ServerFnError> {
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     let db = crate::db::pool();
-    let row:Option<(i64,Option<i64>,Option<i64>,String)>=sqlx::query_as("SELECT n.decimal_places,n.min_value_scaled,n.max_value_scaled,pi.event_version_id FROM prediction_items pi JOIN numeric_questions n ON n.item_id=pi.id JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)").bind(&item_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_result_authorization",e))?;
+    let row: Option<(i64, Option<i64>, Option<i64>, String)> =
+        if let Some(pool_id) = pool_id.as_deref() {
+            sqlx::query_as("SELECT n.decimal_places,n.min_value_scaled,n.max_value_scaled,pi.event_version_id FROM prediction_items pi JOIN numeric_questions n ON n.item_id=pi.id JOIN pools p ON p.event_version_id=pi.event_version_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND p.id=?3 AND (p.created_by=?2 OR u.is_admin=1)")
+                .bind(&item_id)
+                .bind(&session.user_id)
+                .bind(pool_id)
+                .fetch_optional(db)
+                .await
+        } else {
+            sqlx::query_as("SELECT n.decimal_places,n.min_value_scaled,n.max_value_scaled,pi.event_version_id FROM prediction_items pi JOIN numeric_questions n ON n.item_id=pi.id JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)")
+                .bind(&item_id)
+                .bind(&session.user_id)
+                .fetch_optional(db)
+                .await
+        }
+        .map_err(|e| crate::security::internal_error("numeric_result_authorization", e))?;
     let Some((places, min, max, version_id)) = row else {
         return Err(crate::security::public_error(
-            "Somente o dono do evento ou admin pode definir o resultado.",
+            "Somente o dono do bolão ou admin pode definir o resultado.",
         ));
     };
     let places = validate_question(places, min, max).map_err(crate::security::public_error)?;

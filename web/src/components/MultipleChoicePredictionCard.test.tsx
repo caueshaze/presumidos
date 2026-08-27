@@ -55,6 +55,9 @@ it("submits the complete selected set and enforces max selections", async () => 
     .mockResolvedValue(new Response(null, { status: 204 }));
   vi.stubGlobal("fetch", fetchMock);
   renderCard();
+  expect(screen.getByText("1")).toBeTruthy();
+  expect(screen.getByText("2")).toBeTruthy();
+  expect(screen.getByText("3")).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: "A" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "C" }));
   expect(

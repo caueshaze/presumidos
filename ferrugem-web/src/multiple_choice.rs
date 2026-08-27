@@ -141,6 +141,7 @@ pub async fn set_result_authorized(
     token: String,
     item_id: String,
     option_ids: Vec<String>,
+    pool_id: Option<String>,
     csrf: String,
 ) -> Result<(), crate::error::ServerFnError> {
     use crate::auth::require_user;
@@ -151,11 +152,24 @@ pub async fn set_result_authorized(
         return Err(crate::security::public_error("Selecione opções únicas."));
     }
     let db = crate::db::pool();
-    let row:Option<(i64,Option<i64>,i64,String)>=sqlx::query_as("SELECT q.min_selections,q.max_selections,COUNT(o.id),pi.event_version_id FROM prediction_items pi JOIN multiple_choice_questions q ON q.item_id=pi.id JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 LEFT JOIN custom_question_options o ON o.item_id=pi.id WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1) GROUP BY pi.id")
-        .bind(&item_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("multiple_choice_result_authorization",e))?;
+    let row: Option<(i64, Option<i64>, i64, String)> = if let Some(pool_id) = pool_id.as_deref() {
+        sqlx::query_as("SELECT q.min_selections,q.max_selections,COUNT(o.id),pi.event_version_id FROM prediction_items pi JOIN multiple_choice_questions q ON q.item_id=pi.id JOIN pools p ON p.event_version_id=pi.event_version_id LEFT JOIN users u ON u.id=?2 LEFT JOIN custom_question_options o ON o.item_id=pi.id WHERE pi.id=?1 AND p.id=?3 AND (p.created_by=?2 OR u.is_admin=1) GROUP BY pi.id")
+            .bind(&item_id)
+            .bind(&session.user_id)
+            .bind(pool_id)
+            .fetch_optional(db)
+            .await
+    } else {
+        sqlx::query_as("SELECT q.min_selections,q.max_selections,COUNT(o.id),pi.event_version_id FROM prediction_items pi JOIN multiple_choice_questions q ON q.item_id=pi.id JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 LEFT JOIN custom_question_options o ON o.item_id=pi.id WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1) GROUP BY pi.id")
+            .bind(&item_id)
+            .bind(&session.user_id)
+            .fetch_optional(db)
+            .await
+    }
+    .map_err(|e| crate::security::internal_error("multiple_choice_result_authorization", e))?;
     let Some((min, max, option_count, version_id)) = row else {
         return Err(crate::security::public_error(
-            "Somente o dono do evento ou admin pode definir o resultado.",
+            "Somente o dono do bolão ou admin pode definir o resultado.",
         ));
     };
     validate_selection_count(option_ids.len(), min, max, option_count)

@@ -69,6 +69,7 @@ struct AdminEventRow {
     item_count: i64,
     option_count: i64,
     pool_count: i64,
+    archived_at: Option<String>,
 }
 
 #[cfg(feature = "server")]
@@ -90,6 +91,7 @@ struct AdminEventStateRow {
     external_url: Option<String>,
     pool_creation_enabled: i64,
     current_published_version_id: Option<String>,
+    archived_at: Option<String>,
 }
 
 #[cfg(feature = "server")]
@@ -111,6 +113,7 @@ fn admin_event_from_row(row: AdminEventStateRow) -> Event {
         external_url,
         pool_creation_enabled,
         current_published_version_id,
+        archived_at,
     } = row;
     Event {
         id,
@@ -120,6 +123,11 @@ fn admin_event_from_row(row: AdminEventStateRow) -> Event {
             EventKind::Custom
         } else {
             EventKind::Football
+        },
+        origin: if created_by.is_some() {
+            crate::models::EventOrigin::User
+        } else {
+            crate::models::EventOrigin::System
         },
         status: match status.as_str() {
             "draft" => EventStatus::Draft,
@@ -140,6 +148,7 @@ fn admin_event_from_row(row: AdminEventStateRow) -> Event {
         external_url,
         pool_creation_enabled: pool_creation_enabled != 0,
         current_published_version_id,
+        archived_at,
     }
 }
 
@@ -155,7 +164,7 @@ pub async fn list_events_admin(
         "SELECT e.id, COALESCE(v.name,e.name) AS name, e.slug, e.kind, e.status, e.created_by, u.username AS created_by_username,
                 e.starts_at, e.ends_at, e.created_at, e.updated_at, COALESCE(v.description,e.description) AS description,
                 COALESCE(v.cover_url,e.cover_url) AS cover_url, COALESCE(v.cover_asset_id,e.cover_asset_id) AS cover_asset_id, COALESCE(v.external_url,e.external_url) AS external_url,
-                e.pool_creation_enabled, e.current_published_version_id,
+                e.pool_creation_enabled, e.current_published_version_id, e.archived_at,
                 (SELECT w.id FROM event_versions w WHERE w.event_id=e.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1) AS working_version_id,
                 (SELECT v2.version_number FROM event_versions v2 WHERE v2.id=e.current_published_version_id) AS current_version_number,
                 (SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_version_id=COALESCE(e.current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=e.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1))) AS item_count,
@@ -178,6 +187,11 @@ pub async fn list_events_admin(
                 EventKind::Custom
             } else {
                 EventKind::Football
+            },
+            origin: if row.created_by.is_some() {
+                crate::models::EventOrigin::User
+            } else {
+                crate::models::EventOrigin::System
             },
             status: match row.status.as_str() {
                 "draft" => EventStatus::Draft,
@@ -203,6 +217,7 @@ pub async fn list_events_admin(
             item_count: row.item_count,
             option_count: row.option_count,
             pool_count: row.pool_count,
+            archived_at: row.archived_at,
         })
         .collect())
 }
@@ -222,7 +237,7 @@ pub async fn set_pool_creation_enabled(
     crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
     let db = crate::db::pool();
     let changed = sqlx::query(
-        "UPDATE events SET pool_creation_enabled=?2, updated_at=datetime('now') WHERE id=?1",
+        "UPDATE events SET pool_creation_enabled=?2, updated_at=datetime('now') WHERE id=?1 AND archived_at IS NULL",
     )
     .bind(&event_id)
     .bind(if enabled { 1_i64 } else { 0_i64 })
@@ -260,8 +275,8 @@ pub async fn finish_event(
     let db = crate::db::pool();
     let row: Option<AdminEventStateRow> =
         sqlx::query_as::<_, AdminEventStateRow>(
-            "SELECT e.id, COALESCE(v.name,e.name) AS name, e.slug, e.kind, e.status, e.created_by, e.starts_at, e.ends_at, e.created_at, e.updated_at, COALESCE(v.description,e.description) AS description, COALESCE(v.cover_url,e.cover_url) AS cover_url, COALESCE(v.cover_asset_id,e.cover_asset_id) AS cover_asset_id, COALESCE(v.external_url,e.external_url) AS external_url, e.pool_creation_enabled, e.current_published_version_id
-             FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.id = ?1",
+            "SELECT e.id, COALESCE(v.name,e.name) AS name, e.slug, e.kind, e.status, e.created_by, e.starts_at, e.ends_at, e.created_at, e.updated_at, COALESCE(v.description,e.description) AS description, COALESCE(v.cover_url,e.cover_url) AS cover_url, COALESCE(v.cover_asset_id,e.cover_asset_id) AS cover_asset_id, COALESCE(v.external_url,e.external_url) AS external_url, e.pool_creation_enabled, e.current_published_version_id, e.archived_at
+             FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.id = ?1 AND e.archived_at IS NULL",
         )
         .bind(&event_id)
         .fetch_optional(db)

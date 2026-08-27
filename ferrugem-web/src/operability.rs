@@ -105,6 +105,9 @@ pub struct Metrics {
     pub db_failures: AtomicU64,
     pub asset_failures: AtomicU64,
     pub import_failures: AtomicU64,
+    pub invite_preview: AtomicU64,
+    pub invite_join_success: AtomicU64,
+    pub invite_join_failure: AtomicU64,
     pub in_flight: AtomicUsize,
 }
 
@@ -117,7 +120,7 @@ pub fn metrics() -> &'static Metrics {
 pub fn metrics_text() -> String {
     let m = metrics();
     format!(
-        "# TYPE presumidos_http_requests_total counter\npresumidos_http_requests_total {}\n# TYPE presumidos_http_5xx_total counter\npresumidos_http_5xx_total {}\n# TYPE presumidos_http_errors_total counter\npresumidos_http_errors_total {}\n# TYPE presumidos_rate_limit_hits_total counter\npresumidos_rate_limit_hits_total {}\n# TYPE presumidos_db_failures_total counter\npresumidos_db_failures_total {}\n# TYPE presumidos_asset_failures_total counter\npresumidos_asset_failures_total {}\n# TYPE presumidos_import_failures_total counter\npresumidos_import_failures_total {}\n# TYPE presumidos_http_in_flight gauge\npresumidos_http_in_flight {}\n",
+        "# TYPE presumidos_http_requests_total counter\npresumidos_http_requests_total {}\n# TYPE presumidos_http_5xx_total counter\npresumidos_http_5xx_total {}\n# TYPE presumidos_http_errors_total counter\npresumidos_http_errors_total {}\n# TYPE presumidos_rate_limit_hits_total counter\npresumidos_rate_limit_hits_total {}\n# TYPE presumidos_db_failures_total counter\npresumidos_db_failures_total {}\n# TYPE presumidos_asset_failures_total counter\npresumidos_asset_failures_total {}\n# TYPE presumidos_import_failures_total counter\npresumidos_import_failures_total {}\n# TYPE presumidos_invite_preview_total counter\npresumidos_invite_preview_total {}\n# TYPE presumidos_invite_join_success_total counter\npresumidos_invite_join_success_total {}\n# TYPE presumidos_invite_join_failure_total counter\npresumidos_invite_join_failure_total {}\n# TYPE presumidos_http_in_flight gauge\npresumidos_http_in_flight {}\n",
         m.requests.load(Ordering::Relaxed),
         m.responses_5xx.load(Ordering::Relaxed),
         m.request_errors.load(Ordering::Relaxed),
@@ -125,6 +128,9 @@ pub fn metrics_text() -> String {
         m.db_failures.load(Ordering::Relaxed),
         m.asset_failures.load(Ordering::Relaxed),
         m.import_failures.load(Ordering::Relaxed),
+        m.invite_preview.load(Ordering::Relaxed),
+        m.invite_join_success.load(Ordering::Relaxed),
+        m.invite_join_failure.load(Ordering::Relaxed),
         m.in_flight.load(Ordering::Relaxed),
     )
 }

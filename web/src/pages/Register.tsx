@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useRegisterRequest, useRegisterConfirm } from "@/hooks/queries";
 import { FormShell } from "@/components/PageShell";
@@ -8,10 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ErrorBanner } from "@/components/ui/field";
 import { isValidEmail } from "@/lib/utils";
+import { authReturnTo, safeReturnTo } from "@/lib/navigation";
 
 export function RegisterPage() {
   const { user, loading, applySession } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const requestReg = useRegisterRequest();
   const confirmReg = useRegisterConfirm();
 
@@ -22,9 +24,11 @@ export function RegisterPage() {
   const [code, setCode] = useState("");
   const [awaitingCode, setAwaitingCode] = useState(false);
   const [error, setError] = useState("");
+  const requestedReturnTo = new URLSearchParams(location.search).get("returnTo");
+  const returnTo = safeReturnTo(requestedReturnTo, "/");
 
   if (loading) return <AuthPendingCard message="Verificando sua sessão no Presumidos..." />;
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={returnTo} replace />;
 
   const onRequest = async (e: FormEvent) => {
     e.preventDefault();
@@ -46,7 +50,7 @@ export function RegisterPage() {
     try {
       const result = await confirmReg.mutateAsync({ email, code });
       await applySession(result);
-      navigate("/dashboard", { replace: true });
+      navigate(safeReturnTo(requestedReturnTo, "/dashboard"), { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Código inválido.");
     }
@@ -126,7 +130,7 @@ export function RegisterPage() {
       </form>
       <p className="mt-4 text-sm text-ink-muted">
         Já tem conta?{" "}
-        <Link to="/login" className="font-semibold text-mint-dark hover:underline">
+        <Link to={authReturnTo(returnTo)} className="font-semibold text-mint-dark hover:underline">
           Faça login aqui
         </Link>
       </p>

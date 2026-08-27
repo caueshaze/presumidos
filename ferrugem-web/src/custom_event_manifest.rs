@@ -717,8 +717,9 @@ use sqlx::{sqlite::SqliteConnection, Sqlite, SqlitePool};
 async fn load_manifest_conn(
     conn: &mut SqliteConnection,
     event_id: &str,
+    version_id: Option<&str>,
 ) -> Result<CustomEventManifest, ServerFnError> {
-    let event: Option<(String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>)> = sqlx::query_as("SELECT v.name,e.slug,e.kind,v.description,e.starts_at,e.ends_at,v.cover_url,v.external_url,v.cover_asset_id,a.sha256,a.media_type FROM events e JOIN event_versions v ON v.id=COALESCE(e.current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=e.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) LEFT JOIN assets a ON a.id=v.cover_asset_id WHERE e.id=?1").bind(event_id).fetch_optional(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_event", e))?;
+    let event: Option<(String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>)> = sqlx::query_as("SELECT v.name,e.slug,e.kind,v.description,e.starts_at,e.ends_at,v.cover_url,v.external_url,v.cover_asset_id,a.sha256,a.media_type FROM events e JOIN event_versions v ON v.id=COALESCE(?2,e.current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=e.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) LEFT JOIN assets a ON a.id=v.cover_asset_id WHERE e.id=?1").bind(event_id).bind(version_id).fetch_optional(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_event", e))?;
     let Some((
         name,
         slug,
@@ -735,7 +736,7 @@ async fn load_manifest_conn(
     else {
         return Err(crate::security::public_error("Evento não encontrado."));
     };
-    let rows: Vec<(String,String,String,Option<String>,String,String,i64,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)> = sqlx::query_as("SELECT pi.external_key,pi.kind,pi.title,pi.description,pi.lock_at,pi.reveal_at,pi.sort_order,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1) ORDER BY pi.sort_order,pi.id").bind(event_id).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_items", e))?;
+    let rows: Vec<(String,String,String,Option<String>,String,String,i64,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)> = sqlx::query_as("SELECT pi.external_key,pi.kind,pi.title,pi.description,pi.lock_at,pi.reveal_at,pi.sort_order,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=COALESCE(?2,(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1)) ORDER BY pi.sort_order,pi.id").bind(event_id).bind(version_id).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_items", e))?;
     let mut items = Vec::new();
     for (
         external_key,
@@ -756,10 +757,10 @@ async fn load_manifest_conn(
         let Some(external_key) = Some(external_key) else {
             return Err(crate::security::public_error("item custom sem externalKey"));
         };
-        let options_rows: Vec<(String,String,i64,Option<String>,Option<String>,Option<String>)> = sqlx::query_as("SELECT o.external_key,o.label,o.sort_order,o.image_url,a.sha256,a.media_type FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id LEFT JOIN assets a ON a.id=o.image_asset_id WHERE pi.event_version_id=(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1) AND pi.external_key=?2 ORDER BY o.sort_order,o.id").bind(event_id).bind(&external_key).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_options", e))?;
+        let options_rows: Vec<(String,String,i64,Option<String>,Option<String>,Option<String>)> = sqlx::query_as("SELECT o.external_key,o.label,o.sort_order,o.image_url,a.sha256,a.media_type FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id LEFT JOIN assets a ON a.id=o.image_asset_id WHERE pi.event_version_id=COALESCE(?3,(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1)) AND pi.external_key=?2 ORDER BY o.sort_order,o.id").bind(event_id).bind(&external_key).bind(version_id).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_options", e))?;
         let mut options = Vec::new();
         for (option_key, label, _sort, image_url, image_sha256, image_media_type) in options_rows {
-            let links: Vec<(String,String,String,i64)> = sqlx::query_as("SELECT l.kind,l.label,l.url,l.sort_order FROM option_links l JOIN custom_question_options o ON o.id=l.option_id JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_version_id=(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1) AND pi.external_key=?2 AND o.external_key=?3 ORDER BY l.sort_order,l.id").bind(event_id).bind(&external_key).bind(&option_key).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_links", e))?;
+            let links: Vec<(String,String,String,i64)> = sqlx::query_as("SELECT l.kind,l.label,l.url,l.sort_order FROM option_links l JOIN custom_question_options o ON o.id=l.option_id JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_version_id=COALESCE(?4,(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1)) AND pi.external_key=?2 AND o.external_key=?3 ORDER BY l.sort_order,l.id").bind(event_id).bind(&external_key).bind(&option_key).bind(version_id).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_links", e))?;
             options.push(CustomEventManifestOption {
                 external_key: option_key,
                 label,
@@ -837,7 +838,7 @@ async fn load_manifest(
         .acquire()
         .await
         .map_err(|e| crate::security::internal_error("manifest_export_connection", e))?;
-    load_manifest_conn(&mut conn, event_id).await
+    load_manifest_conn(&mut conn, event_id, None).await
 }
 
 /// Ensures that an editor has an isolated working copy.  The published
@@ -847,14 +848,52 @@ async fn load_manifest(
 pub async fn ensure_working_revision(event_id: &str, actor: &str) -> Result<String, ServerFnError> {
     crate::security::validate_uuid("Evento", event_id)?;
     let db = crate::db::pool();
-    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
-        "SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
+    if let Some((id, base_fingerprint, fingerprint_value)) = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT id,COALESCE(base_fingerprint,''),fingerprint FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
     )
     .bind(event_id)
     .fetch_optional(db)
     .await
     .map_err(|e| crate::security::internal_error("working_revision_lookup", e))?
     {
+        // A previous process could have persisted the revision header before
+        // failing while copying items. Repair only that exact incomplete copy;
+        // a legitimately edited empty revision has a different fingerprint.
+        let published_fingerprint = if sqlx::query_as::<_, (String,)>(
+            "SELECT id FROM event_versions WHERE event_id=?1 AND state='published' ORDER BY version_number DESC LIMIT 1",
+        )
+        .bind(event_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| crate::security::internal_error("working_revision_repair_published", e))?
+        .is_some()
+        {
+            Some(fingerprint(&load_manifest(db, event_id).await?).map_err(crate::security::public_error)?)
+        } else {
+            None
+        };
+        let item_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM prediction_items WHERE event_version_id=?1",
+        )
+        .bind(&id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| crate::security::internal_error("working_revision_repair_items", e))?;
+        if item_count.0 == 0
+            && published_fingerprint
+                .as_ref()
+                .is_some_and(|published| published == &base_fingerprint && published == &fingerprint_value)
+        {
+            let (manifest, _) = export_for_event(event_id).await?;
+            let mut tx = db
+                .begin()
+                .await
+                .map_err(|e| crate::security::internal_error("working_revision_repair_begin", e))?;
+            insert_items(&mut tx, event_id, &id, &manifest).await?;
+            tx.commit()
+                .await
+                .map_err(|e| crate::security::internal_error("working_revision_repair_commit", e))?;
+        }
         return Ok(id);
     }
 
@@ -929,23 +968,185 @@ pub async fn ensure_working_revision(event_id: &str, actor: &str) -> Result<Stri
                 fp,
             )
         };
+    let current_manifest = if current.is_some() {
+        Some(export_for_event(event_id).await?.0)
+    } else {
+        None
+    };
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("working_revision_create_begin", e))?;
     sqlx::query("INSERT INTO event_versions(id,event_id,version_number,state,is_current_published,name,description,cover_url,cover_asset_id,external_url,fingerprint,base_fingerprint,created_by) VALUES(?1,?2,?3,'working',0,?4,?5,?6,?7,?8,?9,?10,?11)")
         .bind(&version_id).bind(event_id).bind(number.0).bind(name).bind(description).bind(cover_url).bind(current_cover_asset_id.and_then(|v| v.0)).bind(external_url).bind(&fingerprint_value).bind(&base).bind(actor)
-        .execute(db).await
+        .execute(&mut *tx).await
         .map_err(|e| crate::security::internal_error("working_revision_create", e))?;
-
-    if current.is_some() {
-        let (manifest, _) = export_for_event(event_id).await?;
-        let mut tx = db
-            .begin()
-            .await
-            .map_err(|e| crate::security::internal_error("working_revision_copy_begin", e))?;
-        insert_items(&mut tx, event_id, &version_id, &manifest).await?;
-        tx.commit()
-            .await
-            .map_err(|e| crate::security::internal_error("working_revision_copy_commit", e))?;
+    if let Some(manifest) = current_manifest.as_ref() {
+        insert_items(&mut tx, event_id, &version_id, manifest).await?;
+    } else {
+        // Compatibilidade com drafts legados criados antes da associação
+        // obrigatória de itens a uma EventVersion. A revisão de trabalho nova
+        // passa a ser a dona desses itens, permitindo que o Builder e o
+        // upload de assets continuem operando sem editar conteúdo publicado.
+        sqlx::query(
+            "UPDATE prediction_items SET event_version_id=?2
+             WHERE event_id=?1 AND event_version_id IS NULL",
+        )
+        .bind(event_id)
+        .bind(&version_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("working_revision_adopt_legacy_items", e))?;
     }
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("working_revision_create_commit", e))?;
     Ok(version_id)
+}
+
+#[cfg(feature = "server")]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreVersionResult {
+    pub version_id: String,
+    pub version_number: i64,
+    pub source_version_id: String,
+    pub source_version_number: i64,
+    pub replaced_working_version_id: Option<String>,
+}
+
+/// Recreates a previous published definition as a fresh working revision.
+/// The source version and every Pool that already points to it remain intact.
+#[cfg(feature = "server")]
+pub async fn restore_published_version(
+    event_id: &str,
+    source_version_id: &str,
+    actor: &str,
+) -> Result<RestoreVersionResult, ServerFnError> {
+    crate::security::validate_uuid("Evento", event_id)?;
+    crate::security::validate_uuid("Versão", source_version_id)?;
+    let db = crate::db::pool();
+    let mut tx = db
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|e| crate::security::internal_error("version_restore_begin", e))?;
+
+    let source: (String, i64, String, Option<String>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT v.id,v.version_number,v.name,v.description,v.cover_url,v.cover_asset_id,v.external_url
+         FROM event_versions v JOIN events e ON e.id=v.event_id
+         WHERE v.id=?1 AND v.event_id=?2 AND v.state='published' AND e.kind='custom'",
+    )
+    .bind(source_version_id)
+    .bind(event_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("version_restore_source", e))?
+    .ok_or_else(|| crate::security::public_error("A versão publicada não foi encontrada."))?;
+
+    let manifest = load_manifest_conn(&mut *tx, event_id, Some(source_version_id)).await?;
+    let restored_fingerprint = fingerprint(&manifest).map_err(crate::security::public_error)?;
+    let current_fingerprint: Option<(String,)> = sqlx::query_as(
+        "SELECT fingerprint FROM event_versions WHERE event_id=?1 AND state='published' AND is_current_published=1",
+    )
+    .bind(event_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("version_restore_current", e))?;
+    let base_fingerprint = match current_fingerprint.map(|row| row.0) {
+        Some(value) if !value.is_empty() => value,
+        _ => fingerprint(&load_manifest_conn(&mut *tx, event_id, None).await?)
+            .map_err(crate::security::public_error)?,
+    };
+
+    let working: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(event_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("version_restore_working", e))?;
+    let replaced_working_version_id = working.as_ref().map(|row| row.0.clone());
+    if let Some((working_id,)) = working {
+        let pool_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM pools WHERE event_version_id=?1")
+                .bind(&working_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| crate::security::internal_error("version_restore_working_pools", e))?;
+        if pool_count.0 > 0 {
+            return Err(crate::security::public_error(
+                "A revisão atual já está vinculada a bolões e não pode ser substituída.",
+            ));
+        }
+        sqlx::query("DELETE FROM official_results WHERE event_version_id=?1")
+            .bind(&working_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("version_restore_working_results", e))?;
+        sqlx::query("DELETE FROM prediction_items WHERE event_version_id=?1")
+            .bind(&working_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("version_restore_working_items", e))?;
+        sqlx::query("DELETE FROM event_versions WHERE id=?1 AND state='working'")
+            .bind(&working_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("version_restore_working_delete", e))?;
+    }
+
+    let version_id = uuid::Uuid::new_v4().to_string();
+    let next_number: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(MAX(version_number),0)+1 FROM event_versions WHERE event_id=?1",
+    )
+    .bind(event_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("version_restore_number", e))?;
+    sqlx::query(
+        "INSERT INTO event_versions(id,event_id,version_number,state,is_current_published,name,description,cover_url,cover_asset_id,external_url,fingerprint,base_fingerprint,created_by)
+         VALUES(?1,?2,?3,'working',0,?4,?5,?6,?7,?8,?9,?10,?11)",
+    )
+    .bind(&version_id)
+    .bind(event_id)
+    .bind(next_number.0)
+    .bind(&source.2)
+    .bind(&source.3)
+    .bind(&source.4)
+    .bind(&source.5)
+    .bind(&source.6)
+    .bind(&restored_fingerprint)
+    .bind(&base_fingerprint)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("version_restore_insert", e))?;
+    insert_items(&mut tx, event_id, &version_id, &manifest).await?;
+    sqlx::query("INSERT INTO audit_logs(id,actor_user_id,action,target_type,target_id,ip_address,details_json) VALUES(?1,?2,'event_version_restored','event',?3,NULL,?4)")
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(actor)
+        .bind(event_id)
+        .bind(serde_json::json!({
+            "sourceVersionId": source.0,
+            "sourceVersionNumber": source.1,
+            "newVersionId": version_id,
+            "newVersionNumber": next_number.0,
+            "replacedWorkingVersionId": replaced_working_version_id,
+            "itemCount": manifest.items.len(),
+        }).to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::security::internal_error("version_restore_audit", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("version_restore_commit", e))?;
+    Ok(RestoreVersionResult {
+        version_id,
+        version_number: next_number.0,
+        source_version_id: source.0,
+        source_version_number: source.1,
+        replaced_working_version_id,
+    })
 }
 
 #[cfg(feature = "server")]
@@ -1255,7 +1456,7 @@ async fn apply_manifest(
                 "slug já pertence a um evento não customizado",
             ));
         }
-        Some(load_manifest_conn(&mut *tx, id).await?)
+        Some(load_manifest_conn(&mut *tx, id, None).await?)
     } else {
         None
     };

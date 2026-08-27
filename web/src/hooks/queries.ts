@@ -26,6 +26,9 @@ import type {
   PointAdjustment,
   PoolSummary,
   PoolDashboardSummary,
+  PoolReport,
+  PoolReportStatus,
+  PublicPoolInvitePreview,
   PredictionReopenOverride,
   PredictionScoreBreakdown,
   PredictionRecord,
@@ -209,6 +212,32 @@ export function useFinishEvent() {
   });
 }
 
+export function useDeleteEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (eventId: string) =>
+      api.post<void>(`/custom/events/${eventId}/delete`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["custom-events"] });
+      qc.invalidateQueries({ queryKey: ["admin-events"] });
+      qc.invalidateQueries({ queryKey: ["pools"] });
+    },
+  });
+}
+
+export function useAdminDeleteEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (eventId: string) =>
+      api.post<void>(`/admin/events/${eventId}/delete`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-events"] });
+      qc.invalidateQueries({ queryKey: ["custom-events"] });
+      qc.invalidateQueries({ queryKey: ["pools"] });
+    },
+  });
+}
+
 export function useSetEventPoolCreation() {
   const qc = useQueryClient();
   return useMutation({
@@ -254,11 +283,50 @@ export function useJoinPool() {
   });
 }
 
+export function usePublicPoolInvitePreview(inviteCode: string) {
+  return useQuery({
+    queryKey: ["public-pool-invite", inviteCode],
+    queryFn: () =>
+      api.get<PublicPoolInvitePreview>(
+        `/public/pools/invite/${encodeURIComponent(inviteCode)}`,
+      ),
+    enabled: inviteCode.length > 0,
+    retry: false,
+  });
+}
+
 export function useDeletePool() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (poolId: string) => api.post<void>(`/pools/${poolId}/delete`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pools"] }),
+  });
+}
+
+export function useLeavePool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string) => api.post<void>(`/pools/${poolId}/leave`),
+    onSuccess: (_data, poolId) => {
+      qc.invalidateQueries({ queryKey: ["pools"] });
+      qc.invalidateQueries({ queryKey: ["pools", "dashboard"] });
+      qc.invalidateQueries({ queryKey: ["pool-member-predictions", poolId] });
+    },
+  });
+}
+
+export function useCreatePoolReport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; category: PoolReport["category"]; details: string }) =>
+      api.post<PoolReport>(`/pools/${vars.poolId}/reports`, {
+        category: vars.category,
+        details: vars.details,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-pool-reports"] });
+      qc.invalidateQueries({ queryKey: ["admin-audit"] });
+    },
   });
 }
 
@@ -454,6 +522,7 @@ export function useSetCustomResult() {
     mutationFn: (vars: { itemId: string; optionId: string; poolId: string }) =>
       api.post<void>(`/admin/custom/questions/${vars.itemId}/result`, {
         optionId: vars.optionId,
+        poolId: vars.poolId,
       }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
@@ -486,6 +555,7 @@ export function useSetNumericResult() {
     mutationFn: (vars: { poolId: string; itemId: string; value: string }) =>
       api.post<void>(`/admin/custom/numeric/${vars.itemId}/result`, {
         value: vars.value,
+        poolId: vars.poolId,
       }),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
@@ -521,6 +591,7 @@ export function useSetMultipleChoiceResult() {
     }) =>
       api.post<void>(`/admin/custom/multiple-choice/${vars.itemId}/result`, {
         optionIds: vars.optionIds,
+        poolId: vars.poolId,
       }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["custom-questions", vars.poolId] });
@@ -909,6 +980,30 @@ export function useRemovePoolMember() {
       qc.invalidateQueries({ queryKey: ["admin-pool-members", vars.poolId] });
       qc.invalidateQueries({ queryKey: ["admin-pools"] });
       qc.invalidateQueries({ queryKey: ["admin-overview"] });
+    },
+  });
+}
+
+export function useAdminPoolReports(status?: PoolReportStatus) {
+  return useQuery({
+    queryKey: ["admin-pool-reports", status ?? "all"],
+    queryFn: () =>
+      api.get<PoolReport[]>(
+        `/admin/pool-reports${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+      ),
+  });
+}
+
+export function useUpdatePoolReportStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { reportId: string; status: PoolReportStatus }) =>
+      api.post<PoolReport>(`/admin/pool-reports/${vars.reportId}/status`, {
+        status: vars.status,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-pool-reports"] });
+      qc.invalidateQueries({ queryKey: ["admin-audit"] });
     },
   });
 }

@@ -5,7 +5,6 @@ import {
   useCustomQuestions,
   useFootballScoring,
   useMatches,
-  useMyEvents,
   usePools,
   useSetCustomResult,
   useSetMultipleChoiceResult,
@@ -27,7 +26,6 @@ export function PoolScoringPage() {
   const { user, isAdmin } = useAuth();
   const pools = usePools();
   const matches = useMatches();
-  const events = useMyEvents();
   const pool = pools.data?.find((item) => item.id === poolId);
   const custom = useCustomQuestions(
     pool?.event.kind === "custom" ? poolId : null,
@@ -53,9 +51,6 @@ export function PoolScoringPage() {
       );
   }, [football.data]);
   const owner = pool?.createdBy === user?.id || isAdmin;
-  const eventOwner =
-    isAdmin ||
-    events.data?.some((event) => event.id === pool?.eventId) === true;
   if (pools.isLoading)
     return (
       <PageShell>
@@ -218,7 +213,7 @@ export function PoolScoringPage() {
               )}
             </div>
           </Card>
-          {eventOwner && (
+          {owner && (
             <Card className="mt-5">
               <h2 className="text-xl">Resultados oficiais do evento</h2>
               <p className="mt-1 text-sm text-ink-muted">
@@ -513,33 +508,61 @@ function CustomScoringRow({
 }) {
   const [correct, setCorrect] = useState(String(question.correctPoints));
   const [incorrect, setIncorrect] = useState(String(question.incorrectPoints));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    setSaved(false);
+    try {
+      await save(+correct, +incorrect);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2200);
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-mint/15 pb-3 last:border-0">
+    <div className="grid gap-3 border-b border-mint/15 pb-3 last:border-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
       <span className="font-medium">{question.title}</span>
       {owner ? (
-        <div className="flex items-center gap-2">
-          <Input
-            aria-label={`Pontos por acerto: ${question.title}`}
-            className="w-16"
-            type="number"
-            min="0"
-            value={correct}
-            onChange={(e) => setCorrect(e.target.value)}
-          />
-          <Input
-            aria-label={`Pontos por erro: ${question.title}`}
-            className="w-16"
-            type="number"
-            min="0"
-            value={incorrect}
-            onChange={(e) => setIncorrect(e.target.value)}
-          />
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
+            Acerto
+            <Input
+              aria-label={`Pontos por acerto: ${question.title}`}
+              className="w-16"
+              type="number"
+              min="0"
+              value={correct}
+              onChange={(e) => {
+                setCorrect(e.target.value);
+                setSaved(false);
+              }}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
+            Erro
+            <Input
+              aria-label={`Pontos por erro: ${question.title}`}
+              className="w-16"
+              type="number"
+              min="0"
+              value={incorrect}
+              onChange={(e) => {
+                setIncorrect(e.target.value);
+                setSaved(false);
+              }}
+            />
+          </label>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => save(+correct, +incorrect)}
+            className={saved ? "border-mint-dark bg-mint/15 text-mint-dark" : undefined}
+            disabled={saving}
+            onClick={() => void handleSave()}
           >
-            Salvar
+            {saving ? "Salvando..." : saved ? "Salvo ✓" : "Salvar"}
           </Button>
         </div>
       ) : (
@@ -563,10 +586,10 @@ function CustomResultRow({
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-mint/15 pb-3 last:border-0">
       <Label>{question.title}</Label>
-      <div className="flex gap-2">
+      <div className="flex w-full gap-2 sm:w-[32rem]">
         <select
           aria-label={`Vencedor: ${question.title}`}
-          className="rounded-lg border border-mint/25 bg-card px-2 py-1"
+          className="min-w-0 flex-1 rounded-lg border border-mint/25 bg-card px-3 py-2"
           value={optionId}
           onChange={(e) => setOptionId(e.target.value)}
         >
@@ -577,7 +600,12 @@ function CustomResultRow({
             </option>
           ))}
         </select>
-        <Button size="sm" disabled={!optionId} onClick={() => save(optionId)}>
+        <Button
+          size="sm"
+          className="w-32 shrink-0 justify-center"
+          disabled={!optionId}
+          onClick={() => save(optionId)}
+        >
           Salvar resultado
         </Button>
       </div>

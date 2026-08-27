@@ -7,6 +7,7 @@ import {
   Clock3,
   Eye,
   EyeOff,
+  Flag,
   Lock,
   RefreshCcw,
   Send,
@@ -24,6 +25,7 @@ import {
   useAdminMatchAudit,
   useAdminOverview,
   useAdminPoolMembers,
+  useAdminPoolReports,
   useAdminPools,
   useAdminPredictions,
   useAdminSendPushBroadcast,
@@ -34,6 +36,7 @@ import {
   useCreateMatch,
   useCheckFixture,
   useDeleteMatch,
+  useAdminDeleteEvent,
   useFinishEvent,
   useInvalidateUserSessions,
   useKnockoutReleased,
@@ -52,6 +55,7 @@ import {
   useTriggerUserPasswordReset,
   useUnblockUser,
   useUpdateMatchSchedule,
+  useUpdatePoolReportStatus,
   useSetMatchFixture,
   useSetEventPoolCreation,
   usePublishEventVersion,
@@ -68,7 +72,7 @@ import { ErrorBanner, Label, Select } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { AdminManifestPanel } from "@/components/AdminManifestPanel";
 import { api } from "@/lib/api";
-import type { AdminEventRecord, AdminMatchRecord, AdminSettings, FixtureCheckResult } from "@/types";
+import type { AdminEventRecord, AdminMatchRecord, AdminSettings, FixtureCheckResult, PoolReportStatus } from "@/types";
 
 type AdminTab =
   | "overview"
@@ -78,6 +82,7 @@ type AdminTab =
   | "scoring"
   | "users"
   | "pools"
+  | "reports"
   | "audit"
   | "settings";
 
@@ -89,9 +94,25 @@ const tabs: Array<{ id: AdminTab; label: string }> = [
   { id: "scoring", label: "Pontuação" },
   { id: "users", label: "Usuários" },
   { id: "pools", label: "Bolões" },
+  { id: "reports", label: "Denúncias" },
   { id: "audit", label: "Auditoria" },
   { id: "settings", label: "Configurações" },
 ];
+
+const reportCategoryLabels = {
+  inappropriate_content: "Conteúdo inadequado",
+  spam_or_fraud: "Spam ou fraude",
+  harassment: "Assédio",
+  other: "Outro",
+} as const;
+
+const reportStatusLabels: Record<PoolReportStatus, string> = {
+  open: "Aberta",
+  reviewing: "Em análise",
+  resolved: "Resolvida",
+  dismissed: "Arquivada",
+};
+const reportStatusOptions: PoolReportStatus[] = ["open", "reviewing", "resolved", "dismissed"];
 
 function MetricCard({
   icon,
@@ -409,6 +430,7 @@ export function AdminPage() {
   const selectedUserPools = useUserPools(selectedUserId || null);
   const breakdown = useUserBreakdown(selectedUserId || null, selectedPoolId || null);
   const audit = useAdminAudit({});
+  const poolReports = useAdminPoolReports();
   const settings = useAdminSettings();
   const adminEvents = useAdminEvents();
   // Lista sem filtros, dedicada ao painel do mata-mata: o contador/chaveamento
@@ -440,8 +462,10 @@ export function AdminPage() {
   const removePoolMember = useRemovePoolMember();
   const saveSettings = useSaveAdminSettings();
   const finishEvent = useFinishEvent();
+  const deleteEvent = useAdminDeleteEvent();
   const setEventPoolCreation = useSetEventPoolCreation();
   const publishEventVersion = usePublishEventVersion();
+  const updatePoolReportStatus = useUpdatePoolReportStatus();
 
   useEffect(() => {
     if (!selectedUserId && adminUsers.data?.length) {
@@ -847,6 +871,19 @@ export function AdminPage() {
     }
   };
 
+  const handleDeleteEvent = async (event: AdminEventRecord) => {
+    const willArchive = event.status !== "draft" || event.poolCount > 0;
+    const confirmation = willArchive
+      ? `Arquivar o evento "${event.name}"? Ele sairá dos catálogos, mas os ${event.poolCount} bolão(ões) existentes continuarão preservados.`
+      : `Excluir definitivamente o rascunho "${event.name}"? Esta ação não pode ser desfeita.`;
+    if (!window.confirm(confirmation)) return;
+    try {
+      await runAdminAction(() => deleteEvent.mutateAsync(event.id));
+    } catch {
+      // erro já exibido por runAdminAction
+    }
+  };
+
   const handleUpdateSchedule = async () => {
     if (!selectedMatch) return;
     setScheduleError("");
@@ -1099,7 +1136,7 @@ export function AdminPage() {
           </Card>
           {adminEvents.isLoading ? <Card><p className="text-ink-muted">Carregando edições...</p></Card> : adminEvents.isError ? <ErrorBanner>Não foi possível carregar as edições.</ErrorBanner> : adminEvents.data?.map((event: AdminEventRecord) => {
             const historical = event.status === "finished" || (event.endsAt != null && new Date(event.endsAt).getTime() <= Date.now());
-            return <Card key={event.id} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-lg">{event.name}</h3><p className="mt-1 text-sm text-ink-muted">{event.kind === "football" ? "Futebol" : "Evento customizado"} · {event.slug}{event.endsAt ? ` · termina em ${formatKickoff(event.endsAt)}` : " · sem data de término"}</p><p className="mt-2 text-sm font-semibold text-mint-dark">{historical ? "Encerrado / histórico" : event.status === "draft" ? "Rascunho" : "Em andamento"}</p><p className="mt-1 text-xs text-ink-muted">Autoria: {event.createdByUsername ? `@${event.createdByUsername}` : "sistema"} · {event.itemCount} perguntas · {event.optionCount} opções · {event.poolCount} pools</p><p className="mt-1 text-xs text-ink-muted">Versão publicada: {event.currentVersionNumber ? `V${event.currentVersionNumber}` : "nenhuma"} · {event.workingVersionId ? "revisão pendente" : "sem revisão pendente"}</p><p className="mt-1 text-xs text-ink-muted">Atualizado em {formatKickoff(event.updatedAt)}</p></div><div className="flex flex-wrap gap-2">{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadManifest(event.id, event.slug)}>Exportar JSON</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadPackage(event.id, event.slug)}>Exportar pacote</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => navigate(`/events/${event.id}`)}>{event.status === "draft" ? "Abrir Builder" : "Abrir / editar"}</Button>}{event.kind === "custom" && event.workingVersionId && <Button size="sm" onClick={() => void runAdminAction(() => publishEventVersion.mutateAsync({ eventId: event.id, versionId: event.workingVersionId! }))} disabled={publishEventVersion.isPending}>Publicar revisão</Button>}{event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void runAdminAction(() => setEventPoolCreation.mutateAsync({ eventId: event.id, enabled: !event.poolCreationEnabled }))} disabled={setEventPoolCreation.isPending}>{event.poolCreationEnabled ? "Desativar novos pools" : "Permitir novos pools"}</Button>}{historical ? <span className="rounded-pill bg-mint/25 px-3 py-1 text-sm font-semibold">Encerrado</span> : <Button variant="outline" onClick={() => handleFinishEvent(event.id, event.name)} disabled={finishEvent.isPending || !event.endsAt}>Encerrar edição</Button>}</div></Card>;
+            return <Card key={event.id} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-lg">{event.name}</h3><p className="mt-1 text-sm text-ink-muted">{event.kind === "football" ? "Futebol" : "Evento customizado"} · {event.slug}{event.endsAt ? ` · termina em ${formatKickoff(event.endsAt)}` : " · sem data de término"}</p><p className="mt-2 text-sm font-semibold text-mint-dark">{event.archivedAt ? "Arquivado" : historical ? "Encerrado / histórico" : event.status === "draft" ? "Rascunho" : "Em andamento"}</p><p className="mt-1 text-xs text-ink-muted">Origem: {event.origin === "system" ? "Padrão Presumidos" : `Criado por @${event.createdByUsername ?? "usuário"}`} · {event.itemCount} perguntas · {event.optionCount} opções · {event.poolCount} pools</p><p className="mt-1 text-xs text-ink-muted">Versão publicada: {event.currentVersionNumber ? `V${event.currentVersionNumber}` : "nenhuma"} · {event.workingVersionId ? "revisão pendente" : "sem revisão pendente"}</p><p className="mt-1 text-xs text-ink-muted">Atualizado em {formatKickoff(event.updatedAt)}</p></div><div className="flex flex-wrap gap-2">{!event.archivedAt && event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadManifest(event.id, event.slug)}>Exportar JSON</Button>}{!event.archivedAt && event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void downloadPackage(event.id, event.slug)}>Exportar pacote</Button>}{!event.archivedAt && event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => navigate(`/events/${event.id}`)}>{event.status === "draft" ? "Abrir Builder" : "Abrir / editar"}</Button>}{!event.archivedAt && event.kind === "custom" && event.workingVersionId && <Button size="sm" onClick={() => void runAdminAction(() => publishEventVersion.mutateAsync({ eventId: event.id, versionId: event.workingVersionId! }))} disabled={publishEventVersion.isPending}>Publicar revisão</Button>}{!event.archivedAt && event.kind === "custom" && <Button size="sm" variant="outline" onClick={() => void runAdminAction(() => setEventPoolCreation.mutateAsync({ eventId: event.id, enabled: !event.poolCreationEnabled }))} disabled={setEventPoolCreation.isPending}>{event.poolCreationEnabled ? "Desativar novos pools" : "Permitir novos pools"}</Button>}{event.archivedAt ? <span className="rounded-pill bg-mint/25 px-3 py-1 text-sm font-semibold">Arquivado</span> : historical ? <span className="rounded-pill bg-mint/25 px-3 py-1 text-sm font-semibold">Encerrado</span> : <Button variant="outline" onClick={() => handleFinishEvent(event.id, event.name)} disabled={finishEvent.isPending || !event.endsAt}>Encerrar edição</Button>} {!event.archivedAt && <Button variant="outline" className="text-danger" onClick={() => void handleDeleteEvent(event)} disabled={deleteEvent.isPending}>{event.status === "draft" && event.poolCount === 0 ? "Excluir evento" : "Arquivar evento"}</Button>}</div></Card>;
           })}
         </div>
       )}
@@ -2046,6 +2083,19 @@ export function AdminPage() {
             </div>
           </Card>
         </div>
+      )}
+
+      {tab === "reports" && (
+        <Card className="mt-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-2xl">Denúncias de bolões</h2>
+              <p className="mt-1 text-sm text-ink-muted">Revise relatos enviados pelos participantes e atualize o andamento de cada caso.</p>
+            </div>
+            <div className="rounded-pill bg-yellow/25 px-3 py-1 text-sm font-semibold">{poolReports.data?.filter((report) => report.status === "open").length ?? 0} aberta(s)</div>
+          </div>
+          {poolReports.isLoading ? <p className="mt-5 text-sm text-ink-muted">Carregando denúncias...</p> : poolReports.data?.length ? <div className="mt-5 space-y-3">{poolReports.data.map((report) => <div key={report.id} className="rounded-2xl border border-mint/15 bg-card/75 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-start gap-3"><div className="rounded-xl bg-yellow/20 p-2 text-yellow-dark"><Flag className="h-5 w-5" /></div><div><p className="font-semibold text-ink">{reportCategoryLabels[report.category]}</p><p className="mt-1 text-sm text-ink-muted">{report.poolName} · código {report.inviteCode}</p><p className="mt-1 text-xs text-ink-muted">Por {report.reporterUsername ?? "usuário removido"} · {formatKickoff(report.createdAt)}</p></div></div><Select className="w-auto min-w-36" value={report.status} aria-label={`Status da denúncia de ${report.poolName}`} onChange={(event) => void runAdminAction(() => updatePoolReportStatus.mutateAsync({ reportId: report.id, status: event.target.value as PoolReportStatus }))}>{reportStatusOptions.map((status) => <option key={status} value={status}>{reportStatusLabels[status]}</option>)}</Select></div>{report.details && <p className="mt-4 whitespace-pre-wrap rounded-xl bg-bg/45 px-3 py-3 text-sm text-ink-muted">{report.details}</p>}</div>)}</div> : <p className="mt-5 rounded-2xl border border-mint/15 bg-bg/35 px-4 py-4 text-sm text-ink-muted">Nenhuma denúncia registrada.</p>}
+        </Card>
       )}
 
       {tab === "audit" && (

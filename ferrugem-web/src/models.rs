@@ -43,6 +43,44 @@ pub struct PoolSummary {
     pub join_closed_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolReport {
+    pub id: String,
+    pub pool_id: String,
+    pub pool_name: String,
+    pub invite_code: String,
+    pub reporter_user_id: Option<String>,
+    pub reporter_username: Option<String>,
+    pub category: String,
+    pub details: String,
+    pub status: String,
+    pub reviewed_by: Option<String>,
+    pub reviewed_by_username: Option<String>,
+    pub reviewed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Projeção mínima e pública de um convite. Nunca serializa o Pool completo,
+/// predictions, ranking, emails ou metadados de membership.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicPoolInvitePreview {
+    pub pool_name: Option<String>,
+    pub event_name: Option<String>,
+    pub event_description: Option<String>,
+    pub cover_asset_url: Option<String>,
+    pub cover_url: Option<String>,
+    pub creator_display_name: Option<String>,
+    pub member_count: Option<i64>,
+    pub lock_deadline: Option<String>,
+    pub join_status: String,
+    /// Só é preenchido para um usuário autenticado que já é membro. Assim o
+    /// preview anônimo não revela identificadores internos do Pool.
+    pub pool_id: Option<String>,
+}
+
 /// Leitura compacta da página inicial. Mantém o Pool como fonte de verdade e
 /// agrega somente contadores pessoais que evitam uma requisição por card.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -80,6 +118,13 @@ pub enum EventKind {
     Custom,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EventOrigin {
+    System,
+    User,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -98,6 +143,7 @@ pub struct Event {
     pub name: String,
     pub slug: String,
     pub kind: EventKind,
+    pub origin: EventOrigin,
     pub status: EventStatus,
     pub created_by: Option<String>,
     pub starts_at: Option<String>,
@@ -109,6 +155,7 @@ pub struct Event {
     pub external_url: Option<String>,
     pub pool_creation_enabled: bool,
     pub current_published_version_id: Option<String>,
+    pub archived_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -122,6 +169,7 @@ pub struct AdminEventRecord {
     pub name: String,
     pub slug: String,
     pub kind: EventKind,
+    pub origin: EventOrigin,
     pub status: EventStatus,
     pub created_by: Option<String>,
     pub created_by_username: Option<String>,
@@ -135,6 +183,7 @@ pub struct AdminEventRecord {
     pub external_url: Option<String>,
     pub pool_creation_enabled: bool,
     pub current_published_version_id: Option<String>,
+    pub archived_at: Option<String>,
     pub working_version_id: Option<String>,
     pub current_version_number: Option<i64>,
     pub item_count: i64,

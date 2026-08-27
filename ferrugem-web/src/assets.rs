@@ -487,6 +487,15 @@ async fn attach(
             .execute(db)
             .await
             .map_err(|e| crate::security::internal_error("asset_cover_attach", e))?;
+        // Mantém a coluna legada como projeção de compatibilidade para
+        // fixtures e integrações antigas. A EventVersion continua sendo a
+        // fonte canônica usada por Pools e convites.
+        sqlx::query("UPDATE events SET cover_asset_id=?2 WHERE id=?1")
+            .bind(event_id)
+            .bind(asset_id)
+            .execute(db)
+            .await
+            .map_err(|e| crate::security::internal_error("asset_event_cover_projection", e))?;
     }
     crate::security::append_audit_log(
         db,
@@ -658,7 +667,7 @@ pub async fn read_variant(
 
 pub async fn can_read(asset_id: &str) -> Result<bool, ServerFnError> {
     let db = crate::db::pool();
-    let published: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM events e JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.status IN ('active','finished') AND (v.cover_asset_id=?1 OR EXISTS(SELECT 1 FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.image_asset_id=?1 AND pi.event_version_id=v.id)))")
+    let published: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM events e JOIN event_versions v ON v.event_id=e.id AND (v.state='published' OR (e.current_published_version_id IS NULL AND v.state='working')) WHERE e.status IN ('active','finished') AND (v.cover_asset_id=?1 OR EXISTS(SELECT 1 FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.image_asset_id=?1 AND pi.event_version_id=v.id)))")
         .bind(asset_id).fetch_one(db).await.map_err(|e| crate::security::internal_error("asset_public_access", e))?;
     if published.0 != 0 {
         return Ok(true);
@@ -667,7 +676,7 @@ pub async fn can_read(asset_id: &str) -> Result<bool, ServerFnError> {
     let Some(user) = state.user else {
         return Ok(false);
     };
-    let allowed: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM events e JOIN event_versions v ON v.event_id=e.id AND v.state='working' WHERE e.status='draft' AND (v.cover_asset_id=?1 OR EXISTS(SELECT 1 FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.image_asset_id=?1 AND pi.event_version_id=v.id)) AND (e.created_by=?2 OR EXISTS(SELECT 1 FROM users u WHERE u.id=?2 AND u.is_admin=1)))")
+    let allowed: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM events e JOIN event_versions v ON v.event_id=e.id AND v.state='working' WHERE (v.cover_asset_id=?1 OR EXISTS(SELECT 1 FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE o.image_asset_id=?1 AND pi.event_version_id=v.id)) AND (e.created_by=?2 OR EXISTS(SELECT 1 FROM users u WHERE u.id=?2 AND u.is_admin=1)))")
         .bind(asset_id).bind(user.id).fetch_one(db).await.map_err(|e| crate::security::internal_error("asset_private_access", e))?;
     Ok(allowed.0 != 0)
 }

@@ -157,6 +157,21 @@ fn optional_bool_var(name: &str, default: bool) -> bool {
 }
 
 #[cfg(feature = "server")]
+fn default_asset_dir(database_path: &str) -> String {
+    let database_path = Path::new(database_path);
+    if database_path.is_absolute() {
+        database_path
+            .parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .join("data/assets")
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        "./data/assets".to_string()
+    }
+}
+
+#[cfg(feature = "server")]
 fn parse_environment(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_lowercase();
     match normalized.as_str() {
@@ -365,8 +380,8 @@ pub fn settings() -> &'static AppConfig {
             vapid_private_key: optional_var("WEB_PUSH_VAPID_PRIVATE_KEY"),
             contact_email: optional_var("WEB_PUSH_CONTACT_EMAIL"),
         };
-        let asset_dir =
-            optional_var("PRESUMIDOS_ASSET_DIR").unwrap_or_else(|| "./data/assets".to_string());
+        let asset_dir = optional_var("PRESUMIDOS_ASSET_DIR")
+            .unwrap_or_else(|| default_asset_dir(&database_path));
         let asset_max_upload_bytes =
             optional_u32_var("PRESUMIDOS_ASSET_MAX_UPLOAD_BYTES", 10 * 1024 * 1024) as usize;
         let asset_max_pixels = optional_u64_var("PRESUMIDOS_ASSET_MAX_PIXELS", 25_000_000);
@@ -560,9 +575,22 @@ pub fn check_config() -> Result<(), String> {
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use super::{
-        has_global_cidr, parse_environment, validate_auth_email_config, validate_proxy_config,
-        validate_rate_limit_config, validate_secret, RateLimitBackendKind,
+        default_asset_dir, has_global_cidr, parse_environment, validate_auth_email_config,
+        validate_proxy_config, validate_rate_limit_config, validate_secret, RateLimitBackendKind,
     };
+
+    #[test]
+    fn derives_asset_dir_from_absolute_database_path() {
+        assert_eq!(
+            default_asset_dir("/srv/presumidos/bolao.db"),
+            "/srv/presumidos/data/assets"
+        );
+    }
+
+    #[test]
+    fn keeps_relative_asset_dir_for_relative_database_path() {
+        assert_eq!(default_asset_dir("./data/bolao.db"), "./data/assets");
+    }
 
     #[test]
     fn detects_global_proxy_cidrs() {

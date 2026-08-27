@@ -97,7 +97,7 @@ it("requires explicit confirmation before applying a package preview", async () 
       existingAssetCount: 0,
       addedAssetCount: 1,
     })
-    .mockResolvedValueOnce({ result: { action: "create" } });
+    .mockResolvedValueOnce({ result: { action: "create", state: "published" } });
   renderPanel();
   const file = new File([new Uint8Array([80, 75, 3, 4])], "pacote-aplicavel.zip", { type: "application/zip" });
   fireEvent.change(screen.getByLabelText("Manifesto ou pacote"), { target: { files: [file] } });
@@ -107,7 +107,7 @@ it("requires explicit confirmation before applying a package preview", async () 
   expect(screen.getByRole("button", { name: "Confirmar aplicação" })).toBeTruthy();
   expect(upload).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: "Confirmar aplicação" }));
-  await waitFor(() => expect(screen.getByText("Evento importado como rascunho.")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("Versão publicada.")).toBeTruthy());
   expect(upload).toHaveBeenCalledTimes(2);
   expect(upload.mock.calls[1][0]).toBe("/admin/events/import/package/apply");
 });

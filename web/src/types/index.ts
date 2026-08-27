@@ -33,6 +33,45 @@ export interface PoolSummary {
   joinClosedAt: string | null;
 }
 
+export type PoolReportCategory =
+  | "inappropriate_content"
+  | "spam_or_fraud"
+  | "harassment"
+  | "other";
+export type PoolReportStatus = "open" | "reviewing" | "resolved" | "dismissed";
+
+export interface PoolReport {
+  id: string;
+  poolId: string;
+  poolName: string;
+  inviteCode: string;
+  reporterUserId: string | null;
+  reporterUsername: string | null;
+  category: PoolReportCategory;
+  details: string;
+  status: PoolReportStatus;
+  reviewedBy: string | null;
+  reviewedByUsername: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type InviteJoinStatus = "joinable" | "already_member" | "closed" | "invalid";
+
+export interface PublicPoolInvitePreview {
+  poolName: string | null;
+  eventName: string | null;
+  eventDescription: string | null;
+  coverAssetUrl: string | null;
+  coverUrl: string | null;
+  creatorDisplayName: string | null;
+  memberCount: number | null;
+  lockDeadline: string | null;
+  joinStatus: InviteJoinStatus;
+  poolId: string | null;
+}
+
 export interface EventSummary {
   id: string;
   name: string;
@@ -57,6 +96,7 @@ export interface EventRecord {
   name: string;
   slug: string;
   kind: "football" | "custom";
+  origin: "system" | "user";
   status: "draft" | "active" | "finished";
   createdBy: string | null;
   startsAt: string | null;
@@ -69,6 +109,7 @@ export interface EventRecord {
   externalUrl?: string | null;
   poolCreationEnabled?: boolean;
   currentPublishedVersionId?: string | null;
+  archivedAt?: string | null;
 }
 
 export interface AdminEventRecord extends EventRecord {
@@ -80,6 +121,21 @@ export interface AdminEventRecord extends EventRecord {
   currentPublishedVersionId: string | null;
   workingVersionId: string | null;
   currentVersionNumber: number | null;
+}
+
+export interface EventVersionHistory {
+  id: string;
+  versionNumber: number;
+  state: "working" | "published";
+  isCurrentPublished: boolean;
+  name: string;
+  fingerprint: string;
+  baseFingerprint: string | null;
+  createdAt: string;
+  updatedAt: string;
+  itemCount: number;
+  optionCount: number;
+  poolCount: number;
 }
 
 export type ManifestAction = "create" | "noChange" | "safeUpdate" | "conflict" | "rejected";

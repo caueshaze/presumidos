@@ -6,6 +6,8 @@ use std::time::Duration;
 use crate::config::settings;
 
 static DB: OnceLock<SqlitePool> = OnceLock::new();
+// Recompile this module whenever the migration set changes; the macro embeds
+// the complete directory into the binary used by local and production startup.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

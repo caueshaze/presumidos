@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::models::{AdminSettings, AuthResult, SessionState};
+use crate::models::{AdminEventRecord, AdminSettings, AuthResult, SessionState};
 
 #[derive(Debug, Deserialize)]
 struct ErrorPayload {
@@ -425,6 +425,191 @@ async fn login(
         .expect("requisicao de login")
 }
 
+#[tokio::test]
+async fn public_invite_preview_is_minimal_and_join_is_idempotent() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let owner_id = seed_user(
+        &format!("invite-owner-{suffix}"),
+        &format!("invite-owner-{suffix}@example.com"),
+        "Senha-forte-123",
+        false,
+    )
+    .await;
+    let member_id = seed_user(
+        &format!("invite-member-{suffix}"),
+        &format!("invite-member-{suffix}@example.com"),
+        "Senha-forte-123",
+        false,
+    )
+    .await;
+    let event_id = uuid::Uuid::new_v4().to_string();
+    let pool_id = uuid::Uuid::new_v4().to_string();
+    let invite_code = uuid::Uuid::new_v4().simple().to_string()[..8].to_uppercase();
+    sqlx::query(
+        "INSERT INTO events(id,name,slug,kind,status,ends_at,pool_creation_enabled)
+         VALUES(?1,'Versão congelada',?2,'custom','active','2099-01-01T00:00:00Z',0)",
+    )
+    .bind(&event_id)
+    .bind(format!("invite-{suffix}"))
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir evento do convite");
+    let version_id: (String,) =
+        sqlx::query_as("SELECT current_published_version_id FROM events WHERE id=?1")
+            .bind(&event_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("ler versão publicada");
+    sqlx::query(
+        "INSERT INTO pools(id,event_id,event_version_id,name,invite_code,created_by)
+         VALUES(?1,?2,?3,'Bolão do convite',?4,?5)",
+    )
+    .bind(&pool_id)
+    .bind(&event_id)
+    .bind(&version_id.0)
+    .bind(&invite_code)
+    .bind(&owner_id)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir pool do convite");
+    add_membership(&pool_id, &owner_id).await;
+
+    let anonymous: serde_json::Value = client()
+        .get(format!("{base}/api/public/pools/invite/{invite_code}"))
+        .send()
+        .await
+        .expect("preview público")
+        .json()
+        .await
+        .expect("json do preview");
+    assert_eq!(anonymous["joinStatus"], "joinable");
+    assert_eq!(anonymous["poolName"], "Bolão do convite");
+    assert!(anonymous.get("poolId").is_none() || anonymous["poolId"].is_null());
+    assert!(anonymous.get("predictions").is_none());
+    assert!(anonymous.get("visibleRules").is_none());
+    assert!(!version_id.0.is_empty());
+    let members_after_preview: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id=?1")
+            .bind(&pool_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("membership após preview");
+    assert_eq!(members_after_preview.0, 1);
+
+    let anonymous_join = client()
+        .post(format!("{base}/api/pools/join"))
+        .json(&json!({ "inviteCode": invite_code }))
+        .send()
+        .await
+        .expect("tentativa anônima de entrada");
+    assert_eq!(anonymous_join.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let invalid: serde_json::Value = client()
+        .get(format!("{base}/api/public/pools/invite/NO-SUCH"))
+        .send()
+        .await
+        .expect("preview inválido")
+        .json()
+        .await
+        .expect("json do preview inválido");
+    assert_eq!(invalid["joinStatus"], "invalid");
+
+    sqlx::query("UPDATE pools SET name='Pool <& \"convite\"' WHERE id=?1")
+        .bind(&pool_id)
+        .execute(crate::db::pool())
+        .await
+        .expect("nome especial do convite");
+    sqlx::query(
+        "UPDATE event_versions SET description='Descrição <& \"pública\"', cover_url='https://cdn.example/cover?x=\"&y=1' WHERE id=?1",
+    )
+    .bind(&version_id.0)
+    .execute(crate::db::pool())
+    .await
+    .expect("metadata pública do convite");
+    let html = crate::render_invite_page(
+        invite_code.clone(),
+        std::sync::Arc::new("<html><head><title>Presumidos</title></head></html>".to_string()),
+    )
+    .await;
+    assert_eq!(
+        html.headers()[axum::http::header::CACHE_CONTROL],
+        "private, no-store"
+    );
+    let html_body = axum::body::to_bytes(html.into_body(), 100_000)
+        .await
+        .expect("corpo HTML do convite");
+    let html_body = String::from_utf8(html_body.to_vec()).expect("HTML UTF-8");
+    assert!(html_body.contains("Pool &lt;&amp; &quot;convite&quot;"));
+    assert!(
+        html_body.contains("og:description\" content=\"Descrição &lt;&amp; &quot;pública&quot;\"")
+    );
+    assert!(html_body.contains("og:image\" content=\"https://cdn.example/cover?x=&quot;&amp;y=1\""));
+    assert!(!html_body.contains("Pool <& \"convite\""));
+
+    let (member_token, member_csrf) = seed_session(&member_id).await;
+    let member = client_with_session(base, &member_token);
+    let authenticated_preview: serde_json::Value = member
+        .get(format!("{base}/api/public/pools/invite/{invite_code}"))
+        .send()
+        .await
+        .expect("preview autenticado")
+        .json()
+        .await
+        .expect("json do preview autenticado");
+    assert_eq!(authenticated_preview["joinStatus"], "joinable");
+
+    let member_a = client_with_session(base, &member_token);
+    let member_b = client_with_session(base, &member_token);
+    let request_a = member_a
+        .post(format!("{base}/api/pools/join"))
+        .header("X-CSRF-Token", &member_csrf)
+        .json(&json!({ "inviteCode": invite_code }));
+    let request_b = member_b
+        .post(format!("{base}/api/pools/join"))
+        .header("X-CSRF-Token", &member_csrf)
+        .json(&json!({ "inviteCode": invite_code }));
+    let (joined_a, joined_b) = tokio::join!(request_a.send(), request_b.send());
+    assert!(joined_a
+        .expect("primeira entrada concorrente")
+        .status()
+        .is_success());
+    assert!(joined_b
+        .expect("segunda entrada concorrente")
+        .status()
+        .is_success());
+
+    for _ in 0..2 {
+        assert!(member
+            .post(format!("{base}/api/pools/join"))
+            .header("X-CSRF-Token", &member_csrf)
+            .json(&json!({ "inviteCode": invite_code }))
+            .send()
+            .await
+            .expect("aceitar convite")
+            .status()
+            .is_success());
+    }
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id=?1 AND user_id=?2")
+            .bind(&pool_id)
+            .bind(&member_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar membership");
+    assert_eq!(count.0, 1);
+    let member_preview: serde_json::Value = member
+        .get(format!("{base}/api/public/pools/invite/{invite_code}"))
+        .send()
+        .await
+        .expect("preview após entrada")
+        .json()
+        .await
+        .expect("json do preview após entrada");
+    assert_eq!(member_preview["joinStatus"], "already_member");
+    assert_eq!(member_preview["poolId"], pool_id);
+}
+
 async fn insert_pool(name: &str, created_by: &str) -> String {
     let id = uuid::Uuid::new_v4().to_string();
     let code = uuid::Uuid::new_v4().simple().to_string();
@@ -546,11 +731,12 @@ async fn insert_custom_event_pool(owner: &str, name: &str) -> (String, String) {
     let event_id = uuid::Uuid::new_v4().to_string();
     let pool_id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO events (id,name,slug,kind,status) VALUES (?1,?2,?3,'custom','active')",
+        "INSERT INTO events (id,name,slug,kind,status,created_by) VALUES (?1,?2,?3,'custom','active',?4)",
     )
     .bind(&event_id)
     .bind(name)
     .bind(format!("event-{event_id}"))
+    .bind(owner)
     .execute(crate::db::pool())
     .await
     .expect("evento custom");
@@ -1216,6 +1402,197 @@ async fn published_event_versions_preserve_old_pools_and_switch_new_ones() {
         .unwrap();
     assert_eq!(v2.0, working.0);
     assert_ne!(v1.0, v2.0);
+    let old_cover_asset = format!("old-cover-{}", uuid::Uuid::new_v4());
+    let new_cover_asset = format!("new-cover-{}", uuid::Uuid::new_v4());
+    for (asset_id, storage_key, sha256) in [
+        (&old_cover_asset, "old-cover/master.webp", "a".repeat(64)),
+        (&new_cover_asset, "new-cover/master.webp", "b".repeat(64)),
+    ] {
+        sqlx::query(
+            "INSERT INTO assets(id,storage_key,sha256,media_type,width,height,byte_size,uploaded_by)
+             VALUES(?1,?2,?3,'image/webp',1,1,1,?4)",
+        )
+        .bind(asset_id)
+        .bind(storage_key)
+        .bind(sha256)
+        .bind(&admin)
+        .execute(crate::db::pool())
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE event_versions SET cover_asset_id=?2 WHERE id=?1")
+        .bind(&v1.0)
+        .bind(&old_cover_asset)
+        .execute(crate::db::pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE event_versions SET cover_asset_id=?2 WHERE id=?1")
+        .bind(&v2.0)
+        .bind(&new_cover_asset)
+        .execute(crate::db::pool())
+        .await
+        .unwrap();
+    assert!(crate::assets::can_read(&old_cover_asset).await.unwrap());
+    assert!(crate::assets::can_read(&new_cover_asset).await.unwrap());
+    let old_code: (String,) = sqlx::query_as("SELECT invite_code FROM pools WHERE id=?1")
+        .bind(&pool_one.id)
+        .fetch_one(crate::db::pool())
+        .await
+        .unwrap();
+    let new_code: (String,) = sqlx::query_as("SELECT invite_code FROM pools WHERE id=?1")
+        .bind(&pool_two.id)
+        .fetch_one(crate::db::pool())
+        .await
+        .unwrap();
+    let old_preview = crate::pools::public_invite_preview(old_code.0.clone())
+        .await
+        .unwrap();
+    let new_preview = crate::pools::public_invite_preview(new_code.0)
+        .await
+        .unwrap();
+    assert_eq!(old_preview.event_name.as_deref(), Some("Versão 1"));
+    assert_eq!(new_preview.event_name.as_deref(), Some("Versão 2"));
+    let expected_old_cover = format!("/media/assets/{old_cover_asset}/cover");
+    assert_eq!(
+        old_preview.cover_asset_url.as_deref(),
+        Some(expected_old_cover.as_str())
+    );
+
+    let newcomer = seed_user(
+        &format!("version-newcomer-{suffix}"),
+        &format!("version-newcomer-{suffix}@test"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let (newcomer_token, newcomer_csrf) = seed_session(&newcomer).await;
+    let joined = crate::pools::join_pool(newcomer_token, old_code.0, newcomer_csrf)
+        .await
+        .unwrap();
+    assert_eq!(joined.id, pool_one.id);
+    assert_eq!(joined.event.name, "Versão 1");
+    let old_member_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id=?1")
+            .bind(&pool_one.id)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap();
+    assert_eq!(old_member_count.0, 2);
+}
+
+#[tokio::test]
+async fn restoring_published_version_creates_new_revision_without_moving_old_pool() {
+    test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let admin = seed_user(
+        &format!("restore-admin-{suffix}"),
+        &format!("restore-admin-{suffix}@test"),
+        "senha-correta-123",
+        true,
+    )
+    .await;
+    let (token, csrf) = seed_session(&admin).await;
+    let event = crate::custom_events::create(
+        token.clone(),
+        "Restaurar evento".into(),
+        Some("2099-01-01T00:00:00Z".into()),
+        Some("2099-12-31T00:00:00Z".into()),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    let first_item = crate::custom_events::add_item(
+        token.clone(),
+        event.id.clone(),
+        "Pergunta original".into(),
+        "2099-01-01T00:00:00Z".into(),
+        "2099-01-02T00:00:00Z".into(),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    for label in ["A", "B"] {
+        crate::custom_events::add_option(
+            token.clone(),
+            event.id.clone(),
+            first_item.clone(),
+            label.into(),
+            csrf.clone(),
+        )
+        .await
+        .unwrap();
+    }
+    crate::custom_events::publish(token.clone(), event.id.clone(), csrf.clone())
+        .await
+        .unwrap();
+    let old_pool = crate::pools::create_pool_for_event(
+        token.clone(),
+        "Pool antigo".into(),
+        Some(event.id.clone()),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    let old_version: (String,) = sqlx::query_as("SELECT event_version_id FROM pools WHERE id=?1")
+        .bind(&old_pool.id)
+        .fetch_one(crate::db::pool())
+        .await
+        .unwrap();
+
+    let second_item = crate::custom_events::add_item(
+        token.clone(),
+        event.id.clone(),
+        "Pergunta nova".into(),
+        "2099-01-01T00:00:00Z".into(),
+        "2099-01-02T00:00:00Z".into(),
+        csrf.clone(),
+    )
+    .await
+    .unwrap();
+    for label in ["C", "D"] {
+        crate::custom_events::add_option(
+            token.clone(),
+            event.id.clone(),
+            second_item.clone(),
+            label.into(),
+            csrf.clone(),
+        )
+        .await
+        .unwrap();
+    }
+    crate::custom_events::publish(token.clone(), event.id.clone(), csrf.clone())
+        .await
+        .unwrap();
+    let current_version: (String,) =
+        sqlx::query_as("SELECT current_published_version_id FROM events WHERE id=?1")
+            .bind(&event.id)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap();
+    assert_ne!(old_version.0, current_version.0);
+
+    let restored =
+        crate::custom_event_manifest::restore_published_version(&event.id, &old_version.0, &admin)
+            .await
+            .unwrap();
+    assert_ne!(restored.version_id, old_version.0);
+    assert_ne!(restored.version_id, current_version.0);
+    let restored_items: (i64, Option<String>) = sqlx::query_as(
+        "SELECT COUNT(*),MIN(title) FROM prediction_items WHERE event_version_id=?1",
+    )
+    .bind(&restored.version_id)
+    .fetch_one(crate::db::pool())
+    .await
+    .unwrap();
+    assert_eq!(restored_items.0, 1);
+    assert_eq!(restored_items.1.as_deref(), Some("Pergunta original"));
+    let old_pool_version: (String,) =
+        sqlx::query_as("SELECT event_version_id FROM pools WHERE id=?1")
+            .bind(&old_pool.id)
+            .fetch_one(crate::db::pool())
+            .await
+            .unwrap();
+    assert_eq!(old_pool_version.0, old_version.0);
 }
 
 #[tokio::test]
@@ -1617,13 +1994,6 @@ async fn event_builder_draft_lifecycle_enforces_owner_publish_and_pool_scoring()
     assert!(published.status().is_success());
     let immutable = owner.post(format!("{base}/api/custom/events/{event_id}/items")).header("X-CSRF-Token", &owner_csrf).json(&json!({"title":"Tarde","lockAt":"2026-10-01T18:00:00Z","revealAt":"2026-10-01T19:00:00Z"})).send().await.expect("editar publicado");
     assert_eq!(immutable.status(), reqwest::StatusCode::BAD_REQUEST);
-    let active_delete = owner
-        .post(format!("{base}/api/custom/events/{event_id}/delete"))
-        .header("X-CSRF-Token", &owner_csrf)
-        .send()
-        .await
-        .expect("excluir ativo");
-    assert_eq!(active_delete.status(), reqwest::StatusCode::BAD_REQUEST);
     let pool: serde_json::Value = owner
         .post(format!("{base}/api/pools"))
         .header("X-CSRF-Token", &owner_csrf)
@@ -1641,6 +2011,29 @@ async fn event_builder_draft_lifecycle_enforces_owner_publish_and_pool_scoring()
             .await
             .expect("scoring custom");
     assert_eq!(scoring.0, 1, "cada item publicado recebe scoring do Pool");
+    let archived = owner
+        .post(format!("{base}/api/custom/events/{event_id}/delete"))
+        .header("X-CSRF-Token", &owner_csrf)
+        .send()
+        .await
+        .expect("arquivar evento publicado");
+    assert_eq!(archived.status(), reqwest::StatusCode::NO_CONTENT);
+    let archived_state: (Option<String>, i64) =
+        sqlx::query_as("SELECT archived_at, pool_creation_enabled FROM events WHERE id=?1")
+            .bind(&event_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("ler evento arquivado");
+    assert!(archived_state.0.is_some());
+    assert_eq!(archived_state.1, 0);
+    let blocked_new_pool = owner
+        .post(format!("{base}/api/pools"))
+        .header("X-CSRF-Token", &owner_csrf)
+        .json(&json!({"name":"Bolão bloqueado","eventId":event_id}))
+        .send()
+        .await
+        .expect("tentar criar pool arquivado");
+    assert!(!blocked_new_pool.status().is_success());
     let denied_result = other
         .post(format!(
             "{base}/api/admin/custom/questions/{item_id}/result"
@@ -1651,12 +2044,25 @@ async fn event_builder_draft_lifecycle_enforces_owner_publish_and_pool_scoring()
         .await
         .expect("resultado por não-owner");
     assert_eq!(denied_result.status(), reqwest::StatusCode::BAD_REQUEST);
+    let denied_pool_result = other
+        .post(format!(
+            "{base}/api/admin/custom/questions/{item_id}/result"
+        ))
+        .header("X-CSRF-Token", &other_csrf)
+        .json(&json!({"optionId":option_ids[0],"poolId":pool["id"]}))
+        .send()
+        .await
+        .expect("resultado no pool de outro usuario");
+    assert_eq!(
+        denied_pool_result.status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
     let owner_result = owner
         .post(format!(
             "{base}/api/admin/custom/questions/{item_id}/result"
         ))
         .header("X-CSRF-Token", &owner_csrf)
-        .json(&json!({"optionId":option_ids[0]}))
+        .json(&json!({"optionId":option_ids[0],"poolId":pool["id"]}))
         .send()
         .await
         .expect("resultado pelo owner");
@@ -2429,6 +2835,381 @@ async fn admin_reauth_flow_and_rate_limit() {
         last_message.to_lowercase().contains("muitas tentativas"),
         "esperava erro de rate limit, recebeu: {last_message}"
     );
+}
+
+#[tokio::test]
+async fn pool_member_can_leave_preserving_data_and_rejoin() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let owner_id = seed_user(
+        &format!("leave-owner-{suffix}"),
+        &format!("leave-owner-{suffix}@teste.com"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let member_id = seed_user(
+        &format!("leave-member-{suffix}"),
+        &format!("leave-member-{suffix}@teste.com"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let (event_id, pool_id) =
+        insert_custom_event_pool(&owner_id, &format!("Bolao leave {suffix}")).await;
+    add_membership(&pool_id, &member_id).await;
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let option_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO prediction_items(id,event_id,kind,title,lock_at,reveal_at,sort_order,status)
+         VALUES(?1,?2,'single_choice','Pergunta preservada','2099-01-01T00:00:00Z','2099-01-01T00:00:00Z',0,'open')",
+    )
+    .bind(&item_id)
+    .bind(&event_id)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir item do bolao leave");
+    sqlx::query("INSERT INTO custom_questions(item_id,points) VALUES(?1,1)")
+        .bind(&item_id)
+        .execute(crate::db::pool())
+        .await
+        .expect("inserir pergunta do bolao leave");
+    sqlx::query(
+        "INSERT INTO custom_question_options(id,item_id,label,sort_order)
+         VALUES(?1,?2,'Opcao preservada',0)",
+    )
+    .bind(&option_id)
+    .bind(&item_id)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir opcao do bolao leave");
+    let prediction_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO predictions(id,pool_id,user_id,item_id,match_id,home_score,away_score)
+         VALUES(?1,?2,?3,?4,NULL,NULL,NULL)",
+    )
+    .bind(&prediction_id)
+    .bind(&pool_id)
+    .bind(&member_id)
+    .bind(&item_id)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir palpite do bolao leave");
+    sqlx::query("INSERT INTO custom_prediction_values(prediction_id,option_id) VALUES(?1,?2)")
+        .bind(&prediction_id)
+        .bind(&option_id)
+        .execute(crate::db::pool())
+        .await
+        .expect("inserir valor do palpite do bolao leave");
+    let invite_code: (String,) = sqlx::query_as("SELECT invite_code FROM pools WHERE id=?1")
+        .bind(&pool_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("ler codigo de convite");
+
+    let (member_token, member_csrf) = seed_session(&member_id).await;
+    let member = client_with_session(base, &member_token);
+    let left = member
+        .post(format!("{base}/api/pools/{pool_id}/leave"))
+        .header("X-CSRF-Token", &member_csrf)
+        .send()
+        .await
+        .expect("sair do bolao");
+    assert!(left.status().is_success(), "membro deveria poder sair");
+
+    let membership_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pool_members WHERE pool_id=?1 AND user_id=?2")
+            .bind(&pool_id)
+            .bind(&member_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar membership apos saida");
+    assert_eq!(membership_count.0, 0);
+    let prediction_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM predictions WHERE pool_id=?1 AND user_id=?2")
+            .bind(&pool_id)
+            .bind(&member_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar palpite preservado");
+    assert_eq!(prediction_count.0, 1);
+
+    let inaccessible = member
+        .get(format!("{base}/api/pools/{pool_id}/member-predictions"))
+        .send()
+        .await
+        .expect("acesso apos saida");
+    assert!(!inaccessible.status().is_success());
+
+    let rejoined = member
+        .post(format!("{base}/api/pools/join"))
+        .header("X-CSRF-Token", &member_csrf)
+        .json(&json!({ "inviteCode": invite_code.0 }))
+        .send()
+        .await
+        .expect("reentrar no bolao");
+    assert!(
+        rejoined.status().is_success(),
+        "reingresso deveria funcionar"
+    );
+    let restored: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM predictions WHERE pool_id=?1 AND user_id=?2")
+            .bind(&pool_id)
+            .bind(&member_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("contar palpite apos reingresso");
+    assert_eq!(restored.0, 1);
+
+    let (owner_token, owner_csrf) = seed_session(&owner_id).await;
+    let owner = client_with_session(base, &owner_token);
+    let owner_leave = owner
+        .post(format!("{base}/api/pools/{pool_id}/leave"))
+        .header("X-CSRF-Token", &owner_csrf)
+        .send()
+        .await
+        .expect("tentativa de saida do dono");
+    assert!(!owner_leave.status().is_success(), "dono nao deveria sair");
+}
+
+#[tokio::test]
+async fn pool_member_can_report_once_and_admin_can_review_report() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let owner_id = seed_user(
+        &format!("report-owner-{suffix}"),
+        &format!("report-owner-{suffix}@teste.com"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let reporter_id = seed_user(
+        &format!("report-user-{suffix}"),
+        &format!("report-user-{suffix}@teste.com"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let admin_id = seed_user(
+        &format!("report-admin-{suffix}"),
+        &format!("report-admin-{suffix}@teste.com"),
+        "senha-correta-123",
+        true,
+    )
+    .await;
+    let pool_id = insert_pool(&format!("Bolao report {suffix}"), &owner_id).await;
+    add_membership(&pool_id, &owner_id).await;
+    add_membership(&pool_id, &reporter_id).await;
+
+    let (reporter_token, reporter_csrf) = seed_session(&reporter_id).await;
+    let reporter = client_with_session(base, &reporter_token);
+    let report_url = format!("{base}/api/pools/{pool_id}/reports");
+    let created = reporter
+        .post(&report_url)
+        .header("X-CSRF-Token", &reporter_csrf)
+        .json(&json!({ "category": "spam_or_fraud", "details": "Há links suspeitos neste bolão." }))
+        .send()
+        .await
+        .expect("criar denuncia");
+    assert!(created.status().is_success());
+    let created_body: serde_json::Value = created.json().await.expect("corpo da denuncia");
+    assert_eq!(created_body["status"], "open");
+    assert_eq!(created_body["poolName"], format!("Bolao report {suffix}"));
+
+    let duplicate = reporter
+        .post(&report_url)
+        .header("X-CSRF-Token", &reporter_csrf)
+        .json(&json!({ "category": "other", "details": "Outra tentativa" }))
+        .send()
+        .await
+        .expect("denuncia duplicada");
+    assert!(!duplicate.status().is_success());
+
+    let (admin_token, admin_csrf) = seed_session(&admin_id).await;
+    let admin = client_with_session(base, &admin_token);
+    let listed: Vec<crate::models::PoolReport> = admin
+        .get(format!("{base}/api/admin/pool-reports?status=open"))
+        .send()
+        .await
+        .expect("listar denuncias")
+        .json()
+        .await
+        .expect("corpo da lista de denuncias");
+    let report = listed
+        .iter()
+        .find(|item| item.pool_id == pool_id)
+        .expect("denuncia criada deveria ser listada");
+    sqlx::query("UPDATE sessions SET admin_reauthed_at = datetime('now') WHERE user_id=?1")
+        .bind(&admin_id)
+        .execute(crate::db::pool())
+        .await
+        .expect("marcar reauth do admin");
+    let updated = admin
+        .post(format!(
+            "{base}/api/admin/pool-reports/{}/status",
+            report.id
+        ))
+        .header("X-CSRF-Token", &admin_csrf)
+        .json(&json!({ "status": "resolved" }))
+        .send()
+        .await
+        .expect("atualizar status da denuncia");
+    assert!(updated.status().is_success());
+    let updated_body: serde_json::Value = updated.json().await.expect("corpo atualizado");
+    assert_eq!(updated_body["status"], "resolved");
+}
+
+#[tokio::test]
+async fn event_deletion_distinguishes_origin_and_preserves_existing_pools() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let owner_id = seed_user(
+        &format!("event-delete-owner-{suffix}"),
+        &format!("event-delete-owner-{suffix}@teste.com"),
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let admin_id = seed_user(
+        &format!("event-delete-admin-{suffix}"),
+        &format!("event-delete-admin-{suffix}@teste.com"),
+        "senha-correta-123",
+        true,
+    )
+    .await;
+    let (owner_token, owner_csrf) = seed_session(&owner_id).await;
+    let owner_client = client_with_session(base, &owner_token);
+
+    let (user_event_id, pool_id) =
+        insert_custom_event_pool(&owner_id, &format!("Evento usuario {suffix}")).await;
+    let owner_delete = owner_client
+        .post(format!("{base}/api/custom/events/{user_event_id}/delete"))
+        .header("X-CSRF-Token", &owner_csrf)
+        .send()
+        .await
+        .expect("arquivar evento do dono");
+    assert!(
+        owner_delete.status().is_success(),
+        "erro ao arquivar evento do dono: {}",
+        owner_delete.text().await.unwrap_or_default()
+    );
+    let archived: (Option<String>, i64) =
+        sqlx::query_as("SELECT archived_at, pool_creation_enabled FROM events WHERE id=?1")
+            .bind(&user_event_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("ler evento arquivado");
+    assert!(archived.0.is_some());
+    assert_eq!(archived.1, 0);
+    let preserved_pool: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pools WHERE id=?1")
+        .bind(&pool_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("verificar pool preservado");
+    assert_eq!(preserved_pool.0, 1);
+    let dashboard: Vec<serde_json::Value> = owner_client
+        .get(format!("{base}/api/pools/dashboard"))
+        .send()
+        .await
+        .expect("acessar pool de evento arquivado")
+        .json()
+        .await
+        .expect("corpo do dashboard preservado");
+    assert!(dashboard
+        .iter()
+        .any(|summary| summary["pool"]["id"] == pool_id));
+
+    let available: Vec<serde_json::Value> = owner_client
+        .get(format!("{base}/api/custom/events/available"))
+        .send()
+        .await
+        .expect("listar eventos disponiveis")
+        .json()
+        .await
+        .expect("corpo de eventos disponiveis");
+    assert!(!available.iter().any(|event| event["id"] == user_event_id));
+
+    let system_event_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO events(id,name,slug,kind,status,created_by,pool_creation_enabled)
+         VALUES(?1,?2,?3,'custom','active',NULL,1)",
+    )
+    .bind(&system_event_id)
+    .bind(format!("Evento padrao {suffix}"))
+    .bind(format!("system-event-{suffix}"))
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir evento padrao de teste");
+
+    let denied_system = owner_client
+        .post(format!("{base}/api/custom/events/{system_event_id}/delete"))
+        .header("X-CSRF-Token", &owner_csrf)
+        .send()
+        .await
+        .expect("tentar apagar evento padrao como dono");
+    assert!(!denied_system.status().is_success());
+
+    let (admin_token, admin_csrf) = seed_session(&admin_id).await;
+    sqlx::query("UPDATE sessions SET admin_reauthed_at=datetime('now') WHERE token=?1")
+        .bind(&admin_token)
+        .execute(crate::db::pool())
+        .await
+        .expect("marcar reauth do admin");
+    let admin_client = client_with_session(base, &admin_token);
+    let admin_delete_system = admin_client
+        .post(format!("{base}/api/admin/events/{system_event_id}/delete"))
+        .header("X-CSRF-Token", &admin_csrf)
+        .send()
+        .await
+        .expect("arquivar evento padrao como admin");
+    assert!(admin_delete_system.status().is_success());
+
+    let admin_events: Vec<AdminEventRecord> = admin_client
+        .get(format!("{base}/api/admin/events"))
+        .send()
+        .await
+        .expect("listar eventos no admin")
+        .json()
+        .await
+        .expect("corpo de eventos no admin");
+    let system_record = admin_events
+        .iter()
+        .find(|event| event.id == system_event_id)
+        .expect("evento padrao deve permanecer no admin");
+    assert_eq!(system_record.origin, crate::models::EventOrigin::System);
+    assert!(system_record.archived_at.is_some());
+    let user_record = admin_events
+        .iter()
+        .find(|event| event.id == user_event_id)
+        .expect("evento do usuario deve permanecer no admin");
+    assert_eq!(user_record.origin, crate::models::EventOrigin::User);
+    assert!(user_record.archived_at.is_some());
+
+    let draft_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO events(id,name,slug,kind,status,created_by,pool_creation_enabled)
+         VALUES(?1,?2,?3,'custom','draft',?4,1)",
+    )
+    .bind(&draft_id)
+    .bind(format!("Rascunho apagavel {suffix}"))
+    .bind(format!("draft-event-{suffix}"))
+    .bind(&owner_id)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir rascunho para exclusao");
+    let admin_delete_draft = admin_client
+        .post(format!("{base}/api/admin/events/{draft_id}/delete"))
+        .header("X-CSRF-Token", &admin_csrf)
+        .send()
+        .await
+        .expect("excluir rascunho como admin");
+    assert!(admin_delete_draft.status().is_success());
+    let draft_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM events WHERE id=?1")
+        .bind(&draft_id)
+        .fetch_one(crate::db::pool())
+        .await
+        .expect("verificar rascunho excluido");
+    assert_eq!(draft_count.0, 0);
 }
 
 /// Apagar bolão: o criador consegue; um membro comum não. Os registros filhos
@@ -3598,7 +4379,11 @@ async fn contextual_asset_upload_deduplicates_and_enforces_draft_privacy() {
         .send()
         .await
         .expect("remover cover");
-    assert!(removed.status().is_success());
+    assert_eq!(
+        removed.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "mídia publicada só pode ser alterada por administrador"
+    );
     let still_stored: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM assets WHERE id=?1")
         .bind(&cover_asset.asset_id)
         .fetch_one(crate::db::pool())
@@ -3813,7 +4598,11 @@ async fn contextual_asset_upload_http_smoke_without_tcp() {
         )
         .await
         .expect("remover cover publicada");
-    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        removed.status(),
+        StatusCode::BAD_REQUEST,
+        "mídia publicada só pode ser alterada por administrador"
+    );
 }
 
 #[tokio::test]

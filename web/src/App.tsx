@@ -21,6 +21,7 @@ const PoolOverviewPage = lazy(() => import("@/pages/PoolOverview").then((module)
 const EventBuilderPage = lazy(() => import("@/pages/EventBuilder").then((module) => ({ default: module.EventBuilderPage })));
 const PoolsPage = lazy(() => import("@/pages/Pools").then((module) => ({ default: module.PoolsPage })));
 const EventsPage = lazy(() => import("@/pages/Events").then((module) => ({ default: module.EventsPage })));
+const PoolInvitePage = lazy(() => import("@/pages/PoolInvite").then((module) => ({ default: module.PoolInvitePage })));
 
 function RouteFallback() {
   return <div className="mx-auto max-w-[1100px] px-5 py-12 text-ink-muted">Carregando...</div>;
@@ -40,6 +41,7 @@ export function App() {
             <Route path="/terms" element={<TermsPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/contact" element={<ContactPage />} />
+            <Route path="/pools/join/:token" element={<PoolInvitePage />} />
             <Route
               path="/events/new"
               element={<AuthGuard><EventBuilderPage /></AuthGuard>}

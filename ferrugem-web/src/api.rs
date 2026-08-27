@@ -99,6 +99,19 @@ fn csrf_header(headers: &HeaderMap) -> String {
         .to_string()
 }
 
+fn redacted_route(path: &str) -> String {
+    for prefix in [
+        "/api/public/pools/invite/",
+        "/api/pools/invite/",
+        "/pools/join/",
+    ] {
+        if path.starts_with(prefix) {
+            return format!("{prefix}[redacted]");
+        }
+    }
+    path.to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Middleware: instala o contexto de requisição (task-local) e drena os headers
 // de resposta acumulados pela lógica de negócio.
@@ -113,6 +126,7 @@ pub async fn context_middleware(
     let request_id = Uuid::new_v4().to_string();
     let started = Instant::now();
     let path = request.uri().path().to_string();
+    let log_path = redacted_route(&path);
     let method = request.method().as_str().to_string();
     let began = crate::operability::runtime_state().begin_request();
     if began {
@@ -138,7 +152,7 @@ pub async fn context_middleware(
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 crate::security::log_event(
                     "handler_panic",
-                    json!({ "error_id": error_id, "route": path }),
+                    json!({ "error_id": error_id, "route": log_path }),
                 );
                 (
                     (
@@ -168,7 +182,7 @@ pub async fn context_middleware(
         json!({
             "request_id": request_id,
             "method": method,
-            "route": path,
+            "route": log_path,
             "status": response.status().as_u16(),
             "duration_ms": started.elapsed().as_secs_f64() * 1000.0,
         }),
@@ -379,6 +393,8 @@ struct MultipleChoicePredictionBody {
 #[serde(rename_all = "camelCase")]
 struct MultipleChoiceResultBody {
     option_ids: Vec<String>,
+    #[serde(default)]
+    pool_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -408,11 +424,15 @@ struct CustomScoringBody {
 #[serde(rename_all = "camelCase")]
 struct CustomResultBody {
     option_id: String,
+    #[serde(default)]
+    pool_id: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResultNotRepresentableBody {
     reason: String,
+    #[serde(default)]
+    pool_id: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -430,8 +450,11 @@ struct MultipleChoiceScoringBody {
     incorrect_points: i64,
 }
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NumericResultBody {
     value: String,
+    #[serde(default)]
+    pool_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -490,6 +513,19 @@ struct PoolMemberBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PoolReportBody {
+    category: String,
+    details: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PoolReportStatusBody {
+    status: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AdjustmentBody {
     user_id: String,
     delta: i64,
@@ -529,6 +565,12 @@ struct AdminAuditQuery {
     actor_user_id: Option<String>,
     target_type: Option<String>,
     target_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PoolReportQuery {
+    status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1147,9 +1189,48 @@ async fn join_pool(
     headers: HeaderMap,
     Json(body): Json<JoinPoolBody>,
 ) -> ApiResult<impl IntoResponse> {
-    let pool =
-        crate::pools::join_pool(String::new(), body.invite_code, csrf_header(&headers)).await?;
+    let result =
+        crate::pools::join_pool(String::new(), body.invite_code, csrf_header(&headers)).await;
+    let pool = match result {
+        Ok(pool) => pool,
+        Err(error) => {
+            crate::operability::metrics()
+                .invite_join_failure
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(error.into());
+        }
+    };
     Ok(Json(pool))
+}
+
+async fn leave_pool(Path(pool_id): Path<String>, headers: HeaderMap) -> ApiResult<StatusCode> {
+    crate::pools::leave_pool(String::new(), pool_id, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn create_pool_report(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<PoolReportBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::create_pool_report(
+            String::new(),
+            pool_id,
+            body.category,
+            body.details,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
+}
+
+async fn public_pool_invite_preview(Path(token): Path<String>) -> ApiResult<impl IntoResponse> {
+    let preview = crate::pools::public_invite_preview(token).await?;
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+        Json(preview),
+    ))
 }
 
 async fn pool_member_predictions(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
@@ -1282,6 +1363,30 @@ async fn admin_remove_pool_member(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn admin_list_pool_reports(
+    Query(query): Query<PoolReportQuery>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::list_pool_reports_admin(String::new(), query.status).await?,
+    ))
+}
+
+async fn admin_update_pool_report_status(
+    Path(report_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<PoolReportStatusBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::update_pool_report_status_admin(
+            String::new(),
+            report_id,
+            body.status,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Handlers — matches / predictions
 // ---------------------------------------------------------------------------
@@ -1378,6 +1483,7 @@ async fn set_multiple_choice_result(
         String::new(),
         item_id,
         body.option_ids,
+        body.pool_id,
         csrf_header(&headers),
     )
     .await?;
@@ -1393,6 +1499,7 @@ async fn mark_custom_result_not_representable(
         String::new(),
         item_id,
         body.reason,
+        body.pool_id,
         csrf_header(&headers),
     )
     .await?;
@@ -1494,6 +1601,7 @@ async fn set_custom_question_result(
         String::new(),
         item_id,
         body.option_id,
+        body.pool_id,
         csrf_header(&headers),
     )
     .await?;
@@ -1508,6 +1616,7 @@ async fn set_numeric_question_result(
         String::new(),
         item_id,
         body.value,
+        body.pool_id,
         csrf_header(&headers),
     )
     .await?;
@@ -1696,6 +1805,14 @@ async fn admin_events() -> ApiResult<impl IntoResponse> {
     Ok(Json(crate::admin::list_events_admin(String::new()).await?))
 }
 
+async fn admin_event_delete(
+    Path(event_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::custom_events::delete_admin(String::new(), event_id, csrf_header(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn admin_event_availability(
     Path(event_id): Path<String>,
     headers: HeaderMap,
@@ -1724,6 +1841,22 @@ async fn admin_event_version_publish(
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn admin_event_version_restore(
+    Path((event_id, version_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    let session = crate::auth::require_recent_admin("").await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_header(&headers))?;
+    Ok(Json(
+        crate::custom_event_manifest::restore_published_version(
+            &event_id,
+            &version_id,
+            &session.user_id,
+        )
+        .await?,
+    ))
 }
 
 async fn admin_event_manifest_export(Path(event_id): Path<String>) -> ApiResult<Response> {
@@ -2310,7 +2443,13 @@ pub fn router() -> Router {
             post(custom_event_move_option),
         )
         .route("/custom/events/{id}/publish", post(custom_event_publish))
+        .route(
+            "/public/pools/invite/{token}",
+            get(public_pool_invite_preview),
+        )
         .route("/pools/join", post(join_pool))
+        .route("/pools/{pool_id}/leave", post(leave_pool))
+        .route("/pools/{pool_id}/reports", post(create_pool_report))
         .route(
             "/pools/{pool_id}/member-predictions",
             get(pool_member_predictions),
@@ -2388,6 +2527,7 @@ pub fn router() -> Router {
         .route("/scoring/my-points", get(my_match_points))
         .route("/admin/overview", get(admin_overview))
         .route("/admin/events", get(admin_events))
+        .route("/admin/events/{event_id}/delete", post(admin_event_delete))
         .route(
             "/admin/events/{event_id}/pool-creation",
             post(admin_event_availability),
@@ -2395,6 +2535,10 @@ pub fn router() -> Router {
         .route(
             "/admin/events/{event_id}/versions/{version_id}/publish",
             post(admin_event_version_publish),
+        )
+        .route(
+            "/admin/events/{event_id}/versions/{version_id}/restore",
+            post(admin_event_version_restore),
         )
         .route(
             "/admin/events/{event_id}/manifest",
@@ -2469,6 +2613,11 @@ pub fn router() -> Router {
             "/admin/pools/{pool_id}/members/remove",
             post(admin_remove_pool_member),
         )
+        .route("/admin/pool-reports", get(admin_list_pool_reports))
+        .route(
+            "/admin/pool-reports/{report_id}/status",
+            post(admin_update_pool_report_status),
+        )
         .route("/admin/audit", get(admin_audit))
         .route(
             "/admin/settings",
@@ -2482,5 +2631,23 @@ async fn api_not_found() -> ApiError {
     ApiError {
         status: StatusCode::NOT_FOUND,
         message: "Rota de API não encontrada.".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redacted_route;
+
+    #[test]
+    fn invite_tokens_are_not_written_to_route_logs() {
+        assert_eq!(
+            redacted_route("/api/public/pools/invite/SECRET123"),
+            "/api/public/pools/invite/[redacted]"
+        );
+        assert_eq!(
+            redacted_route("/pools/join/SECRET123"),
+            "/pools/join/[redacted]"
+        );
+        assert_eq!(redacted_route("/api/pools/join"), "/api/pools/join");
     }
 }

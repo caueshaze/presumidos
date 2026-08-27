@@ -48,6 +48,23 @@ pub struct BuilderItem {
 pub struct BuilderDraft {
     pub event: Event,
     pub items: Vec<BuilderItem>,
+    pub versions: Vec<BuilderVersion>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuilderVersion {
+    pub id: String,
+    pub version_number: i64,
+    pub state: String,
+    pub is_current_published: bool,
+    pub name: String,
+    pub fingerprint: String,
+    pub base_fingerprint: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub item_count: i64,
+    pub option_count: i64,
+    pub pool_count: i64,
 }
 
 fn text(label: &str, value: String, max: usize) -> Result<String, ServerFnError> {
@@ -89,7 +106,7 @@ async fn owner(
     }
     let db = crate::db::pool();
     let allowed: Option<(String, String)> = sqlx::query_as(
-        "SELECT e.id,e.status FROM events e WHERE e.id=?1 AND e.kind='custom' AND
+        "SELECT e.id,e.status FROM events e WHERE e.id=?1 AND e.kind='custom' AND e.archived_at IS NULL AND
          ((e.status='draft' AND (e.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)))
           OR (e.status IN ('active','finished') AND EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)))",
     )
@@ -195,58 +212,67 @@ pub async fn create(
     get_owned(&session.user_id, &id).await
 }
 
-type EventRow = (
-    String,
-    String,
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    i64,
-    Option<String>,
-);
+#[cfg(feature = "server")]
+#[derive(sqlx::FromRow)]
+struct EventRow {
+    id: String,
+    name: String,
+    slug: String,
+    kind: String,
+    status: String,
+    created_by: Option<String>,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+    description: Option<String>,
+    cover_url: Option<String>,
+    cover_asset_id: Option<String>,
+    external_url: Option<String>,
+    pool_creation_enabled: i64,
+    current_published_version_id: Option<String>,
+    archived_at: Option<String>,
+}
 fn event(row: EventRow) -> Event {
     Event {
-        id: row.0,
-        name: row.1,
-        slug: row.2,
-        kind: if row.3 == "custom" {
+        id: row.id,
+        name: row.name,
+        slug: row.slug,
+        kind: if row.kind == "custom" {
             crate::models::EventKind::Custom
         } else {
             crate::models::EventKind::Football
         },
-        status: match row.4.as_str() {
+        origin: if row.created_by.is_some() {
+            crate::models::EventOrigin::User
+        } else {
+            crate::models::EventOrigin::System
+        },
+        status: match row.status.as_str() {
             "draft" => crate::models::EventStatus::Draft,
             "finished" => crate::models::EventStatus::Finished,
             _ => crate::models::EventStatus::Active,
         },
-        created_by: row.5,
-        starts_at: row.6,
-        ends_at: row.7,
-        created_at: row.8,
-        updated_at: row.9,
-        description: row.10,
-        cover_url: row.11,
-        cover_asset_id: row.12.clone(),
+        created_by: row.created_by,
+        starts_at: row.starts_at,
+        ends_at: row.ends_at,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        description: row.description,
+        cover_url: row.cover_url,
+        cover_asset_id: row.cover_asset_id.clone(),
         cover_asset_url: row
-            .12
+            .cover_asset_id
             .map(|asset_id| format!("/media/assets/{asset_id}/cover")),
-        external_url: row.13,
-        pool_creation_enabled: row.14 != 0,
-        current_published_version_id: row.15,
+        external_url: row.external_url,
+        pool_creation_enabled: row.pool_creation_enabled != 0,
+        current_published_version_id: row.current_published_version_id,
+        archived_at: row.archived_at,
     }
 }
 pub async fn mine(token: String) -> Result<Vec<Event>, ServerFnError> {
     let s = crate::auth::require_user(&token).await?;
-    let rows:Vec<EventRow>=sqlx::query_as("SELECT e.id,COALESCE(v.name,e.name),e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description),COALESCE(v.cover_url,e.cover_url),COALESCE(v.cover_asset_id,e.cover_asset_id),COALESCE(v.external_url,e.external_url),e.pool_creation_enabled,e.current_published_version_id FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.created_by=?1 ORDER BY e.created_at DESC").bind(s.user_id).fetch_all(crate::db::pool()).await.map_err(|e|crate::security::internal_error("events_mine",e))?;
+    let rows: Vec<EventRow> = sqlx::query_as("SELECT e.id,COALESCE(v.name,e.name) AS name,e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description) AS description,COALESCE(v.cover_url,e.cover_url) AS cover_url,COALESCE(v.cover_asset_id,e.cover_asset_id) AS cover_asset_id,COALESCE(v.external_url,e.external_url) AS external_url,e.pool_creation_enabled,e.current_published_version_id,e.archived_at FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.created_by=?1 AND e.archived_at IS NULL ORDER BY e.created_at DESC").bind(s.user_id).fetch_all(crate::db::pool()).await.map_err(|e|crate::security::internal_error("events_mine",e))?;
     Ok(rows.into_iter().map(event).collect())
 }
 
@@ -255,9 +281,9 @@ pub async fn mine(token: String) -> Result<Vec<Event>, ServerFnError> {
 pub async fn available(token: String) -> Result<Vec<Event>, ServerFnError> {
     crate::auth::require_user(&token).await?;
     let rows: Vec<EventRow> = sqlx::query_as(
-        "SELECT e.id,COALESCE(v.name,e.name),e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description),COALESCE(v.cover_url,e.cover_url),COALESCE(v.cover_asset_id,e.cover_asset_id),COALESCE(v.external_url,e.external_url),e.pool_creation_enabled,e.current_published_version_id
+        "SELECT e.id,COALESCE(v.name,e.name) AS name,e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description) AS description,COALESCE(v.cover_url,e.cover_url) AS cover_url,COALESCE(v.cover_asset_id,e.cover_asset_id) AS cover_asset_id,COALESCE(v.external_url,e.external_url) AS external_url,e.pool_creation_enabled,e.current_published_version_id,e.archived_at
          FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id
-         WHERE e.status='active' AND e.pool_creation_enabled=1 AND (e.ends_at IS NULL OR datetime(e.ends_at) > datetime('now'))
+         WHERE e.status='active' AND e.archived_at IS NULL AND e.pool_creation_enabled=1 AND (e.ends_at IS NULL OR datetime(e.ends_at) > datetime('now'))
          ORDER BY CASE WHEN e.starts_at IS NULL THEN 1 ELSE 0 END, datetime(e.starts_at) ASC, COALESCE(v.name,e.name) COLLATE NOCASE",
     )
     .fetch_all(crate::db::pool())
@@ -284,8 +310,12 @@ pub async fn draft(token: String, id: String) -> Result<BuilderDraft, ServerFnEr
         .fetch_one(crate::db::pool())
         .await
         .map_err(|e| crate::security::internal_error("event_draft_admin", e))?;
-    let version_id = if let Some((id,)) = working {
-        id
+    let version_id = if let Some((working_id,)) = working {
+        if is_admin.0 || event.status == crate::models::EventStatus::Draft {
+            crate::custom_event_manifest::ensure_working_revision(&id, &session.user_id).await?
+        } else {
+            working_id
+        }
     } else if is_admin.0 && event.current_published_version_id.is_some() {
         crate::custom_event_manifest::ensure_working_revision(&id, &session.user_id).await?
     } else if let Some(id) = event.current_published_version_id.clone() {
@@ -386,7 +416,54 @@ pub async fn draft(token: String, id: String) -> Result<BuilderDraft, ServerFnEr
             options,
         });
     }
-    Ok(BuilderDraft { event, items })
+    let version_rows: Vec<(String, i64, String, i64, String, String, Option<String>, String, String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT v.id,v.version_number,v.state,v.is_current_published,v.name,v.fingerprint,v.base_fingerprint,v.created_at,v.updated_at,
+                (SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_version_id=v.id),
+                (SELECT COUNT(*) FROM custom_question_options o JOIN prediction_items pi ON pi.id=o.item_id WHERE pi.event_version_id=v.id),
+                (SELECT COUNT(*) FROM pools p WHERE p.event_version_id=v.id)
+         FROM event_versions v WHERE v.event_id=?1 ORDER BY v.version_number DESC",
+    )
+    .bind(&id)
+    .fetch_all(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("event_draft_versions", e))?;
+    let versions = version_rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                version_number,
+                state,
+                is_current_published,
+                name,
+                fingerprint,
+                base_fingerprint,
+                created_at,
+                updated_at,
+                item_count,
+                option_count,
+                pool_count,
+            )| BuilderVersion {
+                id,
+                version_number,
+                state,
+                is_current_published: is_current_published != 0,
+                name,
+                fingerprint,
+                base_fingerprint,
+                created_at,
+                updated_at,
+                item_count,
+                option_count,
+                pool_count,
+            },
+        )
+        .collect();
+    Ok(BuilderDraft {
+        event,
+        items,
+        versions,
+    })
 }
 
 pub async fn update_metadata(
@@ -404,7 +481,7 @@ pub async fn update_metadata(
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     let db = crate::db::pool();
     let access: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT e.status,e.created_by,e.starts_at,e.ends_at FROM events e WHERE e.id=?1 AND e.kind='custom' AND (e.created_by=?2 OR EXISTS (SELECT 1 FROM users u WHERE u.id=?2 AND u.is_admin=1))",
+        "SELECT e.status,e.created_by,e.starts_at,e.ends_at FROM events e WHERE e.id=?1 AND e.kind='custom' AND e.archived_at IS NULL AND (e.created_by=?2 OR EXISTS (SELECT 1 FROM users u WHERE u.id=?2 AND u.is_admin=1))",
     )
     .bind(&event_id)
     .bind(&session.user_id)
@@ -698,29 +775,133 @@ pub async fn move_option(
     }
     Ok(())
 }
-pub async fn delete(token: String, event_id: String, csrf: String) -> Result<(), ServerFnError> {
-    let (_, db, version_id) = owner(token, &event_id, Some(csrf)).await?;
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventDeletionResult {
+    pub operation: String,
+}
+
+async fn delete_for_actor(
+    actor_id: &str,
+    event_id: &str,
+    is_admin: bool,
+) -> Result<EventDeletionResult, ServerFnError> {
+    crate::security::validate_uuid("Evento", event_id)?;
+    let db = crate::db::pool();
+    let event: Option<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        i64,
+    )> = sqlx::query_as(
+        "SELECT e.kind, e.status, e.created_by, e.archived_at, e.name, e.slug,
+                    (SELECT COUNT(*) FROM pools p WHERE p.event_id=e.id)
+             FROM events e WHERE e.id=?1",
+    )
+    .bind(event_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("event_delete_load", e))?;
+    let Some((kind, status, created_by, archived_at, name, slug, pool_count)) = event else {
+        return Err(crate::security::public_error("Evento não encontrado."));
+    };
+    if !is_admin && (kind != "custom" || created_by.as_deref() != Some(actor_id)) {
+        return Err(crate::security::public_error(
+            "Somente o dono pode excluir este evento.",
+        ));
+    }
+    if archived_at.is_some() {
+        return Err(crate::security::public_error(
+            "Este evento já foi arquivado.",
+        ));
+    }
+
+    let operation = if status == "draft" && pool_count == 0 {
+        "deleted"
+    } else {
+        "archived"
+    };
     let mut tx = db
         .begin()
         .await
         .map_err(|e| crate::security::internal_error("event_delete_begin", e))?;
-    sqlx::query("DELETE FROM prediction_items WHERE event_version_id=?1")
-        .bind(&version_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| crate::security::internal_error("event_delete_items", e))?;
-    sqlx::query("DELETE FROM events WHERE id=?1 AND status='draft'")
+    if operation == "deleted" {
+        sqlx::query("DELETE FROM events WHERE id=?1 AND archived_at IS NULL")
+            .bind(event_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("event_delete", e))?;
+    } else {
+        sqlx::query(
+            "UPDATE events
+             SET archived_at=datetime('now'), archived_by=?2,
+                 pool_creation_enabled=0, updated_at=datetime('now')
+             WHERE id=?1 AND archived_at IS NULL",
+        )
         .bind(event_id)
+        .bind(actor_id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| crate::security::internal_error("event_delete", e))?;
+        .map_err(|e| crate::security::internal_error("event_archive", e))?;
+    }
+    sqlx::query(
+        "INSERT INTO audit_logs
+            (id, actor_user_id, action, target_type, target_id, details_json)
+         VALUES (?1, ?2, ?3, 'event', ?4, ?5)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(actor_id)
+    .bind(if operation == "deleted" {
+        "event_deleted"
+    } else {
+        "event_archived"
+    })
+    .bind(event_id)
+    .bind(
+        serde_json::json!({
+            "name": name,
+            "slug": slug,
+            "origin": if created_by.is_some() { "user" } else { "system" },
+            "pool_count": pool_count,
+            "operation": operation,
+        })
+        .to_string(),
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::security::internal_error("event_delete_audit", e))?;
     tx.commit()
         .await
         .map_err(|e| crate::security::internal_error("event_delete_commit", e))?;
-    Ok(())
+    Ok(EventDeletionResult {
+        operation: operation.to_string(),
+    })
+}
+
+pub async fn delete(
+    token: String,
+    event_id: String,
+    csrf: String,
+) -> Result<EventDeletionResult, ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    delete_for_actor(&session.user_id, &event_id, false).await
+}
+
+pub async fn delete_admin(
+    token: String,
+    event_id: String,
+    csrf: String,
+) -> Result<EventDeletionResult, ServerFnError> {
+    let session = crate::auth::require_recent_admin(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    delete_for_actor(&session.user_id, &event_id, true).await
 }
 async fn get_owned(user: &str, id: &str) -> Result<Event, ServerFnError> {
-    let row:Option<EventRow>=sqlx::query_as("SELECT e.id,COALESCE(v.name,e.name),e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description),COALESCE(v.cover_url,e.cover_url),COALESCE(v.cover_asset_id,e.cover_asset_id),COALESCE(v.external_url,e.external_url),e.pool_creation_enabled,e.current_published_version_id FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.id=?1 AND (e.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1))").bind(id).bind(user).fetch_optional(crate::db::pool()).await.map_err(|e|crate::security::internal_error("event_get",e))?;
+    let row: Option<EventRow> = sqlx::query_as("SELECT e.id,COALESCE(v.name,e.name) AS name,e.slug,e.kind,e.status,e.created_by,e.starts_at,e.ends_at,e.created_at,e.updated_at,COALESCE(v.description,e.description) AS description,COALESCE(v.cover_url,e.cover_url) AS cover_url,COALESCE(v.cover_asset_id,e.cover_asset_id) AS cover_asset_id,COALESCE(v.external_url,e.external_url) AS external_url,e.pool_creation_enabled,e.current_published_version_id,e.archived_at FROM events e LEFT JOIN event_versions v ON v.id=e.current_published_version_id WHERE e.id=?1 AND e.archived_at IS NULL AND (e.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1))").bind(id).bind(user).fetch_optional(crate::db::pool()).await.map_err(|e|crate::security::internal_error("event_get",e))?;
     row.map(event)
         .ok_or_else(|| crate::security::public_error("Evento não encontrado."))
 }

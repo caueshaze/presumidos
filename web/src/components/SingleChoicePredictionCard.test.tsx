@@ -36,6 +36,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe("SingleChoicePredictionCard", () => {
   it("renders options, saved selection and pool-specific score", () => {
     renderCard();
+    expect(screen.getByText("1")).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
     expect((screen.getByRole("radio", { name: "Opção A" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText("Vale 5 pontos")).toBeTruthy();
     expect(screen.getByRole("radio", { name: "Opção B" })).toBeTruthy();

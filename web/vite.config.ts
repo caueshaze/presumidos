@@ -28,6 +28,13 @@ export default defineConfig(() => {
           target: "http://127.0.0.1:8080",
           changeOrigin: true,
         },
+        // Assets internos também são servidos pelo backend. Sem este proxy,
+        // URLs persistidas como /media/assets/... caem no fallback do Vite e
+        // retornam o index.html em vez da imagem.
+        "/media": {
+          target: "http://127.0.0.1:8080",
+          changeOrigin: true,
+        },
       },
     },
   };

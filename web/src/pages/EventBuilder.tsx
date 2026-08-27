@@ -2,19 +2,27 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Check, ChevronDown, Image as ImageIcon, Pencil, Trophy, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { withAdminReauth } from "@/lib/adminReauth";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ErrorBanner, Select } from "@/components/ui/field";
+import { ErrorBanner, Label, Select } from "@/components/ui/field";
 import { AssetUploadControl } from "@/components/AssetUploadControl";
 import { SingleChoicePredictionCard } from "@/components/SingleChoicePredictionCard";
 import { NumericPredictionCard } from "@/components/NumericPredictionCard";
 import { MultipleChoicePredictionCard } from "@/components/MultipleChoicePredictionCard";
-import type { CustomQuestion, OptionLink } from "@/types";
+import type { CustomQuestion, EventVersionHistory, OptionLink } from "@/types";
 import { useAuth } from "@/hooks/useAuth";
+import { useDeleteEvent, useReauth } from "@/hooks/queries";
 
 type Option = { id: string; label: string; imageUrl?: string | null; imageAssetUrl?: string | null; links?: OptionLink[] };
+const optionLinkKinds: Array<{ value: OptionLink["kind"]; label: string }> = [
+  { value: "video", label: "Vídeo" },
+  { value: "audio", label: "Áudio" },
+  { value: "official", label: "Link oficial" },
+  { value: "other", label: "Outro" },
+];
 type Item = {
   id: string;
   kind: "single_choice" | "numeric" | "multiple_choice";
@@ -46,12 +54,94 @@ type Draft = {
     externalUrl: string | null;
   };
   items: Item[];
+  versions: EventVersionHistory[];
 };
+
+function eventCreationError(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : "";
+  if (/startsAt.*deve preceder.*endsAt/i.test(message)) {
+    return "A data inicial deve ser anterior à data final.";
+  }
+  if (/startsAt.*inválido/i.test(message)) {
+    return "Confira a data inicial do evento.";
+  }
+  if (/endsAt.*inválido/i.test(message)) {
+    return "Confira a data final do evento.";
+  }
+  return message && /Nome do evento/i.test(message)
+    ? message
+    : "Não foi possível criar o rascunho. Confira os dados e tente novamente.";
+}
+
+function localDateTimeValue(value: string): string {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 16);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+function formatPtBrDate(value: string): string {
+  const local = localDateTimeValue(value);
+  if (!/^\d{4}-\d{2}-\d{2}/.test(local)) return "";
+  return `${local.slice(8, 10)}/${local.slice(5, 7)}/${local.slice(0, 4)}`;
+}
+
+function formatPtBrDateTime(value: string): string {
+  const local = localDateTimeValue(value);
+  return local ? `${formatPtBrDate(local)} às ${local.slice(11, 16)}` : "";
+}
+
+function combinePtBrDateTime(dateText: string, time: string): string | null {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dateText);
+  if (!match || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const [, day, month, year] = match;
+  const candidate = `${year}-${month}-${day}T${time}`;
+  const parsed = new Date(candidate);
+  return Number.isNaN(parsed.getTime()) || parsed.getFullYear() !== Number(year) || parsed.getMonth() + 1 !== Number(month) || parsed.getDate() !== Number(day)
+    ? null
+    : candidate;
+}
+
+function toIsoDateTime(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
+
+function PtBrDateTimeInput({ value, onChange, disabled }: { value: string; onChange: (value: string) => void; disabled?: boolean }) {
+  const [dateText, setDateText] = useState(formatPtBrDate(value));
+  const [time, setTime] = useState(localDateTimeValue(value).slice(11, 16));
+
+  useEffect(() => {
+    setDateText(formatPtBrDate(value));
+    setTime(localDateTimeValue(value).slice(11, 16));
+  }, [value]);
+
+  const updateDate = (raw: string) => {
+    const digits = raw.replace(/\D/g, "").slice(0, 8);
+    const next = digits.length > 4 ? `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}` : digits.length > 2 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits;
+    setDateText(next);
+    const combined = combinePtBrDateTime(next, time);
+    if (combined) onChange(combined);
+  };
+
+  const updateTime = (next: string) => {
+    const digits = next.replace(/\D/g, "").slice(0, 4);
+    const formatted = digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
+    setTime(formatted);
+    const combined = combinePtBrDateTime(dateText, formatted);
+    if (combined) onChange(combined);
+  };
+
+  return <div className="grid grid-cols-[1fr_8rem] gap-2"><Input type="text" inputMode="numeric" placeholder="dd/mm/aaaa" value={dateText} onChange={(event) => updateDate(event.target.value)} disabled={disabled} aria-label="Data" maxLength={10} /><Input type="text" inputMode="numeric" placeholder="HH:mm" value={time} onChange={(event) => updateTime(event.target.value)} disabled={disabled} aria-label="Hora" maxLength={5} /></div>;
+}
 
 export function EventBuilderPage() {
   const { eventId } = useParams();
   const navigate = useNavigate();
   const { isAdmin, user } = useAuth();
+  const reauth = useReauth();
+  const deleteEvent = useDeleteEvent();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [name, setName] = useState("");
   const [startsAt, setStartsAt] = useState("");
@@ -70,12 +160,17 @@ export function EventBuilderPage() {
   const [minSelections, setMinSelections] = useState("1");
   const [maxSelections, setMaxSelections] = useState("");
   const [lockAt, setLockAt] = useState("");
-  const [revealAt, setRevealAt] = useState("");
+  const [showAddItemForm, setShowAddItemForm] = useState(false);
+  const [openAddOptionItemId, setOpenAddOptionItemId] = useState<string | null>(null);
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [mediaDrafts, setMediaDrafts] = useState<Record<string, { imageUrl: string; links: OptionLink[] }>>({});
   const [openMediaOptionId, setOpenMediaOptionId] = useState<string | null>(null);
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
   const [optionLabelDraft, setOptionLabelDraft] = useState("");
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [itemTitleDraft, setItemTitleDraft] = useState("");
+  const [itemLockDraft, setItemLockDraft] = useState("");
+  const [itemRevealDraft, setItemRevealDraft] = useState("");
   const [results, setResults] = useState<Record<string, string>>({});
   const [multipleResults, setMultipleResults] = useState<
     Record<string, string[]>
@@ -107,8 +202,12 @@ export function EventBuilderPage() {
   }, [eventId]);
   const create = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
     setError("");
+    if (startsAt && endsAt && new Date(startsAt).getTime() >= new Date(endsAt).getTime()) {
+      setError("A data inicial deve ser anterior à data final.");
+      return;
+    }
+    setBusy(true);
     try {
       const event = await api.post<{ id: string }>("/custom/events", {
         name,
@@ -117,9 +216,7 @@ export function EventBuilderPage() {
       });
       navigate(`/events/${event.id}`);
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Não foi possível criar o rascunho.",
-      );
+      setError(eventCreationError(e));
     } finally {
       setBusy(false);
     }
@@ -127,6 +224,11 @@ export function EventBuilderPage() {
   const addItem = async (e: FormEvent) => {
     e.preventDefault();
     if (!draft) return;
+    const revealAt = draft.event.endsAt || lockAt;
+    if (!title.trim() || !lockAt || !revealAt) {
+      setError("Preencha a pergunta e a data de fechamento dos palpites.");
+      return;
+    }
     setBusy(true);
     try {
       const path =
@@ -139,8 +241,8 @@ export function EventBuilderPage() {
         itemKind === "numeric"
           ? {
               title,
-              lockAt,
-              revealAt,
+              lockAt: toIsoDateTime(lockAt),
+              revealAt: toIsoDateTime(revealAt),
               decimalPlaces: Number(decimalPlaces),
               unitLabel: unitLabel || null,
               minValue: minValue || null,
@@ -149,12 +251,12 @@ export function EventBuilderPage() {
           : itemKind === "multiple_choice"
             ? {
                 title,
-                lockAt,
-                revealAt,
+                lockAt: toIsoDateTime(lockAt),
+                revealAt: toIsoDateTime(revealAt),
                 minSelections: Number(minSelections),
                 maxSelections: maxSelections ? Number(maxSelections) : null,
               }
-            : { title, lockAt, revealAt };
+            : { title, lockAt: toIsoDateTime(lockAt), revealAt: toIsoDateTime(revealAt) };
       await api.post(`/custom/events/${draft.event.id}/items${path}`, body);
       setTitle("");
       setUnitLabel("");
@@ -162,11 +264,24 @@ export function EventBuilderPage() {
       setMaxValue("");
       setMinSelections("1");
       setMaxSelections("");
+      setShowAddItemForm(false);
       await load(draft.event.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao adicionar pergunta.");
     } finally {
       setBusy(false);
+    }
+  };
+  const addOption = async (item: Item) => {
+    const label = labels[item.id]?.trim();
+    if (!label || !draft) return;
+    const added = await action(
+      `/custom/events/${draft.event.id}/items/${item.id}/options`,
+      { label },
+    );
+    if (added) {
+      setLabels((current) => ({ ...current, [item.id]: "" }));
+      setOpenAddOptionItemId(null);
     }
   };
   const action = async (path: string, body?: unknown): Promise<boolean> => {
@@ -194,16 +309,34 @@ export function EventBuilderPage() {
       externalUrl: externalUrl || null,
     });
   };
-  const editItem = async (item: Item) => {
-    const nextTitle = window.prompt("Pergunta", item.title);
-    const nextLock = window.prompt("Fecha em (ISO)", item.lockAt);
-    const nextReveal = window.prompt("Revela em (ISO)", item.revealAt);
-    if (nextTitle && nextLock && nextReveal && draft)
-      await action(`/custom/events/${draft.event.id}/items/${item.id}/update`, {
-        title: nextTitle,
-        lockAt: nextLock,
-        revealAt: nextReveal,
-      });
+  const startItemEdit = (item: Item) => {
+    setError("");
+    setEditingItemId(item.id);
+    setItemTitleDraft(item.title);
+    setItemLockDraft(item.lockAt);
+    setItemRevealDraft(item.revealAt);
+  };
+  const cancelItemEdit = () => {
+    setEditingItemId(null);
+    setItemTitleDraft("");
+    setItemLockDraft("");
+    setItemRevealDraft("");
+  };
+  const saveItemEdit = async (item: Item) => {
+    const title = itemTitleDraft.trim();
+    const lockAt = itemLockDraft.trim();
+    const revealAt = itemRevealDraft.trim();
+    if (!title || !lockAt || !revealAt) {
+      setError("Preencha a pergunta, a data de fechamento e a data de revelação.");
+      return;
+    }
+    if (!draft) return;
+    const saved = await action(`/custom/events/${draft.event.id}/items/${item.id}/update`, {
+      title,
+      lockAt: toIsoDateTime(lockAt),
+      revealAt: toIsoDateTime(revealAt),
+    });
+    if (saved) cancelItemEdit();
   };
   const startOptionEdit = (option: Option) => {
     setError("");
@@ -249,17 +382,42 @@ export function EventBuilderPage() {
       setError(e instanceof Error ? e.message : "Não foi possível exportar o evento.");
     }
   };
-  const deleteDraft = async () => {
-    if (!draft || !window.confirm(`Apagar o rascunho "${draft.event.name}"?`))
+  const deleteOwnedEvent = async () => {
+    if (!draft) return;
+    const hasPools = draft.versions.some((version) => version.poolCount > 0);
+    const willArchive = draft.event.status !== "draft" || hasPools;
+    const confirmation = willArchive
+      ? `Arquivar o evento "${draft.event.name}"? Ele sairá dos catálogos, mas os bolões existentes continuarão preservados.`
+      : `Excluir definitivamente o rascunho "${draft.event.name}"? Esta ação não pode ser desfeita.`;
+    if (!window.confirm(confirmation))
       return;
     setBusy(true);
     try {
-      await api.post(`/custom/events/${draft.event.id}/delete`);
-      navigate("/dashboard");
+      await deleteEvent.mutateAsync(draft.event.id);
+      navigate("/events");
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Não foi possível apagar o rascunho.",
+        e instanceof Error ? e.message : "Não foi possível remover o evento.",
       );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const restoreVersion = async (version: EventVersionHistory) => {
+    if (!draft || !window.confirm(`Restaurar a V${version.versionNumber}? Isso substituirá a revisão de trabalho atual, sem alterar Pools existentes.`)) return;
+    setEditingItemId(null);
+    setEditingOptionId(null);
+    setOpenMediaOptionId(null);
+    setBusy(true);
+    setError("");
+    try {
+      await withAdminReauth(
+        () => api.post(`/admin/events/${draft.event.id}/versions/${version.id}/restore`),
+        (password) => reauth.mutateAsync(password),
+      );
+      await load(draft.event.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível restaurar a versão.");
     } finally {
       setBusy(false);
     }
@@ -281,23 +439,15 @@ export function EventBuilderPage() {
             </label>
             <label>
               Data inicial
-              <Input
-                type="datetime-local"
-                value={startsAt}
-                onChange={(e) => setStartsAt(e.target.value)}
-              />
+              <PtBrDateTimeInput value={startsAt} onChange={setStartsAt} />
             </label>
             <label>
               Data final
-              <Input
-                type="datetime-local"
-                value={endsAt}
-                onChange={(e) => setEndsAt(e.target.value)}
-              />
+              <PtBrDateTimeInput value={endsAt} onChange={setEndsAt} />
             </label>
             <Button disabled={busy}>Criar rascunho</Button>
           </form>
-          {error && <ErrorBanner>{error}</ErrorBanner>}
+          {error && <p role="alert" aria-live="polite" className="mt-3 rounded-lg bg-danger-bg/50 px-3 py-2 text-sm font-medium text-danger">{error}</p>}
         </Card>
       </PageShell>
     );
@@ -309,8 +459,14 @@ export function EventBuilderPage() {
         {error && <ErrorBanner>{error}</ErrorBanner>}
       </PageShell>
     );
-  const editable = draft.event.status === "draft";
+  // Admins edit published events through the isolated working revision. The
+  // public view remains read-only; publication is the explicit commit step.
+  const draftOnly = draft.event.status === "draft";
+  const editable = draftOnly || isAdmin;
   const metadataEditable = editable || isAdmin;
+  const isOwner = draft.event.createdBy === user?.id;
+  const hasPools = draft.versions.some((version) => version.poolCount > 0);
+  const deletionLabel = draftOnly && !hasPools ? "Excluir rascunho" : "Arquivar evento";
   const mediaEditable = editable || isAdmin || draft.event.createdBy === user?.id;
   const hasInternalAssets = Boolean(
     draft.event.coverAssetId ||
@@ -319,39 +475,45 @@ export function EventBuilderPage() {
   return (
     <PageShell>
       <Button variant="link" size="sm" onClick={() => navigate("/events")}>← Voltar aos eventos</Button>
-      <div className="flex items-center justify-between gap-3">
-        <div>
+      <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
           <h1 className="text-3xl">{draft.event.name}</h1>
           <p className="text-ink-muted">
             {editable
-              ? "Rascunho privado · Escolha única, múltipla escolha ou número"
+              ? draftOnly
+                ? "Rascunho privado · Escolha única, múltipla escolha ou número"
+                : "Revisão de trabalho · publicada somente após confirmação"
               : "Publicado · estrutura imutável"}
           </p>
         </div>
         {editable ? (
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button size="sm" variant="outline" onClick={() => void downloadEventFile("manifest")}>Exportar JSON</Button>
-            <Button size="sm" variant="outline" onClick={() => void downloadEventFile("package")}>Exportar pacote</Button>
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
+            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void downloadEventFile("manifest")}>Exportar JSON</Button>
+            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void downloadEventFile("package")}>Exportar pacote</Button>
+            {isOwner && (
+              <Button
+                variant="outline"
+                className="w-full text-danger sm:w-auto"
+                disabled={busy || deleteEvent.isPending}
+                onClick={() => void deleteOwnedEvent()}
+              >
+                {deletionLabel}
+              </Button>
+            )}
             <Button
-              variant="outline"
-              className="text-danger"
-              disabled={busy}
-              onClick={() => void deleteDraft()}
-            >
-              Apagar rascunho
-            </Button>
-            <Button
+              className="col-span-2 w-full sm:col-span-1 sm:w-auto"
               disabled={busy}
               onClick={() => action(`/custom/events/${draft.event.id}/publish`)}
             >
-              Publicar
+              {draftOnly ? "Publicar" : "Publicar revisão"}
             </Button>
           </div>
         ) : (
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button size="sm" variant="outline" onClick={() => void downloadEventFile("manifest")}>Exportar JSON</Button>
-            <Button size="sm" variant="outline" onClick={() => void downloadEventFile("package")}>Exportar pacote</Button>
-            <Button onClick={() => navigate(`/dashboard?eventId=${draft.event.id}`)}>Criar bolão</Button>
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
+            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void downloadEventFile("manifest")}>Exportar JSON</Button>
+            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void downloadEventFile("package")}>Exportar pacote</Button>
+            <Button className="col-span-2 w-full sm:col-span-1 sm:w-auto" onClick={() => navigate(`/dashboard?eventId=${draft.event.id}`)}>Criar bolão</Button>
+            {isOwner && <Button size="sm" variant="outline" className="col-span-2 w-full text-danger sm:col-span-1 sm:w-auto" disabled={busy || deleteEvent.isPending} onClick={() => void deleteOwnedEvent()}>{deletionLabel}</Button>}
           </div>
         )}
       </div>
@@ -366,6 +528,44 @@ export function EventBuilderPage() {
           exporte o pacote completo; o JSON contém apenas as referências por hash.
         </p>
       )}
+      {isAdmin && draft.versions.filter((version) => version.state === "published").length > 1 && (
+        <Card className="mt-4 border-mint/20 bg-card/60">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg">Histórico de versões</h2>
+              <p className="mt-1 text-sm text-ink-muted">
+                Restaure uma versão publicada como uma nova revisão. Pools existentes não serão alterados.
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 space-y-2">
+            {draft.versions.map((version) => (
+              <div key={version.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-mint/15 bg-card/35 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="font-semibold">
+                    V{version.versionNumber} · {version.state === "working" ? "Revisão de trabalho" : version.isCurrentPublished ? "Publicada atual" : "Publicada"}
+                  </p>
+                  <p className="text-xs text-ink-muted">
+                    {version.itemCount} perguntas · {version.optionCount} opções · {version.poolCount} Pools · atualizada em {version.updatedAt}
+                  </p>
+                </div>
+                {version.state === "published" && !version.isCurrentPublished && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="rounded-lg whitespace-nowrap"
+                    disabled={busy}
+                    onClick={() => void restoreVersion(version)}
+                  >
+                    Restaurar como revisão
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       <Card className="mt-5">
         <div className="flex flex-col gap-3">
           <label>
@@ -378,21 +578,11 @@ export function EventBuilderPage() {
           </label>
           <label>
             Data inicial
-            <Input
-              disabled={editable ? false : true}
-              type="datetime-local"
-              value={startsAt}
-              onChange={(e) => setStartsAt(e.target.value)}
-            />
+            <PtBrDateTimeInput disabled={!editable} value={startsAt} onChange={setStartsAt} />
           </label>
           <label>
             Data final
-            <Input
-              disabled={editable ? false : true}
-              type="datetime-local"
-              value={endsAt}
-              onChange={(e) => setEndsAt(e.target.value)}
-            />
+            <PtBrDateTimeInput disabled={!editable} value={endsAt} onChange={setEndsAt} />
           </label>
           <label>
             Descrição <span className="text-ink-muted">(opcional)</span>
@@ -431,12 +621,26 @@ export function EventBuilderPage() {
       </Card>
       {editable && (
         <Card className="mt-5">
-          <form onSubmit={addItem} className="flex flex-col gap-3">
-            <h2 className="text-xl">Adicionar pergunta</h2>
-            <label>
-              Tipo da pergunta
-              <select
-                aria-label="Tipo da pergunta"
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 text-left"
+            aria-expanded={showAddItemForm}
+            onClick={() => setShowAddItemForm((current) => !current)}
+          >
+            <span>
+              <span className="block text-xl font-heading font-semibold">Adicionar pergunta</span>
+              <span className="mt-1 block text-sm text-ink-muted">
+                Crie uma nova pergunta para este evento
+              </span>
+            </span>
+            <ChevronDown className={`h-5 w-5 shrink-0 text-ink-muted transition-transform ${showAddItemForm ? "rotate-180" : ""}`} />
+          </button>
+          {showAddItemForm && (
+            <form onSubmit={addItem} className="mt-4 flex flex-col gap-3 border-t border-mint/15 pt-4">
+            <div>
+              <Label htmlFor="item-kind">Tipo da pergunta</Label>
+              <Select
+                id="item-kind"
                 value={itemKind}
                 onChange={(e) =>
                   setItemKind(
@@ -448,8 +652,8 @@ export function EventBuilderPage() {
                 <option value="single_choice">Escolha única</option>
                 <option value="multiple_choice">Múltipla escolha</option>
                 <option value="numeric">Número</option>
-              </select>
-            </label>
+              </Select>
+            </div>
             <label>
               Pergunta
               <Input
@@ -520,91 +724,111 @@ export function EventBuilderPage() {
               </>
             )}
             <label>
-              Fecha em (ISO)
-              <Input
-                value={lockAt}
-                onChange={(e) => setLockAt(e.target.value)}
-                placeholder="2026-12-31T18:00:00Z"
-                required
-              />
+              Fecha palpites em
+              <PtBrDateTimeInput value={lockAt} onChange={setLockAt} />
             </label>
-            <label>
-              Revela em (ISO)
-              <Input
-                value={revealAt}
-                onChange={(e) => setRevealAt(e.target.value)}
-                placeholder="2026-12-31T20:00:00Z"
-                required
-              />
-            </label>
+            <p className="text-xs text-ink-muted">O resultado aparecerá assim que for definido pelo administrador ou pelo dono do bolão.</p>
             <Button disabled={busy}>Adicionar pergunta</Button>
-          </form>
+            </form>
+          )}
         </Card>
       )}
       <div className="mt-4 flex flex-col gap-4">
         {draft.items.map((item, index) => (
           <Card key={item.id}>
-            <div className="flex justify-between gap-2">
-              <div>
-                <h2 className="text-xl">{item.title}</h2>
-                <p className="text-sm text-ink-muted">
-                  {item.kind === "numeric"
-                    ? `Número${item.unitLabel ? ` · ${item.unitLabel}` : ""} · ${item.decimalPlaces ?? 0} casas`
-                    : item.kind === "multiple_choice"
-                      ? `Múltipla escolha · ${item.minSelections ?? 1}–${item.maxSelections ?? item.options.length} opções`
-                      : "Escolha única"}{" "}
-                  · Fecha: {item.lockAt}
-                </p>
-              </div>
+            <div className="flex items-start justify-between gap-3">
+              {editingItemId === item.id ? (
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Input
+                    autoFocus
+                    aria-label={`Nome da pergunta ${item.title}`}
+                    value={itemTitleDraft}
+                    onChange={(event) => setItemTitleDraft(event.target.value)}
+                  />
+                  <div className="grid gap-2">
+                    <label className="text-sm text-ink-muted">Fecha palpites em<PtBrDateTimeInput value={itemLockDraft} onChange={setItemLockDraft} /></label>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <h2 className="text-xl">{item.title}</h2>
+                  <p className="text-sm text-ink-muted">
+                    {item.kind === "numeric"
+                      ? `Número${item.unitLabel ? ` · ${item.unitLabel}` : ""} · ${item.decimalPlaces ?? 0} casas`
+                      : item.kind === "multiple_choice"
+                        ? `Múltipla escolha · ${item.minSelections ?? 1}–${item.maxSelections ?? item.options.length} opções`
+                        : "Escolha única"}{" "}
+                    · Fecha: {formatPtBrDateTime(item.lockAt)}
+                  </p>
+                </div>
+              )}
               {editable && (
-                <div className="flex gap-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => void editItem(item)}
-                  >
-                    Editar
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy || index === 0}
-                    onClick={() =>
-                      action(
-                        `/custom/events/${draft.event.id}/items/${item.id}/move`,
-                        { direction: -1 },
-                      )
-                    }
-                  >
-                    ↑
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy || index === draft.items.length - 1}
-                    onClick={() =>
-                      action(
-                        `/custom/events/${draft.event.id}/items/${item.id}/move`,
-                        { direction: 1 },
-                      )
-                    }
-                  >
-                    ↓
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-danger"
-                    disabled={busy}
-                    onClick={() =>
-                      action(
-                        `/custom/events/${draft.event.id}/items/${item.id}/delete`,
-                      )
-                    }
-                  >
-                    Remover
-                  </Button>
+                <div className="flex shrink-0 flex-wrap items-start justify-end gap-1.5">
+                  {editingItemId === item.id ? (
+                    <>
+                      <Button size="sm" className="rounded-lg whitespace-nowrap" disabled={busy} onClick={() => void saveItemEdit(item)}>
+                        Salvar
+                      </Button>
+                      <Button size="sm" variant="outline" className="rounded-lg whitespace-nowrap" disabled={busy} onClick={cancelItemEdit}>
+                        Cancelar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-lg border-danger/40 text-danger hover:border-danger hover:bg-danger/10"
+                        disabled={busy}
+                        onClick={() => {
+                          if (window.confirm(`Remover a pergunta "${item.title}"?`)) {
+                            void action(
+                              `/custom/events/${draft.event.id}/items/${item.id}/delete`,
+                            ).then(cancelItemEdit);
+                          }
+                        }}
+                      >
+                        Remover
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-lg whitespace-nowrap"
+                        disabled={busy}
+                        onClick={() => startItemEdit(item)}
+                      >
+                        Editar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-lg px-2"
+                        disabled={busy || index === 0}
+                        onClick={() =>
+                          action(
+                            `/custom/events/${draft.event.id}/items/${item.id}/move`,
+                            { direction: -1 },
+                          )
+                        }
+                      >
+                        ↑
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-lg px-2"
+                        disabled={busy || index === draft.items.length - 1}
+                        onClick={() =>
+                          action(
+                            `/custom/events/${draft.event.id}/items/${item.id}/move`,
+                            { direction: 1 },
+                          )
+                        }
+                      >
+                        ↓
+                      </Button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -620,10 +844,11 @@ export function EventBuilderPage() {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           {editingOptionId === o.id ? (
-                            <div className="flex min-w-0 max-w-xl flex-1 items-center gap-2">
+                            <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
                               <Input
                                 autoFocus
                                 aria-label={`Nome da opção ${o.label}`}
+                                className="min-w-0 flex-1 basis-full sm:basis-auto"
                                 value={optionLabelDraft}
                                 onChange={(event) => setOptionLabelDraft(event.target.value)}
                                 onKeyDown={(event) => {
@@ -652,11 +877,29 @@ export function EventBuilderPage() {
                               >
                                 <X className="h-4 w-4" />
                               </Button>
+                              {editable && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="rounded-lg border-danger/40 px-2.5 text-danger hover:border-danger hover:bg-danger/10"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    if (window.confirm(`Remover a opção "${o.label}"?`)) {
+                                      void action(
+                                        `/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/delete`,
+                                      );
+                                    }
+                                  }}
+                                >
+                                  Remover
+                                </Button>
+                              )}
                             </div>
                           ) : (
                             <span className="font-medium text-ink">{o.label}</span>
                           )}
-                        {mediaEditable && (() => {
+                        {mediaEditable && editingOptionId === o.id && (() => {
                           const media = mediaDrafts[o.id] ?? { imageUrl: o.imageUrl ?? "", links: o.links ?? [] };
                           const mediaOpen = openMediaOptionId === o.id;
                           const hasMedia = Boolean(o.imageAssetUrl || o.imageUrl || o.links?.length);
@@ -695,11 +938,32 @@ export function EventBuilderPage() {
                                     onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, imageUrl: event.target.value } }))}
                                   />
                                   {media.links.map((link, linkIndex) => (
-                                    <div className="mt-2 grid gap-2 sm:grid-cols-[8rem_1fr_1fr_auto]" key={`${o.id}-link-${linkIndex}`}>
-                                      <Input aria-label={`Tipo do link ${o.label} ${linkIndex + 1}`} value={link.kind} placeholder="tipo" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, kind: event.target.value as OptionLink["kind"] } : entry) } }))} />
-                                      <Input aria-label={`Rótulo do link ${o.label} ${linkIndex + 1}`} value={link.label} placeholder="rótulo" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, label: event.target.value } : entry) } }))} />
-                                      <Input aria-label={`URL do link ${o.label} ${linkIndex + 1}`} value={link.url} placeholder="https://…" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, url: event.target.value } : entry) } }))} />
-                                      <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.filter((_, index) => index !== linkIndex) } }))}>Remover</Button>
+                                    <div className="mt-3 rounded-xl border border-mint/15 bg-card/30 p-3" key={`${o.id}-link-${linkIndex}`}>
+                                      <div className="mb-3 flex items-center justify-between gap-3">
+                                        <p className="text-sm font-semibold text-ink">Link editorial {linkIndex + 1}</p>
+                                        <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.filter((_, index) => index !== linkIndex) } }))}>Remover</Button>
+                                      </div>
+                                      <div className="grid gap-3 sm:grid-cols-[11rem_1fr]">
+                                        <div>
+                                          <Label htmlFor={`${o.id}-link-kind-${linkIndex}`}>Tipo de conteúdo</Label>
+                                          <Select
+                                            id={`${o.id}-link-kind-${linkIndex}`}
+                                            aria-label={`Tipo de conteúdo do link ${o.label} ${linkIndex + 1}`}
+                                            value={link.kind}
+                                            onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, kind: event.target.value as OptionLink["kind"] } : entry) } }))}
+                                          >
+                                            {optionLinkKinds.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}
+                                          </Select>
+                                        </div>
+                                        <div>
+                                          <Label htmlFor={`${o.id}-link-label-${linkIndex}`}>Nome exibido</Label>
+                                          <Input id={`${o.id}-link-label-${linkIndex}`} aria-label={`Nome exibido do link ${o.label} ${linkIndex + 1}`} value={link.label} placeholder="Ex.: Ver vídeo oficial" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, label: event.target.value } : entry) } }))} />
+                                        </div>
+                                        <div className="sm:col-span-2">
+                                          <Label htmlFor={`${o.id}-link-url-${linkIndex}`}>Endereço do link</Label>
+                                          <Input id={`${o.id}-link-url-${linkIndex}`} aria-label={`Endereço do link ${o.label} ${linkIndex + 1}`} value={link.url} placeholder="Cole aqui uma URL começando com https://" onChange={(event) => setMediaDrafts((current) => ({ ...current, [o.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, url: event.target.value } : entry) } }))} />
+                                        </div>
+                                      </div>
                                     </div>
                                   ))}
                                   <div className="mt-2 flex flex-wrap gap-2">
@@ -713,7 +977,7 @@ export function EventBuilderPage() {
                         })()}
                         </div>
                       </div>
-                      {(editable || mediaEditable) && (
+                      {(editable || mediaEditable) && editingOptionId !== o.id && (
                         <span className="flex gap-1">
                           <Button
                             size="sm"
@@ -750,46 +1014,45 @@ export function EventBuilderPage() {
                           >
                             ↓
                           </Button>}
-                          {editable && <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-danger"
-                            onClick={() =>
-                              action(
-                                `/custom/events/${draft.event.id}/items/${item.id}/options/${o.id}/delete`,
-                              )
-                            }
-                          >
-                            Remover
-                          </Button>}
                         </span>
                       )}
                     </li>
                   ))}
                 </ol>
                 {editable && (
-                  <div className="mt-3 flex gap-2">
-                    <Input
-                      aria-label={`Nova opção para ${item.title}`}
-                      value={labels[item.id] ?? ""}
-                      onChange={(e) =>
-                        setLabels((v) => ({ ...v, [item.id]: e.target.value }))
-                      }
-                    />
+                  <div className="mt-3">
                     <Button
-                      onClick={() => {
-                        const label = labels[item.id];
-                        if (label) {
-                          void action(
-                            `/custom/events/${draft.event.id}/items/${item.id}/options`,
-                            { label },
-                          );
-                          setLabels((v) => ({ ...v, [item.id]: "" }));
-                        }
-                      }}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      aria-expanded={openAddOptionItemId === item.id}
+                      onClick={() => setOpenAddOptionItemId((current) => current === item.id ? null : item.id)}
                     >
-                      Adicionar opção
+                      <span>{openAddOptionItemId === item.id ? "Fechar" : "Adicionar opção"}</span>
+                      <ChevronDown className={`h-4 w-4 transition-transform ${openAddOptionItemId === item.id ? "rotate-180" : ""}`} />
                     </Button>
+                    {openAddOptionItemId === item.id && (
+                      <div className="mt-2 flex gap-2 rounded-xl border border-mint/15 bg-card/35 p-3">
+                        <Input
+                          autoFocus
+                          aria-label={`Nova opção para ${item.title}`}
+                          placeholder="Nome da opção"
+                          value={labels[item.id] ?? ""}
+                          onChange={(e) =>
+                            setLabels((v) => ({ ...v, [item.id]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void addOption(item);
+                            }
+                          }}
+                        />
+                        <Button type="button" disabled={busy || !labels[item.id]?.trim()} onClick={() => void addOption(item)}>
+                          Adicionar
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
                 {!editable && item.kind === "single_choice" && (

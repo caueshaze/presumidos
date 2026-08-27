@@ -226,9 +226,9 @@ pub async fn list_custom_questions(
     }
     let rows: Vec<QuestionRow> = sqlx::query_as(
         "SELECT pi.id AS item_id,pi.kind,pi.title,pi.lock_at,pi.reveal_at,pi.sort_order,pi.status AS stored_status,cpv.option_id AS current_option_id,
-                CASE WHEN datetime(pi.reveal_at)<=datetime('now') THEN COALESCE(orx.option_id,q.correct_option_id) ELSE NULL END AS correct_option_id,
+                CASE WHEN orx.state IN ('resolved','not_representable') OR datetime(pi.reveal_at)<=datetime('now') THEN COALESCE(orx.option_id,q.correct_option_id) ELSE NULL END AS correct_option_id,
                 n.decimal_places,n.unit_label,n.min_value_scaled AS min_scaled,n.max_value_scaled AS max_scaled,npv.value_scaled AS current_scaled,
-                CASE WHEN datetime(pi.reveal_at)<=datetime('now') THEN COALESCE(orx.value_scaled,n.result_value_scaled) ELSE NULL END AS result_scaled,
+                CASE WHEN orx.state IN ('resolved','not_representable') OR datetime(pi.reveal_at)<=datetime('now') THEN COALESCE(orx.value_scaled,n.result_value_scaled) ELSE NULL END AS result_scaled,
                 orx.state AS result_status,
                 s.correct_points,s.incorrect_points,ns.exact_points,ns.tolerance_scaled,ns.within_tolerance_points,
                 mq.min_selections,mq.max_selections,ms.exact_points AS multiple_exact_points,ms.partial_points,ms.incorrect_points AS multiple_incorrect_points,
@@ -518,15 +518,29 @@ pub async fn set_correct_option_authorized(
     token: String,
     item_id: String,
     option_id: String,
+    pool_id: Option<String>,
     csrf: String,
 ) -> Result<(), ServerFnError> {
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
-    let allowed:Option<(String,)>=sqlx::query_as("SELECT pi.id FROM prediction_items pi JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)")
-        .bind(&item_id).bind(&session.user_id).fetch_optional(crate::db::pool()).await.map_err(|e|crate::security::internal_error("custom_result_authorization",e))?;
+    let allowed: Option<(String,)> = if let Some(pool_id) = pool_id.as_deref() {
+        sqlx::query_as("SELECT p.id FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id LEFT JOIN users u ON u.id=?2 WHERE p.id=?3 AND pi.id=?1 AND (p.created_by=?2 OR u.is_admin=1)")
+            .bind(&item_id)
+            .bind(&session.user_id)
+            .bind(pool_id)
+            .fetch_optional(crate::db::pool())
+            .await
+    } else {
+        sqlx::query_as("SELECT pi.id FROM prediction_items pi JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)")
+            .bind(&item_id)
+            .bind(&session.user_id)
+            .fetch_optional(crate::db::pool())
+            .await
+    }
+    .map_err(|e| crate::security::internal_error("custom_result_authorization", e))?;
     if allowed.is_none() {
         return Err(crate::security::public_error(
-            "Somente o dono do evento ou admin pode definir o resultado.",
+            "Somente o dono do bolão ou admin pode definir o resultado.",
         ));
     }
     set_correct_option(&item_id, &option_id).await?;
@@ -547,18 +561,26 @@ pub async fn mark_result_not_representable_authorized(
     token: String,
     item_id: String,
     reason: String,
+    pool_id: Option<String>,
     csrf: String,
 ) -> Result<(), ServerFnError> {
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     let reason = crate::security::normalize_required_text("Motivo", reason, 1, 1000)?;
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT pi.event_version_id,pi.kind FROM prediction_items pi JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)",
-    )
-    .bind(&item_id)
-    .bind(&session.user_id)
-    .fetch_optional(crate::db::pool())
-    .await
+    let row: Option<(String, String)> = if let Some(pool_id) = pool_id.as_deref() {
+        sqlx::query_as("SELECT pi.event_version_id,pi.kind FROM prediction_items pi JOIN pools p ON p.event_version_id=pi.event_version_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND p.id=?3 AND (p.created_by=?2 OR u.is_admin=1)")
+            .bind(&item_id)
+            .bind(&session.user_id)
+            .bind(pool_id)
+            .fetch_optional(crate::db::pool())
+            .await
+    } else {
+        sqlx::query_as("SELECT pi.event_version_id,pi.kind FROM prediction_items pi JOIN events e ON e.id=pi.event_id LEFT JOIN users u ON u.id=?2 WHERE pi.id=?1 AND (e.created_by=?2 OR u.is_admin=1)")
+            .bind(&item_id)
+            .bind(&session.user_id)
+            .fetch_optional(crate::db::pool())
+            .await
+    }
     .map_err(|e| crate::security::internal_error("result_not_representable_access", e))?;
     let Some((version_id, kind)) = row else {
         return Err(crate::security::public_error(
