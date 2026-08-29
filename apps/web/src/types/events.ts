@@ -100,6 +100,12 @@ export interface PackageApplyResult {
   assetCount: number;
   addedAssetCount: number;
 }
+
+export interface PackageExportPreview {
+  assetCount: number;
+  externalImageCount: number;
+  externalImages: { question: string; optionLabel: string | null; url: string }[];
+}
 export interface CustomQuestion {
   itemId: string;
   kind: "single_choice" | "numeric" | "multiple_choice";

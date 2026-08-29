@@ -7,6 +7,8 @@ use support::*;
 mod admin_http;
 #[path = "packages/builder_http.rs"]
 mod builder_http;
+#[path = "packages/builder_package_export.rs"]
+mod builder_package_export;
 #[path = "packages/builder_setup.rs"]
 mod builder_setup;
 use builder_setup::*;

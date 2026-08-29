@@ -16,4 +16,4 @@ pub use health::check_config;
 #[cfg(feature = "server")]
 pub use loader::settings;
 #[cfg(feature = "server")]
-pub use types::{AppConfig, FootballConfig, RateLimitBackendKind, WebPushConfig};
+pub use types::RateLimitBackendKind;

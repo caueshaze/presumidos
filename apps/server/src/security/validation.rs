@@ -1,7 +1,4 @@
-use crate::{
-    error::ServerFnError,
-    security::{log_event, public_error},
-};
+use crate::{error::ServerFnError, security::public_error};
 
 #[cfg(feature = "server")]
 pub fn normalize_required_text(

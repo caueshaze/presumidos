@@ -53,7 +53,8 @@ pub(crate) async fn custom_event_manifest_export(
             "Você não pode exportar este evento.",
         )));
     }
-    let (manifest, content) = crate::custom_event_manifest::export_for_event(&event_id).await?;
+    let (manifest, content) =
+        crate::custom_event_manifest::export_for_working_event(&event_id).await?;
     crate::security::append_audit_log(
         crate::db::pool(),
         Some(&session.user_id),
@@ -202,8 +203,8 @@ pub(crate) async fn custom_event_package_export(
             "Você não pode exportar este evento.",
         )));
     }
-    let bytes = crate::event_package::export(&event_id).await?;
-    let manifest = crate::custom_event_manifest::export_for_event(&event_id)
+    let bytes = crate::event_package::export_working(&event_id).await?;
+    let manifest = crate::custom_event_manifest::export_for_working_event(&event_id)
         .await?
         .0;
     crate::security::append_audit_log(
@@ -229,6 +230,28 @@ pub(crate) async fn custom_event_package_export(
                 "Não foi possível preparar o pacote.",
             ))
         })
+}
+
+pub(crate) async fn custom_event_package_preview(
+    Path(event_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    let session = crate::auth::require_user("").await?;
+    let allowed: Option<(String,)> = sqlx::query_as(
+        "SELECT e.id FROM events e WHERE e.id=?1 AND e.kind='custom' AND (e.created_by=?2 OR EXISTS(SELECT 1 FROM users u WHERE u.id=?2 AND u.is_admin=1))",
+    )
+    .bind(&event_id)
+    .bind(&session.user_id)
+    .fetch_optional(crate::db::pool())
+    .await
+    .map_err(|e| crate::security::internal_error("custom_package_preview_access", e))?;
+    if allowed.is_none() {
+        return Err(ApiError::from(crate::security::public_error(
+            "Você não pode exportar este evento.",
+        )));
+    }
+    Ok(Json(
+        crate::event_package_preview::for_working_event(&event_id).await?,
+    ))
 }
 
 pub(crate) async fn admin_package_preview(

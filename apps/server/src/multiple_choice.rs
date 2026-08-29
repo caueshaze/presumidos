@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
+#[cfg(test)]
 use crate::models::MultipleChoiceScoreOutcome;
 
+#[cfg(test)]
 pub fn classify(
     predicted: &BTreeSet<String>,
     official: &BTreeSet<String>,

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { CheckCircle2, Clock3, Eye, EyeOff, Flag, Lock, Send, TimerReset, Trophy, Users } from "lucide-react";
 import { PageShell } from "@/components/PageShell";
+import { formatKickoff } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorBanner } from "@/components/ui/field";

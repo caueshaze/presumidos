@@ -1,4 +1,3 @@
-use super::*;
 use crate::{error::ServerFnError, models::*};
 
 pub async fn reopen_prediction(

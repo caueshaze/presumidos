@@ -48,6 +48,10 @@ pub fn router() -> Router {
             "/custom/events/{id}/package",
             get(custom_event_package_export),
         )
+        .route(
+            "/custom/events/{id}/package/preview",
+            get(custom_event_package_preview),
+        )
         .route("/custom/events/{id}/cover", post(custom_event_cover_upload))
         .route(
             "/custom/events/{id}/cover/remove",

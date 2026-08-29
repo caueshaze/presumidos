@@ -1,7 +1,7 @@
 use super::*;
 use crate::error::ServerFnError;
 #[cfg(feature = "server")]
-use sqlx::{sqlite::SqliteConnection, Sqlite, SqlitePool};
+use sqlx::Sqlite;
 
 pub(crate) async fn resolve_plan_without_asset_check(
     m: &CustomEventManifest,

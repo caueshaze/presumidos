@@ -6,6 +6,7 @@ import { formatSelectionLabel } from "@/lib/selections";
 import { isoToBrasiliaInput, KNOCKOUT_PHASES } from "@/components/admin/fixtureValidation";
 import { createAdminWorkspaceActions } from "@/components/admin/AdminWorkspaceActions";
 import { emptyAdminMatchFilters, useAdminMatchFilters } from "@/hooks/useAdminMatchFilters";
+import { useAdminPoolMembers } from "@/hooks/queries/admin/pools";
 import { api } from "@/lib/api";
 import type { AdminSettings } from "@/types";
 import { MetricCard, TextArea, parseScore, scoreField, reportCategoryLabels, reportStatusLabels, reportStatusOptions } from "./AdminWorkspacePrimitives";
@@ -275,9 +276,6 @@ export function useAdminWorkspace({ navigate }: Record<string, any>) {
     
     
   };
-
-
-
   return {
     panelContext, navigate, tab, setTab, error, runAdminAction, recalcAll, overview,
     adminEvents, downloadManifest, downloadPackage, publishEventVersion, setEventPoolCreation,

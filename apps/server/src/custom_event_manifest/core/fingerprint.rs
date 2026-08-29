@@ -33,6 +33,7 @@ pub(crate) fn absent_fingerprint(slug: &str) -> String {
 pub fn draft_fingerprint(slug: &str) -> String {
     hex::encode(Sha256::digest(format!("draft:{slug}").as_bytes()))
 }
+#[cfg(test)]
 pub(crate) fn projection(m: &CustomEventManifest) -> CustomEventManifest {
     let mut v = m.clone();
     v.name.clear();

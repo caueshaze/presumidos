@@ -197,7 +197,7 @@ pub async fn apply(
             "O evento mudou desde o preview. Valide o pacote novamente.",
         ));
     }
-    if matches!(plan.action, ImportAction::Conflict | ImportAction::Rejected) {
+    if matches!(plan.action, ImportAction::Conflict) {
         return Err(crate::security::public_error(
             "O pacote contém alterações estruturais bloqueadas.",
         ));
@@ -246,6 +246,19 @@ pub async fn apply(
 pub async fn export(event_id: &str) -> Result<Vec<u8>, ServerFnError> {
     let (manifest, manifest_json) =
         crate::custom_event_manifest::export_for_event(event_id).await?;
+    export_manifest(manifest, manifest_json)
+}
+
+pub async fn export_working(event_id: &str) -> Result<Vec<u8>, ServerFnError> {
+    let (manifest, manifest_json) =
+        crate::custom_event_manifest::export_for_working_event(event_id).await?;
+    export_manifest(manifest, manifest_json)
+}
+
+fn export_manifest(
+    manifest: CustomEventManifest,
+    manifest_json: String,
+) -> Result<Vec<u8>, ServerFnError> {
     let mut hashes: Vec<_> = expected_hashes(&manifest).into_iter().collect();
     hashes.sort();
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));

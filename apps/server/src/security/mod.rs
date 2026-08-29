@@ -21,7 +21,7 @@ pub use cookies::{
 #[cfg(feature = "server")]
 pub use csrf::{csrf_token, hash_code, require_csrf, verification_code};
 #[cfg(feature = "server")]
-pub use headers::{apply_security_headers, client_ip, current_peer_ip, enforce_trusted_proxy};
+pub use headers::{apply_security_headers, client_ip, enforce_trusted_proxy};
 #[cfg(feature = "server")]
 pub use rate_limit::{
     enforce_rate_limit, rate_limit_identity_hash, sensitive_value_hash, RateLimitFailurePolicy,

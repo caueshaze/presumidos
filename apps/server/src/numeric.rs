@@ -92,12 +92,14 @@ pub fn validate_question(
     Ok(decimal_places)
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumericScoreOutcome {
     Exact,
     WithinTolerance,
     Incorrect,
 }
+#[cfg(test)]
 impl NumericScoreOutcome {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -107,6 +109,7 @@ impl NumericScoreOutcome {
         }
     }
 }
+#[cfg(test)]
 pub fn classify(
     predicted: i64,
     official: i64,

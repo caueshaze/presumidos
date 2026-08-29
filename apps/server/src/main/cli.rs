@@ -1,5 +1,5 @@
 //! Comandos operacionais do processo.
-use crate::{auth, config, custom_event_manifest, db, operability, startup};
+use crate::{auth, config, custom_event_manifest, db, startup};
 #[derive(Debug)]
 struct BootstrapAdminArgs {
     username: String,

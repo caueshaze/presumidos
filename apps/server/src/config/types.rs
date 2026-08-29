@@ -39,6 +39,10 @@ pub struct AppConfig {
     pub argon2_time_cost: u32,
     pub argon2_parallelism: u32,
     pub argon2_policy_version: String,
+    #[allow(
+        dead_code,
+        reason = "Mantém as chaves de configuração football aceitas pela aplicação."
+    )]
     pub football: FootballConfig,
     pub web_push: WebPushConfig,
     pub asset_dir: String,
@@ -53,9 +57,17 @@ pub struct AppConfig {
 #[derive(Debug, Clone)]
 pub struct FootballConfig {
     /// Liga a integração (sync + leitura). Sem isso, nada de chamadas externas.
+    #[allow(
+        dead_code,
+        reason = "Mantém compatibilidade com a configuração football existente."
+    )]
     pub enabled: bool,
     /// Sobe o poller em background nesta instância. Mantenha `true` em apenas
     /// uma réplica para não duplicar requisições à API pública.
+    #[allow(
+        dead_code,
+        reason = "Mantém compatibilidade com a configuração football existente."
+    )]
     pub poller_enabled: bool,
     pub base_url: String,
     pub poll_interval_secs: u64,

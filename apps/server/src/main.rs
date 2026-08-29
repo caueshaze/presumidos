@@ -27,6 +27,7 @@ mod custom_questions;
 mod db;
 mod email;
 mod event_package;
+mod event_package_preview;
 mod events;
 #[path = "main/invite_page.rs"]
 mod invite_page;

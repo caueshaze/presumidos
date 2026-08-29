@@ -1,5 +1,5 @@
 use super::*;
-use crate::{error::ServerFnError, models::*};
+use crate::error::ServerFnError;
 
 #[cfg(feature = "server")]
 pub async fn delete_pool(

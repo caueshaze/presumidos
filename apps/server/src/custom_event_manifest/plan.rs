@@ -1,13 +1,37 @@
 use super::*;
 use crate::error::ServerFnError;
 #[cfg(feature = "server")]
-use sqlx::{sqlite::SqliteConnection, Sqlite, SqlitePool};
 
 pub async fn export_for_event(
     event_id: &str,
 ) -> Result<(CustomEventManifest, String), ServerFnError> {
     crate::security::validate_uuid("Evento", event_id)?;
     let m = load_manifest(crate::db::pool(), event_id).await?;
+    let json = canonical_json(&m).map_err(crate::security::public_error)?;
+    Ok((m, json))
+}
+
+#[cfg(feature = "server")]
+pub async fn export_for_working_event(
+    event_id: &str,
+) -> Result<(CustomEventManifest, String), ServerFnError> {
+    crate::security::validate_uuid("Evento", event_id)?;
+    let db = crate::db::pool();
+    let version: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(event_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("manifest_export_working_version", e))?;
+    let m = if let Some((version_id,)) = version {
+        let mut conn = db.acquire().await.map_err(|e| {
+            crate::security::internal_error("manifest_export_working_connection", e)
+        })?;
+        load_manifest_conn(&mut conn, event_id, Some(&version_id)).await?
+    } else {
+        load_manifest(db, event_id).await?
+    };
     let json = canonical_json(&m).map_err(crate::security::public_error)?;
     Ok((m, json))
 }

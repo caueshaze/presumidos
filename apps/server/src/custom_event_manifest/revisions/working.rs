@@ -2,7 +2,6 @@ use super::super::*;
 use crate::error::ServerFnError;
 use serde::Serialize;
 #[cfg(feature = "server")]
-use sqlx::{sqlite::SqliteConnection, Sqlite, SqlitePool};
 
 pub async fn ensure_working_revision(event_id: &str, actor: &str) -> Result<String, ServerFnError> {
     crate::security::validate_uuid("Evento", event_id)?;

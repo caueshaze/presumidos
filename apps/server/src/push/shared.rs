@@ -1,8 +1,5 @@
 use crate::error::ServerFnError;
-use crate::models::{NotificationPreference, NotificationStatus, WebPushSubscriptionInput};
-
-#[cfg(feature = "server")]
-use std::collections::{HashMap, HashSet};
+use crate::models::{NotificationPreference, WebPushSubscriptionInput};
 #[cfg(feature = "server")]
 use std::sync::OnceLock;
 
@@ -11,8 +8,7 @@ use serde::Serialize;
 
 #[cfg(feature = "server")]
 use web_push::{
-    ContentEncoding, HyperWebPushClient, PartialVapidSignatureBuilder, SubscriptionInfo, Urgency,
-    VapidSignatureBuilder, WebPushClient, WebPushError, WebPushMessageBuilder, URL_SAFE_NO_PAD,
+    HyperWebPushClient, PartialVapidSignatureBuilder, VapidSignatureBuilder, URL_SAFE_NO_PAD,
 };
 
 #[cfg(feature = "server")]

@@ -20,7 +20,7 @@ mod options;
 mod publication;
 
 pub use core::{BuilderDraft, BuilderItem, BuilderOption, BuilderOptionLink, BuilderVersion};
-pub use deletion::{delete, delete_admin, EventDeletionResult};
+pub use deletion::{delete, delete_admin};
 pub use draft::{available, create, get, mine};
 pub use draft_view::draft;
 pub use item_types::{add_multiple_choice_item, add_numeric_item};

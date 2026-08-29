@@ -6,4 +6,3 @@
 mod core;
 
 pub use core::*;
-pub(crate) use core::{ensure_pool_membership, sqlite_now};

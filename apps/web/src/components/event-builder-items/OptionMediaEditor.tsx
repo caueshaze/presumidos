@@ -1,4 +1,5 @@
-import { ChevronDown, Image as ImageIcon } from "lucide-react";
+import { useState } from "react";
+import { Check, ChevronDown, Image as ImageIcon } from "lucide-react";
 import { AssetUploadControl } from "@/components/AssetUploadControl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,13 @@ type OptionMediaState = Pick<
 
 export function OptionMediaEditor({ item, option, state }: { item: Item; option: Option; state: OptionMediaState }) {
   const { draft, mediaEditable, busy, editingOptionId, openMediaOptionId, setOpenMediaOptionId, mediaDrafts, setMediaDrafts, load, saveOptionMedia } = state;
+  const [savedOptionId, setSavedOptionId] = useState<string | null>(null);
+  const save = async () => {
+    if (await saveOptionMedia(item, option)) {
+      setSavedOptionId(option.id);
+      window.setTimeout(() => setSavedOptionId((current) => current === option.id ? null : current), 2500);
+    }
+  };
 
   return <>
                         {mediaEditable && editingOptionId === option.id && (() => {
@@ -52,7 +60,7 @@ export function OptionMediaEditor({ item, option, state }: { item: Item; option:
                               {mediaOpen && (
                                 <div className="basis-full rounded-xl border border-mint/15 bg-card/40 p-3">
                                   <AssetUploadControl
-                                    label={`Imagem da opçãoption ${option.label}`}
+                                    label={`Imagem da opção ${option.label}`}
                                     currentUrl={option.imageAssetUrl ?? option.imageUrl}
                                     fallbackUrl={option.imageAssetUrl ? option.imageUrl : undefined}
                                     uploadPath={`/custom/events/${draft.event.id}/items/${item.id}/options/${option.id}/image`}
@@ -61,14 +69,16 @@ export function OptionMediaEditor({ item, option, state }: { item: Item; option:
                                     compact
                                     onChanged={() => void load(draft.event.id)}
                                   />
-                                  <p className="mt-2 text-xs text-ink-muted">URL externa (opcional)</p>
-                                  <Input
-                                    aria-label={`Imagem da opçãoption ${option.label}`}
-                                    className="mt-2"
-                                    placeholder="URL da imagem (https://…)"
-                                    value={media.imageUrl}
-                                    onChange={(event) => setMediaDrafts((current) => ({ ...current, [option.id]: { ...media, imageUrl: event.target.value } }))}
-                                  />
+                                  <details className="mt-3">
+                                    <summary className="cursor-pointer text-sm font-semibold text-mint-dark">{media.imageUrl ? "Editar URL externa" : "Usar URL externa"}</summary>
+                                    <Input
+                                      aria-label={`Imagem da opção ${option.label}`}
+                                      className="mt-2"
+                                      placeholder="URL da imagem (https://…)"
+                                      value={media.imageUrl}
+                                      onChange={(event) => setMediaDrafts((current) => ({ ...current, [option.id]: { ...media, imageUrl: event.target.value } }))}
+                                    />
+                                  </details>
                                   {media.links.map((link, linkIndex) => (
                                     <div className="mt-3 rounded-xl border border-mint/15 bg-card/30 p-3" key={`${option.id}-link-${linkIndex}`}>
                                       <div className="mb-3 flex items-center justify-between gap-3">
@@ -92,15 +102,15 @@ export function OptionMediaEditor({ item, option, state }: { item: Item; option:
                                           <Input id={`${option.id}-link-label-${linkIndex}`} aria-label={`Nome exibido do link ${option.label} ${linkIndex + 1}`} value={link.label} placeholder="Ex.: Ver vídeo oficial" onChange={(event) => setMediaDrafts((current) => ({ ...current, [option.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, label: event.target.value } : entry) } }))} />
                                         </div>
                                         <div className="sm:col-span-2">
-                                          <Label htmlFor={`${option.id}-link-url-${linkIndex}`}>Endereçoption do link</Label>
-                                          <Input id={`${option.id}-link-url-${linkIndex}`} aria-label={`Endereçoption do link ${option.label} ${linkIndex + 1}`} value={link.url} placeholder="Cole aqui uma URL começando com https://" onChange={(event) => setMediaDrafts((current) => ({ ...current, [option.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, url: event.target.value } : entry) } }))} />
+                                          <Label htmlFor={`${option.id}-link-url-${linkIndex}`}>Endereço do link</Label>
+                                          <Input id={`${option.id}-link-url-${linkIndex}`} aria-label={`Endereço do link ${option.label} ${linkIndex + 1}`} value={link.url} placeholder="Cole aqui uma URL começando com https://" onChange={(event) => setMediaDrafts((current) => ({ ...current, [option.id]: { ...media, links: media.links.map((entry, index) => index === linkIndex ? { ...entry, url: event.target.value } : entry) } }))} />
                                         </div>
                                       </div>
                                     </div>
                                   ))}
                                   <div className="mt-2 flex flex-wrap gap-2">
                                     <Button size="sm" variant="outline" onClick={() => setMediaDrafts((current) => ({ ...current, [option.id]: { ...media, links: [...media.links, { kind: "other", label: "", url: "", sortOrder: media.links.length }] } }))}>Adicionar link</Button>
-                                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => void saveOptionMedia(item, option)}>Salvar mídia</Button>
+                                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => void save()}>{savedOptionId === option.id ? <><Check className="h-4 w-4" />Mídia salva</> : "Salvar mídia"}</Button>
                                   </div>
                                 </div>
                               )}

@@ -84,6 +84,7 @@ pub struct EventShowcase {
     pub is_historical: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MultipleChoiceScoreOutcome {
     Exact,

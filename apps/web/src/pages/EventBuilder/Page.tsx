@@ -11,9 +11,10 @@ import { useEventBuilder } from "./useEventBuilder";
 import { EventPreview } from "./EventPreview";
 import { CreateEvent, EventLoading } from "./EntryStates";
 import { VersionHistory } from "./VersionHistory";
+import { EventPackageExport } from "@/components/EventPackageExport";
 
 export function EventBuilderPage() {
-  const { eventId, navigate, isAdmin, user, deleteEvent, draft, setDraft, name, setName, startsAt, setStartsAt, endsAt, setEndsAt, description, setDescription, coverUrl, setCoverUrl, externalUrl, setExternalUrl, title, setTitle, itemKind, setItemKind, decimalPlaces, setDecimalPlaces, unitLabel, setUnitLabel, minValue, setMinValue, maxValue, setMaxValue, minSelections, setMinSelections, maxSelections, setMaxSelections, lockAt, setLockAt, showAddItemForm, setShowAddItemForm, openAddOptionItemId, setOpenAddOptionItemId, labels, setLabels, mediaDrafts, setMediaDrafts, openMediaOptionId, setOpenMediaOptionId, editingOptionId, optionLabelDraft, setOptionLabelDraft, editingItemId, itemTitleDraft, setItemTitleDraft, itemLockDraft, setItemLockDraft, results, setResults, multipleResults, setMultipleResults, error, busy, create, addItem, addOption, action, saveMetadata, startItemEdit, cancelItemEdit, saveItemEdit, startOptionEdit, cancelOptionEdit, saveOptionLabel, saveOptionMedia, downloadEventFile, deleteOwnedEvent, restoreVersion, load } = useEventBuilder();
+  const { eventId, navigate, isAdmin, user, deleteEvent, draft, setDraft, name, setName, startsAt, setStartsAt, endsAt, setEndsAt, description, setDescription, coverUrl, setCoverUrl, externalUrl, setExternalUrl, title, setTitle, itemKind, setItemKind, decimalPlaces, setDecimalPlaces, unitLabel, setUnitLabel, minValue, setMinValue, maxValue, setMaxValue, minSelections, setMinSelections, maxSelections, setMaxSelections, lockAt, setLockAt, showAddItemForm, setShowAddItemForm, openAddOptionItemId, setOpenAddOptionItemId, labels, setLabels, mediaDrafts, setMediaDrafts, openMediaOptionId, setOpenMediaOptionId, editingOptionId, optionLabelDraft, setOptionLabelDraft, editingItemId, itemTitleDraft, setItemTitleDraft, itemLockDraft, setItemLockDraft, results, setResults, multipleResults, setMultipleResults, error, busy, create, addItem, addOption, action, saveMetadata, startItemEdit, cancelItemEdit, saveItemEdit, startOptionEdit, cancelOptionEdit, saveOptionLabel, saveOptionMedia, deleteOwnedEvent, restoreVersion, load } = useEventBuilder();
   if (!eventId) return <CreateEvent {...{ navigate, name, setName, startsAt, setStartsAt, endsAt, setEndsAt, create, busy, error }} />;
   if (!draft) return <EventLoading {...{ navigate, error }} />;
   // Admins edit published events through the isolated working revision. The
@@ -45,8 +46,7 @@ export function EventBuilderPage() {
         </div>
         {editable ? (
           <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
-            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void downloadEventFile("manifest")}>Exportar JSON</Button>
-            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void downloadEventFile("package")}>Exportar pacote</Button>
+            <EventPackageExport eventId={draft.event.id} slug={draft.event.name} compact />
             {isOwner && (
               <Button
                 variant="outline"
@@ -67,8 +67,7 @@ export function EventBuilderPage() {
           </div>
         ) : (
           <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
-            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void downloadEventFile("manifest")}>Exportar JSON</Button>
-            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void downloadEventFile("package")}>Exportar pacote</Button>
+            <EventPackageExport eventId={draft.event.id} slug={draft.event.name} compact />
             <Button className="col-span-2 w-full sm:col-span-1 sm:w-auto" onClick={() => navigate(`/dashboard?eventId=${draft.event.id}`)}>Criar bolão</Button>
             {isOwner && <Button size="sm" variant="outline" className="col-span-2 w-full text-danger sm:col-span-1 sm:w-auto" disabled={busy || deleteEvent.isPending} onClick={() => void deleteOwnedEvent()}>{deletionLabel}</Button>}
           </div>
@@ -86,7 +85,7 @@ export function EventBuilderPage() {
         </p>
       )}
       <VersionHistory isAdmin={isAdmin} versions={draft.versions} busy={busy} restore={restoreVersion} />
-      <Card className="mt-5">
+      <Card id="event-images" className="mt-5">
         <div className="flex flex-col gap-3">
           <label>
             Nome do evento
@@ -121,8 +120,10 @@ export function EventBuilderPage() {
                 onChanged={(asset) => setDraft((current) => current ? { ...current, event: { ...current.event, coverAssetId: asset?.assetId ?? null, coverAssetUrl: asset?.url ?? null } } : current)}
               />
             )}
-            <span className="mt-2 block text-xs text-ink-muted">URL externa (opcional)</span>
-            <Input disabled={!metadataEditable} type="url" placeholder="https://..." value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} />
+            <details className="mt-3">
+              <summary className="cursor-pointer text-sm font-semibold text-mint-dark">{coverUrl ? "Editar URL externa" : "Usar URL externa"}</summary>
+              <Input disabled={!metadataEditable} className="mt-2" type="url" placeholder="https://..." value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} />
+            </details>
           </label>
           <label>
             Site oficial <span className="text-ink-muted">(opcional)</span>

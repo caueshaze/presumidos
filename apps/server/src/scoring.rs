@@ -14,10 +14,14 @@ pub(crate) use breakdowns::{
 pub use breakdowns::{
     list_my_match_points, list_pool_breakdowns, list_user_breakdowns, recalculate_match_breakdowns,
 };
-pub(crate) use core::{base_points, knockout_bonus, match_points, Outcome};
+#[cfg(test)]
+pub(crate) use core::{base_points, match_points};
+pub(crate) use core::{knockout_bonus, Outcome};
 #[cfg(feature = "server")]
 pub use jobs::{
     recalculate_all_breakdowns, recalculate_custom_breakdowns, recalculate_pool_user_breakdowns,
 };
 #[cfg(feature = "server")]
-pub use leaderboard::{get_leaderboard, rank_leaderboard};
+pub use leaderboard::get_leaderboard;
+#[cfg(test)]
+pub use leaderboard::rank_leaderboard;

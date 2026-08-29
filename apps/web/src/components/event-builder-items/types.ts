@@ -62,5 +62,5 @@ export type EventBuilderItemsProps = {
   startOptionEdit: (option: Option) => void;
   cancelOptionEdit: () => void;
   saveOptionLabel: (item: Item, option: Option) => Promise<void>;
-  saveOptionMedia: (item: Item, option: Option) => Promise<void>;
+  saveOptionMedia: (item: Item, option: Option) => Promise<boolean>;
 };

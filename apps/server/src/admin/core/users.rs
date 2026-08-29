@@ -1,4 +1,3 @@
-use super::*;
 use crate::{error::ServerFnError, models::*};
 
 pub async fn list_admin_users(token: String) -> Result<Vec<AdminUserRecord>, ServerFnError> {

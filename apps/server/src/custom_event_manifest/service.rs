@@ -1,7 +1,6 @@
 use super::*;
 use crate::error::ServerFnError;
 #[cfg(feature = "server")]
-use sqlx::{sqlite::SqliteConnection, Sqlite, SqlitePool};
 
 pub async fn apply_admin(
     bytes: &str,

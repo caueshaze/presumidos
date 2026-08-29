@@ -1,7 +1,7 @@
 use super::*;
 use crate::error::ServerFnError;
 #[cfg(feature = "server")]
-use sqlx::{sqlite::SqliteConnection, Sqlite, SqlitePool};
+use sqlx::{sqlite::SqliteConnection, SqlitePool};
 
 #[cfg(feature = "server")]
 pub(crate) async fn load_manifest_conn(

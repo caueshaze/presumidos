@@ -90,7 +90,6 @@ pub enum ImportAction {
     NoChange,
     SafeUpdate,
     Conflict,
-    Rejected,
 }
 
 #[derive(Debug, Clone, Serialize)]

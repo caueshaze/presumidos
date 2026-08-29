@@ -235,9 +235,9 @@ export function useEventBuilder() {
     if (saved) cancelOptionEdit();
   };
   const saveOptionMedia = async (item: Item, option: Option) => {
-    if (!draft) return;
+    if (!draft) return false;
     const media = mediaDrafts[option.id] ?? { imageUrl: option.imageUrl ?? "", links: option.links ?? [] };
-    await action(`/custom/events/${draft.event.id}/items/${item.id}/options/${option.id}/media`, {
+    return action(`/custom/events/${draft.event.id}/items/${item.id}/options/${option.id}/media`, {
       imageUrl: media.imageUrl || null,
       links: media.links.filter((link) => link.url.trim()).map((link, sortOrder) => ({ ...link, sortOrder })),
     });

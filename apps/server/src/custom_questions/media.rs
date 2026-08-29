@@ -1,4 +1,5 @@
 use crate::error::ServerFnError;
+#[cfg(test)]
 use crate::models::CustomPredictionValue;
 
 pub async fn set_option_media_seen(
@@ -77,6 +78,7 @@ pub async fn event_showcase(
 }
 
 #[cfg(feature = "server")]
+#[cfg(test)]
 pub async fn custom_prediction_value(
     prediction_id: &str,
 ) -> Result<Option<CustomPredictionValue>, ServerFnError> {

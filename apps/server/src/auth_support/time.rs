@@ -1,6 +1,3 @@
-use super::super::*;
-use super::*;
-
 pub(crate) fn sqlite_utc_now() -> String {
     chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }

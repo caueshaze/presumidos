@@ -45,28 +45,6 @@ pub(super) struct BreakdownRow {
 }
 
 #[cfg(feature = "server")]
-#[derive(Debug, sqlx::FromRow)]
-struct LiveOverlayRow {
-    user_id: String,
-    phase: Option<String>,
-    kickoff: String,
-    joined_at: String,
-    live_home_score: i64,
-    live_away_score: i64,
-    p_home: i64,
-    p_away: i64,
-    p_qualifier: Option<String>,
-    p_penalties: bool,
-    p_pen_home: Option<i64>,
-    p_pen_away: Option<i64>,
-    exact_score_points_config: i64,
-    correct_result_exact_side_points_config: i64,
-    correct_result_points_config: i64,
-    incorrect_result_points_config: i64,
-    knockout_bonus_points_config: i64,
-}
-
-#[cfg(feature = "server")]
 pub(super) fn breakdown_points(
     is_knockout: bool,
     official: &Outcome,
