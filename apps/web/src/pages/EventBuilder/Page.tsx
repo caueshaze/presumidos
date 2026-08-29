@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import { useState } from "react";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import { EventPackageExport } from "@/components/EventPackageExport";
 
 export function EventBuilderPage() {
   const { eventId, navigate, isAdmin, user, deleteEvent, draft, setDraft, name, setName, startsAt, setStartsAt, endsAt, setEndsAt, description, setDescription, coverUrl, setCoverUrl, externalUrl, setExternalUrl, title, setTitle, itemKind, setItemKind, decimalPlaces, setDecimalPlaces, unitLabel, setUnitLabel, minValue, setMinValue, maxValue, setMaxValue, minSelections, setMinSelections, maxSelections, setMaxSelections, lockAt, setLockAt, showAddItemForm, setShowAddItemForm, openAddOptionItemId, setOpenAddOptionItemId, labels, setLabels, mediaDrafts, setMediaDrafts, openMediaOptionId, setOpenMediaOptionId, editingOptionId, optionLabelDraft, setOptionLabelDraft, editingItemId, itemTitleDraft, setItemTitleDraft, itemLockDraft, setItemLockDraft, results, setResults, multipleResults, setMultipleResults, error, busy, create, addItem, addOption, action, saveMetadata, startItemEdit, cancelItemEdit, saveItemEdit, startOptionEdit, cancelOptionEdit, saveOptionLabel, saveOptionMedia, deleteOwnedEvent, restoreVersion, load } = useEventBuilder();
+  const [metadataSaved, setMetadataSaved] = useState(false);
   if (!eventId) return <CreateEvent {...{ navigate, name, setName, startsAt, setStartsAt, endsAt, setEndsAt, create, busy, error }} />;
   if (!draft) return <EventLoading {...{ navigate, error }} />;
   // Admins edit published events through the isolated working revision. The
@@ -97,11 +99,11 @@ export function EventBuilderPage() {
           </label>
           <label>
             Data inicial
-            <PtBrDateTimeInput disabled={!editable} value={startsAt} onChange={setStartsAt} />
+            <PtBrDateTimeInput disabled={!draftOnly} value={startsAt} onChange={setStartsAt} />
           </label>
           <label>
             Data final
-            <PtBrDateTimeInput disabled={!editable} value={endsAt} onChange={setEndsAt} />
+            <PtBrDateTimeInput disabled={!draftOnly} value={endsAt} onChange={setEndsAt} />
           </label>
           <label>
             Descrição <span className="text-ink-muted">(opcional)</span>
@@ -133,9 +135,9 @@ export function EventBuilderPage() {
             <Button
               variant="secondary"
               disabled={busy}
-              onClick={() => void saveMetadata()}
+              onClick={() => void saveMetadata().then((saved) => { if (saved) { setMetadataSaved(true); window.setTimeout(() => setMetadataSaved(false), 2500); } })}
             >
-              Salvar informações
+              {busy ? "Salvando…" : metadataSaved ? "✓ Informações salvas" : "Salvar informações"}
             </Button>
           )}
         </div>

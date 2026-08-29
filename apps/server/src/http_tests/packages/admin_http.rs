@@ -70,6 +70,12 @@ async fn admin_package_http_flow_works_without_tcp() {
             .body(Body::from(body))
             .expect("request package HTTP")
     };
+    let verified = app
+        .clone()
+        .oneshot(send("/api/admin/reauth/verify", Vec::new()))
+        .await
+        .expect("verificar reauth antes do upload");
+    assert_eq!(verified.status(), StatusCode::NO_CONTENT);
     let preview = app
         .clone()
         .oneshot(send(

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import {
   useCustomQuestions,
@@ -25,6 +25,7 @@ import { CustomResultRow, CustomScoringRow } from "./pool-scoring/CustomRows";
 
 export function PoolScoringPage() {
   const { poolId = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
   const pools = usePools();
@@ -44,6 +45,9 @@ export function PoolScoringPage() {
   const setMultipleResult = useSetMultipleChoiceResult();
   const setResult = useSetCustomResult();
   const [values, setValues] = useState<Record<string, string>>({});
+  const [customSection, setCustomSection] = useState<"scoring" | "results">(
+    searchParams.get("section") === "results" ? "results" : "scoring",
+  );
   const [error, setError] = useState("");
   useEffect(() => {
     if (football.data)
@@ -105,6 +109,12 @@ export function PoolScoringPage() {
       <p className="mt-1 text-ink-muted">
         {pool.name} · {pool.event.name}
       </p>
+      {pool.event.kind === "custom" && owner && (
+        <div className="mt-5 flex flex-wrap gap-2" role="tablist" aria-label="Administração do evento">
+          <Button variant={customSection === "scoring" ? "primary" : "outline"} size="sm" role="tab" aria-selected={customSection === "scoring"} onClick={() => setCustomSection("scoring")}>Regras de pontuação</Button>
+          <Button variant={customSection === "results" ? "primary" : "outline"} size="sm" role="tab" aria-selected={customSection === "results"} onClick={() => setCustomSection("results")}>Resultados oficiais</Button>
+        </div>
+      )}
       {pool.event.kind === "football" ? (
         <Card className="mt-6 max-w-xl">
           {footballFrozen && owner && (
@@ -154,7 +164,7 @@ export function PoolScoringPage() {
         </Card>
       ) : (
         <>
-          <Card className="mt-6">
+          {(!owner || customSection === "scoring") && <Card className="mt-6">
             <p className="text-sm text-ink-muted">
               {pool.event.isHistorical
                 ? "Consulta das regras persistidas nesta edição encerrada."
@@ -215,8 +225,8 @@ export function PoolScoringPage() {
                 ),
               )}
             </div>
-          </Card>
-          {owner && (
+          </Card>}
+          {owner && customSection === "results" && (
             <Card className="mt-5">
               <h2 className="text-xl">Resultados oficiais do evento</h2>
               <p className="mt-1 text-sm text-ink-muted">

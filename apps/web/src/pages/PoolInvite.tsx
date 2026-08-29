@@ -1,9 +1,9 @@
 import { useEffect, useState, type SyntheticEvent } from "react";
-import { ArrowRight, Check, Copy, Share2, Users } from "lucide-react";
+import { ArrowRight, Users } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useJoinPool, usePublicPoolInvitePreview } from "@/hooks/queries";
-import { authReturnTo, registerReturnTo } from "@/lib/navigation";
+import { authReturnTo } from "@/lib/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/states";
@@ -24,7 +24,6 @@ export function PoolInvitePage() {
   const preview = usePublicPoolInvitePreview(token);
   const join = useJoinPool();
   const [imageIndex, setImageIndex] = useState(0);
-  const [copied, setCopied] = useState(false);
   const data = preview.data;
 
   useEffect(() => {
@@ -77,33 +76,6 @@ export function PoolInvitePage() {
     }
   };
 
-  const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  const onShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `${data.poolName} — Presumidos`,
-          text: `Entre no meu bolão "${data.poolName}" no Presumidos.`,
-          url: window.location.href,
-        });
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
-        await onCopy();
-      }
-      return;
-    }
-    await onCopy();
-  };
-
   const onImageError = (_event: SyntheticEvent<HTMLImageElement>) => {
     setImageIndex((current) => current + 1);
   };
@@ -141,19 +113,11 @@ export function PoolInvitePage() {
               <Button className="w-full justify-center" onClick={() => void onJoin()} disabled={join.isPending}>
                 {join.isPending ? "Entrando..." : "Entrar neste bolão"} <ArrowRight className="h-4 w-4" />
               </Button>
-              {!user && <p className="mt-2 text-center text-sm text-ink-muted">Você poderá entrar depois de fazer login ou criar sua conta.</p>}
               {join.isError && <p className="mt-3 text-sm font-semibold text-red-700">{(join.error as Error).message}</p>}
             </div>
           ) : (
             <p className="mt-7 rounded-2xl bg-mint/20 p-4 font-semibold">Este bolão não aceita mais participantes.</p>
           )}
-
-          <div className="mt-7 flex flex-wrap items-center gap-2 border-t border-mint-dark/10 pt-5">
-            <Button variant="outline" size="sm" onClick={() => void onCopy()}><Copy className="h-4 w-4" />{copied ? "Link copiado" : "Copiar link"}</Button>
-            <Button variant="outline" size="sm" onClick={() => void onShare()}><Share2 className="h-4 w-4" />Compartilhar</Button>
-            {!user && <Button variant="link" size="sm" onClick={() => navigate(registerReturnTo(returnTo))}>Criar conta</Button>}
-            {copied && <span className="flex items-center gap-1 text-sm text-mint-dark" role="status"><Check className="h-4 w-4" /> Link copiado!</span>}
-          </div>
         </div>
       </Card>
     </PageShell>

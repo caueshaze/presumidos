@@ -117,6 +117,17 @@ pub(crate) async fn admin_manifest_preview(
     ))
 }
 
+/// Verifica a confirmação recente antes de o cliente enviar um pacote grande.
+///
+/// As rotas de aplicação mantêm a mesma proteção para evitar uma corrida entre
+/// esta verificação e a escrita, mas o cliente passa a pedir a senha antes do
+/// upload em vez de o proxy encerrar a transmissão com EPIPE.
+pub(crate) async fn admin_reauth_verify(headers: HeaderMap) -> ApiResult<StatusCode> {
+    let session = crate::auth::require_recent_admin("").await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_header(&headers))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub(crate) async fn admin_manifest_apply(
     headers: HeaderMap,
     Json(body): Json<ManifestApplyBody>,

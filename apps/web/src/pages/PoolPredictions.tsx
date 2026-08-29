@@ -102,6 +102,7 @@ export function PoolPredictionsPage() {
     members, matches, entries, selectedMember, selectedMemberScore, correctPercentage,
     selectedMemberId, setSelectedMemberId, openedFromClosing, matchIdParam, matchById,
     breakdownByKey, reactToPrediction, openReactionMatchId, setOpenReactionMatchId,
+    showPoolSelector: !routePoolId,
   };
 
   if (currentPool?.event.kind === "custom") {

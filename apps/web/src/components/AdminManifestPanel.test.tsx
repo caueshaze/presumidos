@@ -110,4 +110,6 @@ it("requires explicit confirmation before applying a package preview", async () 
   await waitFor(() => expect(screen.getByText("Versão publicada.")).toBeTruthy());
   expect(upload).toHaveBeenCalledTimes(2);
   expect(upload.mock.calls[1][0]).toBe("/admin/events/import/package/apply");
+  expect(post).toHaveBeenCalledWith("/admin/reauth/verify");
+  expect(post.mock.invocationCallOrder[0]).toBeLessThan(upload.mock.invocationCallOrder[1]);
 });

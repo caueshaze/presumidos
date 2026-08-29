@@ -71,9 +71,10 @@ it("shows the public pool preview and falls back from the internal cover", async
   fireEvent.error(image);
   expect(image.getAttribute("src")).toBe("https://cdn.example/cover.webp");
 
-  Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
-  fireEvent.click(screen.getByRole("button", { name: "Copiar link" }));
-  await waitFor(() => expect(screen.getByText("Link copiado!")).toBeTruthy());
+  expect(screen.queryByRole("button", { name: "Copiar link" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Compartilhar" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Criar conta" })).toBeNull();
+  expect(screen.queryByText(/Você poderá entrar depois/)).toBeNull();
 });
 
 it("joins and opens the pool for an authenticated user", async () => {

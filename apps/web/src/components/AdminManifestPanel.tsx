@@ -74,9 +74,14 @@ export function AdminManifestPanel({ onApplied }: { onApplied?: () => void }) {
     setBusy(true); setError(""); setSuccess("");
     try {
       const result = await withAdminReauth(
-        () => packagePreview && file
-          ? api.upload<PackageApplyResult>("/admin/events/import/package/apply", file, { baseFingerprint: preview.baseFingerprint }).then((value) => value.result)
-          : api.post<ManifestApplyResult>("/admin/events/import/apply", { content, baseFingerprint: preview.baseFingerprint, filename: file?.name }),
+        async () => {
+          // Evita transmitir um ZIP quando a confirmação administrativa já expirou.
+          // A rota de aplicação confere novamente para preservar a segurança.
+          await api.post<void>("/admin/reauth/verify");
+          return packagePreview && file
+            ? api.upload<PackageApplyResult>("/admin/events/import/package/apply", file, { baseFingerprint: preview.baseFingerprint }).then((value) => value.result)
+            : api.post<ManifestApplyResult>("/admin/events/import/apply", { content, baseFingerprint: preview.baseFingerprint, filename: file?.name });
+        },
         (password) => reauth.mutateAsync(password),
       );
       setSuccess(result.state === "working" ? "Revisão criada. O conteúdo público continua na versão anterior até a publicação." : "Versão publicada.");

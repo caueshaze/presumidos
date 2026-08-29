@@ -1,5 +1,6 @@
 import { PageShell } from "@/components/PageShell";
 import { PredictionItemRenderer } from "@/components/PredictionItemRenderer";
+import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorBanner } from "@/components/ui/field";
@@ -7,7 +8,13 @@ import { ErrorBanner } from "@/components/ui/field";
 export function CustomPredictionsView({ context }: { context: Record<string, any> }) {
   const { navigate, poolId, currentPool, customQuestions } = context;
     const questions = customQuestions.data ?? [];
-    const answered = questions.filter((question: any) => question.kind === "numeric" ? question.currentValue != null : question.kind === "multiple_choice" ? (question.currentOptionIds?.length ?? 0) > 0 : question.currentOptionId != null).length;
+    const isAnswered = (question: any) => question.kind === "numeric" ? question.currentValue != null : question.kind === "multiple_choice" ? (question.currentOptionIds?.length ?? 0) > 0 : question.currentOptionId != null;
+    const answered = questions.filter(isAnswered).length;
+    const nextUnanswered = questions.find((question: any) => !isAnswered(question));
+    const progress = questions.length ? Math.round((answered / questions.length) * 100) : 0;
+    const goToNextUnanswered = () => {
+      document.getElementById(`prediction-item-${nextUnanswered?.itemId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
     return (
       <PageShell>
         <Button variant="link" size="sm" onClick={() => navigate(poolId ? `/pools/${poolId}` : "/pools")}>
@@ -23,9 +30,13 @@ export function CustomPredictionsView({ context }: { context: Record<string, any
           </p>
         )}
         {!customQuestions.isLoading && (
-          <p className="mt-3 text-sm font-semibold text-mint-dark">
-            {answered} de {questions.length} categorias respondidas
-          </p>
+          <div className="mt-3 max-w-md">
+            <p className="text-sm font-semibold text-mint-dark">{answered} de {questions.length} categorias respondidas</p>
+            <div className="mt-2 h-2 overflow-hidden rounded-pill bg-mint/15" role="progressbar" aria-label="Progresso dos palpites" aria-valuemin={0} aria-valuemax={questions.length} aria-valuenow={answered}>
+              <div className="h-full rounded-pill bg-mint-dark transition-[width]" style={{ width: `${progress}%` }} />
+            </div>
+            {nextUnanswered && <Button variant="outline" size="sm" className="mt-3" onClick={goToNextUnanswered}>Próximo palpite <ArrowDown className="h-4 w-4" /></Button>}
+          </div>
         )}
         <div className="mt-6 space-y-4">
           {customQuestions.isLoading ? (
@@ -36,11 +47,11 @@ export function CustomPredictionsView({ context }: { context: Record<string, any
             </ErrorBanner>
           ) : (
             questions.map((question: any, index: number) => question.kind === "numeric" ? (
-              <PredictionItemRenderer key={question.itemId} item={{ kind: "numeric", question, poolId: poolId!, index }} />
+              <div id={`prediction-item-${question.itemId}`} key={question.itemId}><PredictionItemRenderer item={{ kind: "numeric", question, poolId: poolId!, index }} /></div>
             ) : question.kind === "multiple_choice" ? (
-              <PredictionItemRenderer key={question.itemId} item={{ kind: "multiple_choice", question, poolId: poolId!, index }} />
+              <div id={`prediction-item-${question.itemId}`} key={question.itemId}><PredictionItemRenderer item={{ kind: "multiple_choice", question, poolId: poolId!, index }} /></div>
             ) : (
-              <PredictionItemRenderer key={question.itemId} item={{ kind: "single_choice", question, poolId: poolId!, index }} />
+              <div id={`prediction-item-${question.itemId}`} key={question.itemId}><PredictionItemRenderer item={{ kind: "single_choice", question, poolId: poolId!, index }} /></div>
             ))
           )}
         </div>

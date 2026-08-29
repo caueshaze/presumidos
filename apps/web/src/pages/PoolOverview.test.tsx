@@ -66,6 +66,7 @@ it("opens one sharing modal with the invite link and code", async () => {
   expect(screen.queryByRole("menu")).toBeNull();
 
   expect(screen.getAllByRole("button", { name: "Compartilhar" })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Resultados oficiais" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Copiar link" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Copiar código" })).toBeNull();
 

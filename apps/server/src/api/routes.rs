@@ -1,5 +1,4 @@
 use super::*;
-
 pub fn router() -> Router {
     Router::new()
         .route("/health", get(health))
@@ -227,6 +226,7 @@ pub fn router() -> Router {
         )
         .route("/admin/events/import/preview", post(admin_manifest_preview))
         .route("/admin/events/import/apply", post(admin_manifest_apply))
+        .route("/admin/reauth/verify", post(admin_reauth_verify))
         .route(
             "/admin/events/import/package/preview",
             post(admin_package_preview),

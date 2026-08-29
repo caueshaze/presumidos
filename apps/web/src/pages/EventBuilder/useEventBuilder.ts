@@ -6,7 +6,7 @@ import type { EventVersionHistory, OptionLink } from "@/types";
 import { useAuth } from "@/hooks/useAuth";
 import { useDeleteEvent, useReauth } from "@/hooks/queries";
 import { type Item, type Option } from "@/components/EventBuilderItems";
-import { toIsoDateTime } from "@/components/PtBrDateTimeInput";
+import { localDateTimeValue, toIsoDateTime } from "@/components/PtBrDateTimeInput";
 import { eventCreationError, type Draft } from "./types";
 
 
@@ -56,8 +56,8 @@ export function useEventBuilder() {
       const next = await api.get<Draft>(`/custom/events/${id}/draft`);
       setDraft(next);
       setName(next.event.name);
-      setStartsAt(next.event.startsAt?.slice(0, 16) ?? "");
-      setEndsAt(next.event.endsAt?.slice(0, 16) ?? "");
+      setStartsAt(localDateTimeValue(next.event.startsAt ?? ""));
+      setEndsAt(localDateTimeValue(next.event.endsAt ?? ""));
       setDescription(next.event.description ?? "");
       setCoverUrl(next.event.coverUrl ?? "");
       setExternalUrl(next.event.externalUrl ?? "");
@@ -85,8 +85,8 @@ export function useEventBuilder() {
     try {
       const event = await api.post<{ id: string }>("/custom/events", {
         name,
-        startsAt: startsAt ? new Date(startsAt).toISOString() : null,
-        endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+        startsAt: startsAt ? toIsoDateTime(startsAt) : null,
+        endsAt: endsAt ? toIsoDateTime(endsAt) : null,
       });
       navigate(`/events/${event.id}`);
     } catch (e) {
@@ -173,11 +173,11 @@ export function useEventBuilder() {
     }
   };
   const saveMetadata = async () => {
-    if (!draft) return;
-    await action(`/custom/events/${draft.event.id}/update`, {
+    if (!draft) return false;
+    return action(`/custom/events/${draft.event.id}/update`, {
       name,
-      startsAt: startsAt ? new Date(startsAt).toISOString() : null,
-      endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+      startsAt: draft.event.status === "draft" ? (startsAt ? toIsoDateTime(startsAt) : null) : draft.event.startsAt,
+      endsAt: draft.event.status === "draft" ? (endsAt ? toIsoDateTime(endsAt) : null) : draft.event.endsAt,
       description: description || null,
       coverUrl: coverUrl || null,
       externalUrl: externalUrl || null,

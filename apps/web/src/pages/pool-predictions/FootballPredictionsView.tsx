@@ -11,11 +11,12 @@ export function FootballPredictionsView({ context }: { context: Record<string, a
   const { pools, user, navigate, selectedPool, setSelectedPool, members, matches, entries,
     selectedMember, selectedMemberScore, correctPercentage, setSelectedMemberId, openedFromClosing,
     matchIdParam, matchById, breakdownByKey, reactToPrediction, openReactionMatchId,
-    setOpenReactionMatchId } = context;
+    setOpenReactionMatchId, showPoolSelector, currentPool } = context;
   return (
     <PageShell>
       <Button variant="link" size="sm" onClick={() => navigate(selectedPool ? `/pools/${selectedPool}` : "/pools")}>← Voltar ao bolão</Button>
-      <h1 className="text-3xl">Palpites do Bolão</h1>
+      <h1 className="text-3xl">{showPoolSelector ? "Palpites do Bolão" : "Palpiteiros do Bolão"}</h1>
+      {currentPool && <p className="mt-1 text-ink-muted">Bolão: {currentPool.name} · Evento: {currentPool.event.name}</p>}
       <p className="mt-2 max-w-3xl text-sm text-ink-muted">
         Veja os palpites dos outros participantes do bolão e compare com os seus. Os palpites
         aparecem aqui assim que os jogos começam, e mostram os pontos que cada um está somando no
@@ -39,7 +40,7 @@ export function FootballPredictionsView({ context }: { context: Record<string, a
         </Card>
       ) : (
         <>
-          <Card className="mt-6 max-w-sm">
+          {showPoolSelector && <Card className="mt-6 max-w-sm">
             <Label htmlFor="pool-select">Bolão</Label>
             <Select
               id="pool-select"
@@ -52,7 +53,7 @@ export function FootballPredictionsView({ context }: { context: Record<string, a
                 </option>
               ))}
             </Select>
-          </Card>
+          </Card>}
 
           <div className="mt-6">
             {members.isLoading || matches.isLoading ? (
@@ -67,7 +68,7 @@ export function FootballPredictionsView({ context }: { context: Record<string, a
               <div>
                 <button
                   type="button"
-                  onClick={() => navigate(`/leaderboard?poolId=${encodeURIComponent(selectedPool)}${openedFromClosing ? "&from=closing" : ""}`)}
+                  onClick={() => navigate(`/pools/${encodeURIComponent(selectedPool)}/leaderboard${openedFromClosing ? "?from=closing" : ""}`)}
                   className="mb-4 inline-flex items-center gap-1 text-sm font-semibold text-ink-muted transition-colors hover:text-ink"
                 >
                   <ChevronLeft className="h-4 w-4" /> Voltar

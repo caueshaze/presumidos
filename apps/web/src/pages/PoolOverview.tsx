@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpenText, Flag, LogOut, MoreHorizontal, Share2, Trash2, Trophy, Users } from "lucide-react";
+import { ArrowRight, BookOpenText, ClipboardCheck, Flag, LogOut, MoreHorizontal, Share2, Trash2, Trophy, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { PageShell } from "@/components/PageShell";
@@ -16,7 +16,7 @@ import { PoolActionModal, type PoolAction } from "./pool-overview/PoolActionModa
 export function PoolOverviewPage() {
   const { poolId = "" } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const pools = usePools();
   const dashboard = useDashboardPools();
   const leaderboard = useLeaderboard(poolId || null);
@@ -73,6 +73,7 @@ export function PoolOverviewPage() {
   const inviteUrl = `${window.location.origin}/pools/join/${pool.inviteCode}`;
   const canShare = typeof navigator !== "undefined" && "share" in navigator;
   const owner = user?.id === pool.createdBy;
+  const canManageEventResults = owner || isAdmin;
   const actionError = action === "report" ? (createReport.error instanceof Error ? createReport.error.message : "") : action === "leave" ? (leavePool.error instanceof Error ? leavePool.error.message : "") : action === "delete" ? (deletePool.error instanceof Error ? deletePool.error.message : "") : "";
 
   const copyShareValue = async (value: string, target: "link" | "code") => {
@@ -202,6 +203,7 @@ export function PoolOverviewPage() {
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/leaderboard`)}><Trophy className="h-4 w-4 shrink-0 text-yellow-dark" />{historical ? "Ranking final" : "Ranking"}</Button>
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/members`)}><Users className="h-4 w-4 shrink-0 text-mint-dark" />Participantes</Button>
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/scoring`)}><BookOpenText className="h-4 w-4 shrink-0 text-mint-dark" />Regras</Button>
+        {pool.event.kind === "custom" && canManageEventResults && <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/scoring?section=results`)}><ClipboardCheck className="h-4 w-4 shrink-0 text-mint-dark" />Resultados oficiais</Button>}
         {!historical && <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => setShareModalOpen(true)}><Share2 className="h-4 w-4 shrink-0 text-mint-dark" />Compartilhar</Button>}
         <div ref={optionsRef} className="relative col-span-2 w-full sm:col-span-1 sm:w-auto">
           <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" aria-haspopup="menu" aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}><MoreHorizontal className="h-4 w-4 shrink-0 text-mint-dark" />Opções</Button>

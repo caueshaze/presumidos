@@ -8,6 +8,7 @@ interface Props {
   pools: PoolSummary[];
   selectedPool: string;
   onSelectPool: (poolId: string) => void;
+  showPoolSelector: boolean;
   entries: LeaderboardEntry[];
   isFootball: boolean;
   isLoading: boolean;
@@ -19,6 +20,7 @@ export function LeaderboardRanking({
   pools,
   selectedPool,
   onSelectPool,
+  showPoolSelector,
   entries,
   isFootball,
   isLoading,
@@ -29,7 +31,7 @@ export function LeaderboardRanking({
   const rest = entries.slice(3);
   return (
     <>
-      <Card className="mt-6 max-w-sm">
+      {showPoolSelector && <Card className="mt-6 max-w-sm">
         <Label htmlFor="pool-select">Bolão</Label>
         <Select
           id="pool-select"
@@ -42,7 +44,7 @@ export function LeaderboardRanking({
             </option>
           ))}
         </Select>
-      </Card>
+      </Card>}
       <div className="mt-6">
         {isLoading ? (
           <Card>

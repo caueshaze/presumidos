@@ -116,9 +116,7 @@ export function LeaderboardPage() {
   };
   const openMemberPredictions = (userId: string) => {
     const from = openedFromClosing ? "&from=closing" : "";
-    navigate(
-      `/palpites-do-bolao?poolId=${encodeURIComponent(selectedPool)}&memberId=${encodeURIComponent(userId)}${from}`,
-    );
+    navigate(`/pools/${encodeURIComponent(selectedPool)}/members?memberId=${encodeURIComponent(userId)}${from}`);
   };
 
   return (
@@ -172,6 +170,7 @@ export function LeaderboardPage() {
             pools={pools.data ?? []}
             selectedPool={selectedPool}
             onSelectPool={setSelectedPool}
+            showPoolSelector={!routePoolId}
             entries={entries}
             isFootball={isFootball}
             isLoading={leaderboard.isLoading}
