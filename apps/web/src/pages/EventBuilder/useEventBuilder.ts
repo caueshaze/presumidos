@@ -259,10 +259,10 @@ export function useEventBuilder() {
   const deleteOwnedEvent = async () => {
     if (!draft) return;
     const hasPools = draft.versions.some((version) => version.poolCount > 0);
-    const willArchive = draft.event.status !== "draft" || hasPools;
+    const willArchive = hasPools;
     const confirmation = willArchive
       ? `Arquivar o evento "${draft.event.name}"? Ele sairá dos catálogos, mas os bolões existentes continuarão preservados.`
-      : `Excluir definitivamente o rascunho "${draft.event.name}"? Esta ação não pode ser desfeita.`;
+      : `Excluir definitivamente o evento "${draft.event.name}"? Esta ação não pode ser desfeita.`;
     if (!window.confirm(confirmation))
       return;
     setBusy(true);

@@ -27,7 +27,7 @@ export function EventBuilderPage() {
   const editable = draftOnly || isAdmin || isOwner;
   const metadataEditable = editable || isAdmin;
   const hasPools = draft.versions.some((version) => version.poolCount > 0);
-  const deletionLabel = draftOnly && !hasPools ? "Excluir rascunho" : "Arquivar evento";
+  const deletionLabel = !hasPools ? "Excluir evento" : "Arquivar evento";
   const mediaEditable = editable || isAdmin || draft.event.createdBy === user?.id;
   const hasInternalAssets = Boolean(
     draft.event.coverAssetId ||

@@ -151,4 +151,34 @@ async fn event_deletion_distinguishes_origin_and_preserves_existing_pools() {
         .await
         .expect("verificar rascunho excluido");
     assert_eq!(draft_count.0, 0);
+
+    let active_without_pool_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO events(id,name,slug,kind,status,created_by,pool_creation_enabled)
+         VALUES(?1,?2,?3,'custom','active',?4,1)",
+    )
+    .bind(&active_without_pool_id)
+    .bind(format!("Evento ativo apagavel {suffix}"))
+    .bind(format!("active-event-{suffix}"))
+    .bind(&owner_id)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir evento ativo sem bolão");
+    assert!(owner_client
+        .post(format!(
+            "{base}/api/custom/events/{active_without_pool_id}/delete"
+        ))
+        .header("X-CSRF-Token", &owner_csrf)
+        .send()
+        .await
+        .expect("excluir evento ativo sem bolão")
+        .status()
+        .is_success());
+    let active_without_pool_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM events WHERE id=?1")
+            .bind(&active_without_pool_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("verificar exclusão do evento ativo");
+    assert_eq!(active_without_pool_count.0, 0);
 }

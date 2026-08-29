@@ -32,7 +32,7 @@ async fn delete_for_actor(
     .fetch_optional(db)
     .await
     .map_err(|e| crate::security::internal_error("event_delete_load", e))?;
-    let Some((kind, status, created_by, archived_at, name, slug, pool_count)) = event else {
+    let Some((kind, _status, created_by, archived_at, name, slug, pool_count)) = event else {
         return Err(crate::security::public_error("Evento não encontrado."));
     };
     if !is_admin && (kind != "custom" || created_by.as_deref() != Some(actor_id)) {
@@ -46,7 +46,7 @@ async fn delete_for_actor(
         ));
     }
 
-    let operation = if status == "draft" && pool_count == 0 {
+    let operation = if kind == "custom" && created_by.is_some() && pool_count == 0 {
         "deleted"
     } else {
         "archived"
