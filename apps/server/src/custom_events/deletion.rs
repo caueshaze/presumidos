@@ -56,6 +56,23 @@ async fn delete_for_actor(
         .await
         .map_err(|e| crate::security::internal_error("event_delete_begin", e))?;
     if operation == "deleted" {
+        // `events.current_published_version_id` points back to one of this
+        // event's versions. Clear it before removing the versioned content so
+        // SQLite can enforce every FK during the transaction.
+        sqlx::query("UPDATE events SET current_published_version_id=NULL WHERE id=?1")
+            .bind(event_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("event_delete_unlink_version", e))?;
+        // `prediction_items.event_id` is intentionally not cascading: items
+        // are preserved when an EventVersion is published and used by a Pool.
+        // A no-Pool event is the one safe permanent-delete case, so remove its
+        // items explicitly; their question/result children cascade.
+        sqlx::query("DELETE FROM prediction_items WHERE event_id=?1")
+            .bind(event_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("event_delete_items", e))?;
         sqlx::query("DELETE FROM events WHERE id=?1 AND archived_at IS NULL")
             .bind(event_id)
             .execute(&mut *tx)

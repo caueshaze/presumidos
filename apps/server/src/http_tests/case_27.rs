@@ -164,6 +164,22 @@ async fn event_deletion_distinguishes_origin_and_preserves_existing_pools() {
     .execute(crate::db::pool())
     .await
     .expect("inserir evento ativo sem bolão");
+    let active_version_id: (String,) =
+        sqlx::query_as("SELECT current_published_version_id FROM events WHERE id=?1")
+            .bind(&active_without_pool_id)
+            .fetch_one(crate::db::pool())
+            .await
+            .expect("versao publicada criada para o evento ativo");
+    sqlx::query(
+        "INSERT INTO prediction_items(id,event_id,event_version_id,kind,title,lock_at,reveal_at,sort_order,status)
+         VALUES(?1,?2,?3,'single_choice','Pergunta removivel','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z',0,'open')",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&active_without_pool_id)
+    .bind(&active_version_id.0)
+    .execute(crate::db::pool())
+    .await
+    .expect("inserir pergunta do evento ativo sem bolão");
     assert!(owner_client
         .post(format!(
             "{base}/api/custom/events/{active_without_pool_id}/delete"
