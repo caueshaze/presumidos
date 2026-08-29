@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, Ticket, X } from "lucide-react";
@@ -30,6 +30,7 @@ export function DashboardPage() {
   const [chosenEventId, setChosenEventId] = useState(search.get("eventId") ?? "");
   const [joinCode, setJoinCode] = useState("");
   const [error, setError] = useState("");
+  const actionPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const invite = search.get("invite")?.trim().toUpperCase();
@@ -41,6 +42,14 @@ export function DashboardPage() {
       setMode(requestedMode);
     }
   }, [search]);
+
+  useEffect(() => {
+    if (!mode) return;
+    const frame = window.requestAnimationFrame(() => {
+      actionPanelRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [mode]);
 
   const openMode = (next: Exclude<Mode, null>) => {
     setError("");
@@ -89,8 +98,8 @@ export function DashboardPage() {
     </section>
 
     <AnimatePresence initial={false} mode="wait">
-      {mode === "create" && <motion.div key="create" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="mt-5 overflow-hidden"><Card className="border border-mint/30"><PanelHeader title="Criar um bolão" onClose={() => setMode(null)}>Você vira o dono e convida a galera com o código que o app gera.</PanelHeader>{availableEvents.isLoading || events.isLoading ? <p className="mt-4 text-sm text-ink-muted">Carregando eventos disponíveis...</p> : availableEvents.isError ? <div className="mt-4"><ErrorState onRetry={() => void availableEvents.refetch()}>Não foi possível carregar os eventos publicados.</ErrorState></div> : publishedEvents.length > 0 ? <CreatePoolForm events={publishedEvents} chosenEventId={chosenEventId} setChosenEventId={setChosenEventId} newPoolName={newPoolName} setNewPoolName={setNewPoolName} isPending={createPool.isPending} onSubmit={onCreate} onCreateEvent={() => navigate("/events/new")} /> : draftEvents.length > 0 ? <EventRequiredState title="Seus eventos ainda são rascunhos" description="Publique um rascunho para usá-lo em um bolão." primaryLabel="Ver meus rascunhos" onPrimary={() => navigate("/events")} secondaryLabel="Criar novo evento" onSecondary={() => navigate("/events/new")} /> : <EventRequiredState title="Antes, você precisa de um evento" description="O evento define sobre o que os participantes vão palpitar." primaryLabel="Criar meu primeiro evento" onPrimary={() => navigate("/events/new")} />}</Card></motion.div>}
-      {mode === "join" && <motion.div key="join" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="mt-5 overflow-hidden"><Card className="border border-mint-dark/25"><PanelHeader title="Entrar com um código" onClose={() => setMode(null)}>Recebeu um convite? Digite o código de 6 caracteres para entrar no bolão.</PanelHeader><form onSubmit={onJoin} className="mt-4 flex flex-col gap-3"><Input className="text-center font-heading text-2xl font-semibold uppercase tracking-[0.4em]" placeholder="Ex.: 3F9A2C" value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase().slice(0, 12))} autoCapitalize="characters" autoComplete="off" spellCheck={false} autoFocus required /><Button type="submit" disabled={joinPool.isPending}>{joinPool.isPending ? "Entrando..." : "Entrar no bolão"}</Button></form></Card></motion.div>}
+      {mode === "create" && <motion.div ref={actionPanelRef} key="create" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="mt-5 overflow-hidden"><Card className="border border-mint/30"><PanelHeader title="Criar um bolão" onClose={() => setMode(null)}>Você vira o dono e convida a galera com o código que o app gera.</PanelHeader>{availableEvents.isLoading || events.isLoading ? <p className="mt-4 text-sm text-ink-muted">Carregando eventos disponíveis...</p> : availableEvents.isError ? <div className="mt-4"><ErrorState onRetry={() => void availableEvents.refetch()}>Não foi possível carregar os eventos publicados.</ErrorState></div> : publishedEvents.length > 0 ? <CreatePoolForm events={publishedEvents} chosenEventId={chosenEventId} setChosenEventId={setChosenEventId} newPoolName={newPoolName} setNewPoolName={setNewPoolName} isPending={createPool.isPending} onSubmit={onCreate} onCreateEvent={() => navigate("/events/new")} /> : draftEvents.length > 0 ? <EventRequiredState title="Seus eventos ainda são rascunhos" description="Publique um rascunho para usá-lo em um bolão." primaryLabel="Ver meus rascunhos" onPrimary={() => navigate("/events")} secondaryLabel="Criar novo evento" onSecondary={() => navigate("/events/new")} /> : <EventRequiredState title="Antes, você precisa de um evento" description="O evento define sobre o que os participantes vão palpitar." primaryLabel="Criar meu primeiro evento" onPrimary={() => navigate("/events/new")} />}</Card></motion.div>}
+      {mode === "join" && <motion.div ref={actionPanelRef} key="join" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="mt-5 overflow-hidden"><Card className="border border-mint-dark/25"><PanelHeader title="Entrar com um código" onClose={() => setMode(null)}>Recebeu um convite? Digite o código de 6 caracteres para entrar no bolão.</PanelHeader><form onSubmit={onJoin} className="mt-4 flex flex-col gap-3"><Input className="text-center font-heading text-2xl font-semibold uppercase tracking-[0.4em]" placeholder="Ex.: 3F9A2C" value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase().slice(0, 12))} autoCapitalize="characters" autoComplete="off" spellCheck={false} autoFocus required /><Button type="submit" disabled={joinPool.isPending}>{joinPool.isPending ? "Entrando..." : "Entrar no bolão"}</Button></form></Card></motion.div>}
     </AnimatePresence>
     {error && <div className="mt-4"><ErrorBanner>{error}</ErrorBanner></div>}
   </PageShell>;
