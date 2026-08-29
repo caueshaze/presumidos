@@ -1,0 +1,89 @@
+:root {
+  --color-bg: #f4f7f0;
+  --color-bg-gradient: linear-gradient(180deg, #eaf6f0 0%, #fff8e7 100%);
+  --color-mint: #a8e6cf;
+  --color-mint-dark: #5fbf9f;
+  --color-yellow: #ffe08a;
+  --color-yellow-dark: #f4c95d;
+  --color-sky: #a0d2eb;
+  --color-sky-dark: #6fb6de;
+  --color-text: #2d3a3a;
+  --color-text-muted: #6b7a7a;
+  --color-card: #ffffff;
+  --color-error: #ff8c8c;
+  --color-error-bg: #ffe7e7;
+  --color-success: #5fbf9f;
+  --radius-lg: 20px;
+  --radius-md: 16px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+  --shadow-card: 0 4px 20px rgba(45, 58, 58, 0.08);
+  --shadow-card-hover: 0 8px 28px rgba(45, 58, 58, 0.12);
+  --shadow-soft-glow: 0 0 0 6px rgba(168, 230, 207, 0.16);
+  --font-heading: "Fredoka", "Segoe UI", sans-serif;
+  --font-body: "Nunito Sans", "Segoe UI", sans-serif;
+  --transition-smooth: 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  --transition-gentle: 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  padding: 20px;
+  min-height: 100vh;
+  background: var(--color-bg-gradient);
+  background-attachment: fixed;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  position: relative;
+  overflow-x: hidden;
+}
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: auto;
+  pointer-events: none;
+  z-index: -1;
+  border-radius: 999px;
+  filter: blur(10px);
+}
+body::before {
+  top: -40px;
+  right: -60px;
+  width: 220px;
+  height: 220px;
+  background: rgba(168, 230, 207, 0.32);
+  animation: floatBlob 14s ease-in-out infinite;
+}
+body::after {
+  left: -70px;
+  bottom: 40px;
+  width: 260px;
+  height: 260px;
+  background: rgba(160, 210, 235, 0.22);
+  animation: floatBlob 18s ease-in-out infinite reverse;
+}
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  margin: 0 0 0.5em 0;
+}
+a {
+  color: var(--color-mint-dark);
+  transition:
+    color var(--transition-smooth),
+    opacity var(--transition-smooth);
+}
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+}

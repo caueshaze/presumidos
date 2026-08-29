@@ -3,9 +3,9 @@
 # 1) Frontend: build da SPA React (Vite) -> /frontend/dist
 FROM node:22-alpine AS frontend
 WORKDIR /frontend
-COPY web/package.json web/package-lock.json* ./
+COPY apps/web/package.json apps/web/package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm npm ci
-COPY web/ ./
+COPY apps/web/ ./
 RUN npm run build
 
 # 2) Backend: planner e cache de dependências Rust
@@ -15,7 +15,7 @@ WORKDIR /build
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
-COPY ferrugem-web/Cargo.toml ./ferrugem-web/Cargo.toml
+COPY apps/server/Cargo.toml ./apps/server/Cargo.toml
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS deps
@@ -26,9 +26,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM chef AS backend
 COPY Cargo.toml Cargo.lock ./
-COPY ferrugem-web/ ./ferrugem-web/
+COPY apps/server/ ./apps/server/
 # Garante que o codigo real entrou no build context.
-RUN test -f ferrugem-web/src/main.rs && grep -q "serve_application" ferrugem-web/src/main.rs
+RUN test -f apps/server/src/main.rs && grep -q "serve_application" apps/server/src/main.rs
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     cargo build --release -p ferrugem-web --features server,web-push && \

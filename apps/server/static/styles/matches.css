@@ -1,0 +1,144 @@
+#matches-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 20px;
+}
+.match-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.match-card .match-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.match-teams {
+  font-family: var(--font-heading);
+  font-size: 1.15rem;
+}
+.match-date {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+.match-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.badge-group,
+.badge-phase {
+  display: inline-block;
+  color: var(--color-text);
+  font-weight: 700;
+  font-size: 0.8rem;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+}
+.badge-group {
+  background-color: var(--color-sky);
+}
+.badge-phase {
+  background-color: var(--color-yellow);
+}
+.admin-phase-control {
+  border: 2px dashed var(--color-yellow-dark);
+}
+.team-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.team-inputs input {
+  flex: 1;
+  min-width: 0;
+}
+.knockout-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background-color: rgba(255, 224, 138, 0.18);
+  border: 1px solid var(--color-yellow-dark);
+}
+.knockout-fields select {
+  padding: 8px 10px;
+  border: 2px solid #e2ece6;
+  border-radius: var(--radius-sm);
+  background-color: #fbfdfc;
+  color: var(--color-text);
+  font-weight: 600;
+}
+.field-label {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.rules-hint {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+.score-inputs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.score-inputs input {
+  width: 64px;
+  text-align: center;
+  font-size: 1.2rem;
+  font-weight: 700;
+  padding: 10px;
+  border: 2px solid #e2ece6;
+  border-radius: var(--radius-sm);
+  background-color: #fbfdfc;
+  color: var(--color-text);
+}
+.score-inputs input:focus {
+  outline: none;
+  border-color: var(--color-sky-dark);
+  box-shadow: 0 0 0 3px rgba(160, 210, 235, 0.32);
+  transform: scale(1.03);
+}
+.score-inputs .vs {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+.match-locked {
+  color: var(--color-text-muted);
+  font-style: italic;
+  text-align: center;
+}
+.match-saved {
+  color: var(--color-success);
+  font-weight: 700;
+  text-align: center;
+  margin: 0;
+}
+.admin-result-form {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 2px dashed #e2ece6;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.admin-result-form h4 {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.95rem;
+}

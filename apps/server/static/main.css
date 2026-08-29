@@ -1,0 +1,8 @@
+/* Ponto de entrada do tema legado, servido em /assets/main.css. */
+@import url("./styles/foundations.css");
+@import url("./styles/navigation.css");
+@import url("./styles/home.css");
+@import url("./styles/forms.css");
+@import url("./styles/pools.css");
+@import url("./styles/matches.css");
+@import url("./styles/leaderboard.css");

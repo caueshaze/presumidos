@@ -5,8 +5,8 @@ REST/JSON + SPA React (Vite + Tailwind)**, com SQLite e deploy em Docker atrás
 do Caddy.
 
 > Este projeto passou por uma migração de **Dioxus Fullstack** para a arquitetura
-> atual: **API Rust desacoplada + frontend React**. A pasta `ferrugem-web/`
-> mantém o nome histórico do crate do backend.
+> atual: **API Rust desacoplada + frontend React**. O crate do backend mantém
+> o nome histórico `ferrugem-web`, enquanto seu código fica em `apps/server/`.
 
 ## Estado atual
 
@@ -33,29 +33,34 @@ O projeto já entrega:
 ├── Cargo.toml                # workspace Rust
 ├── Dockerfile                # build multi-stage (frontend + backend)
 ├── docker-compose.yml        # ferrugem-web + redis + caddy
-├── deploy/                   # Caddyfile, scripts de deploy/backup/restore
-├── ferrugem-web/             # backend Rust (Axum + SQLite)
-│   ├── migrations/           # schema SQLite + seed de partidas
-│   └── src/
-└── web/                      # frontend React (Vite + Tailwind)
-    └── src/
+├── apps/
+│   ├── server/               # backend Rust (Axum + SQLite)
+│   │   ├── migrations/       # schema SQLite + seed de partidas
+│   │   ├── resources/events/ # recursos versionados de eventos
+│   │   ├── static/           # arquivos estáticos do backend
+│   │   └── src/
+│   └── web/                  # frontend React (Vite + Tailwind)
+│       └── src/
+├── infra/                    # Caddyfile, scripts de deploy/backup/restore
+├── data/assets/              # assets de runtime local (não versionados)
+├── docs/                     # documentação técnica
+└── scripts/                  # utilitários de desenvolvimento
 ```
 
 - **Internet → Caddy (`:80/:443`) → `ferrugem-web:8080`.** O backend serve a API
-  em `/api` e, em produção, também os arquivos estáticos da SPA (build do `web/`).
+  em `/api` e, em produção, também os arquivos estáticos da SPA (build de `apps/web/`).
 - Em **desenvolvimento**, o Vite (`:5173`) serve o frontend e faz proxy de `/api`
   para o backend em `:8080` (cookie de sessão same-origin, sem CORS).
 
-### Backend (`ferrugem-web/src`)
+### Backend (`apps/server/src`)
 
-- `main.rs`: bootstrap do servidor Axum, serve `/api` + SPA, comandos CLI
-  (`bootstrap-admin`, `sync-fixtures`) e spawn do poller de resultados
+- `main.rs`: bootstrap do servidor Axum, serve `/api` + SPA e comandos CLI
+  operacionais, incluindo `bootstrap-admin`
 - `api.rs`: rotas HTTP/JSON e handlers sob `/api`
 - `auth.rs`: autenticação, sessões, hashing Argon2id, bootstrap de admin
 - `pools.rs`: bolões, membros e ajustes de pontos
 - `matches.rs`: partidas, palpites e resultado oficial
 - `scoring.rs`: cálculo do ranking
-- `football.rs`: integração de resultados ao vivo (poller + `sync-fixtures`)
 - `email.rs`: envio de e-mails de verificação/recuperação via Resend
 - `security.rs`: headers, CSRF, rate limit, resolução de IP/proxy e auditoria
 - `config.rs`: carregamento e validação do `.env`
@@ -63,7 +68,7 @@ O projeto já entrega:
 - `models.rs`: tipos compartilhados (serde `camelCase` para o frontend)
 - `context.rs` / `error.rs`: contexto por request e tipos de erro
 
-### Frontend (`web/src`)
+### Frontend (`apps/web/src`)
 
 - **React 18 + TypeScript + Vite + Tailwind CSS**
 - **TanStack Query** para data fetching/cache, **React Router** para navegação,
@@ -97,7 +102,7 @@ cargo run -p ferrugem-web --features server
 **Terminal 2 — frontend (Vite em `:5173`):**
 
 ```bash
-cd web
+cd apps/web
 npm install
 npm run dev
 ```
@@ -113,16 +118,20 @@ cargo test --features server
 cargo clippy --features server -- -D warnings
 ```
 
-Frontend (a partir de `web/`):
+Frontend (a partir de `apps/web/`):
 
 ```bash
 npm run lint     # tsc --noEmit
 npm run build    # tsc -b && vite build
+npm test         # inclui o limite de 300 linhas por arquivo de frontend
 ```
+
+As suítes Rust e frontend também falham se um arquivo de código em
+`apps/server/src` ou `apps/web/src` ultrapassar 300 linhas.
 
 ## Banco de dados
 
-SQLite em modo WAL (`PRAGMA journal_mode = WAL`, ver `ferrugem-web/src/db.rs`),
+SQLite em modo WAL (`PRAGMA journal_mode = WAL`, ver `apps/server/src/db.rs`),
 com as tabelas:
 
 `users`, `sessions`, `pools`, `pool_members`, `matches`, `predictions`,
@@ -148,46 +157,13 @@ Observações:
 - o mata-mata fica oculto enquanto `app_settings.knockout_released = '0'`; o admin
   sempre vê tudo, monta os confrontos e libera de uma vez
 
-## Resultados ao vivo
+## Resultados de futebol
 
-O backend pode preencher resultados automaticamente a partir de uma **fonte
-pública de terceiros** (configurável via `FOOTBALL_API_BASE_URL`). Variáveis no
-`.env`:
-
-```bash
-FOOTBALL_API_ENABLED=true        # liga a integração
-FOOTBALL_POLLER_ENABLED=true     # sobe o poller (true em UMA instância só)
-FOOTBALL_API_BASE_URL=<endpoint da fonte de placares>
-FOOTBALL_POLL_INTERVAL_SECS=900  # 15 min
-```
-
-Como funciona:
-
-- Um **poller em background** roda a cada `FOOTBALL_POLL_INTERVAL_SECS`. Para
-  economizar requisições, ele só chama a API quando há jogo na janela (de −5h a
-  +30min do kickoff).
-- Quando um jogo de **fase de grupos** é marcado como encerrado, o poller grava
-  o placar oficial (`result_source = 'api'`) e o ranking atualiza sozinho.
-- No **mata-mata**, o poller exibe o placar ao vivo e, quando a fonte retorna
-  classificado/pênaltis completos e coerentes, fecha o jogo automaticamente. Se
-  houver conflito ou dado incompleto, grava uma sugestão para revisão do admin.
-- **Resultado manual é soberano:** o poller nunca sobrescreve um placar lançado
-  pelo admin — em divergência, apenas registra `match_result_api_conflict` na
-  auditoria.
-
-Antes de usar, mapeie os jogos locais (`jogo-001..104`) aos ids da API **uma vez**
-(grava `external_fixture_id`):
-
-```bash
-# pré-visualizar o casamento sem gravar
-cargo run -p ferrugem-web --features server -- sync-fixtures --dry-run
-# gravar
-cargo run -p ferrugem-web --features server -- sync-fixtures --apply
-# override manual de um mapeamento específico
-cargo run -p ferrugem-web --features server -- sync-fixtures --fixture jogo-001=123
-```
-
-Em produção, rode o `sync-fixtures --apply` dentro do container (ver Deploy).
+Football é um domínio nativo do Presumidos. O administrador cria e edita as
+partidas em uma Working Revision, publica a EventVersion e registra o resultado
+oficial (incluindo pênaltis em mata-mata) pelo Admin. O scoring e o ranking são
+recalculados a partir desse resultado oficial, sem sincronização automática nem
+dependência de provider externo.
 
 ## Bootstrap do primeiro admin
 
@@ -222,13 +198,13 @@ senha apenas para esse comando (se ausente, é pedida interativamente).
 O repositório inclui:
 
 - [Dockerfile](Dockerfile): build multi-stage — estágio Node compila o frontend
-  (`web/` → `dist`), estágio Rust compila o backend com cache via `cargo-chef`, e
+  (`apps/web/` → `dist`), estágio Rust compila o backend com cache via `cargo-chef`, e
   a imagem final junta o binário com a SPA em `/app/public`
 - [docker-compose.yml](docker-compose.yml): origin sem porta pública + Caddy como
   entrada + Redis interno para rate limit
-- [deploy/Caddyfile](deploy/Caddyfile): proxy reverso com HTTPS automático
-- [deploy/deploy.sh](deploy/deploy.sh): backup pré-deploy + build + restart + healthcheck
-- [PRODUCTION_RUNBOOK.md](PRODUCTION_RUNBOOK.md): configuração, migrations,
+- [infra/Caddyfile](infra/Caddyfile): proxy reverso com HTTPS automático
+- [infra/deploy.sh](infra/deploy.sh): backup pré-deploy + build + restart + healthcheck
+- [docs/PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md): configuração, migrations,
   backup/restore, shutdown e resposta a incidentes
 
 Desenho da rede:
@@ -256,7 +232,7 @@ Subida e deploy:
 docker compose build ferrugem-web
 docker compose up -d
 # fluxo recomendado de atualização na VPS:
-./deploy/deploy.sh
+./infra/deploy.sh
 ```
 
 O `deploy.sh` faz: `docker compose build` com `DOCKER_BUILDKIT=1`, backup
@@ -264,17 +240,14 @@ pré-deploy verificado pela imagem nova em um container CLI isolado, para o app,
 aplica migrations explicitamente, sobe a nova versão e valida `GET
 /health/ready`. Não há rollback automático de binário após
 migration; use o backup compatível e o procedimento do
-[runbook](PRODUCTION_RUNBOOK.md).
+[runbook](docs/PRODUCTION_RUNBOOK.md).
 
-Depois do deploy, rode (uma vez) o bootstrap do admin e o mapeamento de jogos
-dentro do container:
+Depois do deploy, rode uma vez o bootstrap do admin dentro do container:
 
 ```bash
 docker compose exec ferrugem-web \
   /app/ferrugem-web bootstrap-admin --username admin --email admin@seudominio.com
 
-docker compose exec ferrugem-web \
-  /app/ferrugem-web sync-fixtures --apply
 ```
 
 O servidor também executa uma limpeza conservadora ao iniciar, removendo apenas
@@ -289,8 +262,8 @@ O proxy reconstrói `X-Forwarded-For`, `X-Real-IP` e `Forwarded` em vez de
 encaminhar o que veio do cliente, e remove `CF-Connecting-IP`.
 
 Observações de cache de build: alterações em `Cargo.toml`/`Cargo.lock` invalidam a
-camada de dependências Rust (esperado); mudanças só em `ferrugem-web/src` ou em
-`web/src` reaproveitam o cache. Evite `docker system prune -a`, que destrói o
+camada de dependências Rust (esperado); mudanças só em `apps/server/src` ou em
+`apps/web/src` reaproveitam o cache. Evite `docker system prune -a`, que destrói o
 benefício do cache.
 
 ## Backup e Restore
@@ -298,12 +271,12 @@ benefício do cache.
 O banco SQLite (WAL) e o AssetStore vivem no volume Docker `app_data`
 (`/data/bolao.db` e `/data/assets`). O formato oficial é o diretório produzido
 pela CLI operacional; Event Package não é backup. Veja o
-[runbook](PRODUCTION_RUNBOOK.md) para o procedimento completo.
+[runbook](docs/PRODUCTION_RUNBOOK.md) para o procedimento completo.
 
 ### Backup manual
 
 ```bash
-./deploy/backup.sh
+./infra/backup.sh
 ```
 
 - executa `backup create` no binário da aplicação, com snapshot SQLite seguro
@@ -318,7 +291,7 @@ pela CLI operacional; Event Package não é backup. Veja o
 ### Backup automático (cron)
 
 ```cron
-0 3 * * * cd /caminho/do/repo && ./deploy/backup.sh >> /var/log/ferrugem-backup.log 2>&1
+0 3 * * * cd /caminho/do/repo && ./infra/backup.sh >> /var/log/ferrugem-backup.log 2>&1
 ```
 
 ### Cópia externa
@@ -330,7 +303,7 @@ rsync -av ./backups/ usuario@outro-host:/caminho/de/backups/ferrugem/
 ### Restore em produção
 
 ```bash
-./deploy/restore.sh backups/backup-20260612T030000Z-XXXXXXXX
+./infra/restore.sh backups/backup-20260612T030000Z-XXXXXXXX
 ```
 
 O script valida `integrity_check` **antes** de tocar em produção, pede confirmação
@@ -340,7 +313,7 @@ completo e restaura DB/assets em staging durante manutenção.
 ### Restore testado (ambiente isolado)
 
 ```bash
-./deploy/restore-test.sh backups/backup-20260612T030000Z-XXXXXXXX
+./infra/restore-test.sh backups/backup-20260612T030000Z-XXXXXXXX
 ```
 
 Cria volume e container temporários (sem tocar em `app_data`/`origin`), sobe em
