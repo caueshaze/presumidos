@@ -47,6 +47,11 @@ pub async fn submit_single_choice_prediction(
             "Voce nao participa deste bolao.",
         ));
     }
+    if !crate::pool_access::can_write_predictions(&pool_id).await? {
+        return Err(crate::security::public_error(
+            "Os palpites deste bolão estão encerrados.",
+        ));
+    }
     if crate::prediction_access::can_edit_item("single_choice", &lock_at, None, &session.user_id)
         .await?
         .is_none()
@@ -103,23 +108,25 @@ pub async fn list_custom_member_predictions(
             "Voce nao participa deste bolao.",
         ));
     }
+    let early_reveal = crate::pool_access::can_reveal_early(&pool_id).await?;
     let members: Vec<(String, String)> = sqlx::query_as("SELECT u.id,u.username FROM pool_members pm JOIN users u ON u.id=pm.user_id WHERE pm.pool_id=?1 ORDER BY u.username COLLATE NOCASE")
         .bind(&pool_id).fetch_all(db).await.map_err(|e| crate::security::internal_error("custom_member_predictions_members", e))?;
-    let mut rows: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT pr.user_id,pi.id,pi.title,o.label FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id JOIN custom_prediction_values cpv ON cpv.prediction_id=pr.id JOIN custom_question_options o ON o.id=cpv.option_id WHERE pr.pool_id=?1 AND datetime(pi.reveal_at)<=datetime('now')
+    let mut rows: Vec<(String, String, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT pr.user_id,pi.id,pi.title,o.label,b.total_points FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id JOIN custom_prediction_values cpv ON cpv.prediction_id=pr.id JOIN custom_question_options o ON o.id=cpv.option_id LEFT JOIN custom_prediction_score_breakdowns b ON b.pool_id=pr.pool_id AND b.user_id=pr.user_id AND b.item_id=pr.item_id WHERE pr.pool_id=?1 AND (datetime(pi.reveal_at)<=datetime('now') OR ?2=1)
          ORDER BY pi.sort_order",
     )
     .bind(&pool_id)
+    .bind(early_reveal)
     .fetch_all(db)
     .await
     .map_err(|e| crate::security::internal_error("custom_member_predictions_load", e))?;
-    let numeric: Vec<(String,String,String,i64,i64,Option<String>)> = sqlx::query_as(
-        "SELECT pr.user_id,pi.id,pi.title,v.value_scaled,n.decimal_places,n.unit_label FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id JOIN numeric_prediction_values v ON v.prediction_id=pr.id JOIN numeric_questions n ON n.item_id=pi.id WHERE pr.pool_id=?1 AND datetime(pi.reveal_at)<=datetime('now') ORDER BY pi.sort_order"
-    ).bind(&pool_id).fetch_all(db).await.map_err(|e|crate::security::internal_error("numeric_member_predictions_load",e))?;
+    let numeric: Vec<(String,String,String,i64,i64,Option<String>,Option<i64>)> = sqlx::query_as(
+        "SELECT pr.user_id,pi.id,pi.title,v.value_scaled,n.decimal_places,n.unit_label,b.total_points FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id JOIN numeric_prediction_values v ON v.prediction_id=pr.id JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN numeric_prediction_score_breakdowns b ON b.pool_id=pr.pool_id AND b.user_id=pr.user_id AND b.item_id=pr.item_id WHERE pr.pool_id=?1 AND (datetime(pi.reveal_at)<=datetime('now') OR ?2=1) ORDER BY pi.sort_order"
+    ).bind(&pool_id).bind(early_reveal).fetch_all(db).await.map_err(|e|crate::security::internal_error("numeric_member_predictions_load",e))?;
     rows.extend(
         numeric
             .into_iter()
-            .map(|(user, item, title, value, places, unit)| {
+            .map(|(user, item, title, value, places, unit, points)| {
                 (
                     user,
                     item,
@@ -129,22 +136,24 @@ pub async fn list_custom_member_predictions(
                         crate::numeric::display_scaled(value, places as u8),
                         unit.map(|v| format!(" {v}")).unwrap_or_default()
                     ),
+                    points,
                 )
             }),
     );
-    let multiple: Vec<(String,String,String,String)> = sqlx::query_as(
-        "SELECT p.user_id,p.item_id,p.title,GROUP_CONCAT(p.label, ' • ') FROM (
-           SELECT pr.user_id,pi.id AS item_id,pi.title,o.label,pi.sort_order,o.sort_order AS option_sort
+    let multiple: Vec<(String,String,String,String,Option<i64>)> = sqlx::query_as(
+        "SELECT p.user_id,p.item_id,p.title,GROUP_CONCAT(p.label, ' • '),MAX(p.total_points) FROM (
+           SELECT pr.user_id,pi.id AS item_id,pi.title,o.label,b.total_points,pi.sort_order,o.sort_order AS option_sort
            FROM predictions pr JOIN prediction_items pi ON pi.id=pr.item_id
            JOIN multiple_choice_prediction_options v ON v.prediction_id=pr.id
            JOIN custom_question_options o ON o.id=v.option_id
-           WHERE pr.pool_id=?1 AND datetime(pi.reveal_at)<=datetime('now') AND pi.kind='multiple_choice'
+           LEFT JOIN multiple_choice_prediction_score_breakdowns b ON b.pool_id=pr.pool_id AND b.user_id=pr.user_id AND b.item_id=pr.item_id
+           WHERE pr.pool_id=?1 AND (datetime(pi.reveal_at)<=datetime('now') OR ?2=1) AND pi.kind='multiple_choice'
            ORDER BY pi.sort_order,o.sort_order
          ) p GROUP BY p.user_id,p.item_id,p.title ORDER BY MIN(p.sort_order)"
-    ).bind(&pool_id).fetch_all(db).await.map_err(|e|crate::security::internal_error("multiple_choice_member_predictions_load",e))?;
+    ).bind(&pool_id).bind(early_reveal).fetch_all(db).await.map_err(|e|crate::security::internal_error("multiple_choice_member_predictions_load",e))?;
     rows.extend(multiple);
     let mut by_user: BTreeMap<String, Vec<crate::models::CustomMemberPrediction>> = BTreeMap::new();
-    for (user_id, item_id, title, option_label) in rows {
+    for (user_id, item_id, title, option_label, points) in rows {
         by_user
             .entry(user_id)
             .or_default()
@@ -152,6 +161,7 @@ pub async fn list_custom_member_predictions(
                 item_id,
                 title,
                 option_label,
+                points,
             });
     }
     Ok(members

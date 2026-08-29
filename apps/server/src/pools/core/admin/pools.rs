@@ -15,7 +15,7 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                 p.created_by,
                 p.description,
                 p.visible_rules,
-                p.join_closed_at, v.name, e.slug, e.kind, e.status, e.ends_at
+                p.join_closed_at,p.predictions_closed_at,p.closed_at, v.name, e.slug, e.kind, e.status, e.ends_at
          FROM pools p
          JOIN events e ON e.id = p.event_id
          JOIN event_versions v ON v.id = p.event_version_id
@@ -38,6 +38,8 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                 description,
                 visible_rules,
                 join_closed_at,
+                predictions_closed_at,
+                closed_at,
                 event_name,
                 event_slug,
                 event_kind,
@@ -61,6 +63,8 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                 description,
                 visible_rules,
                 join_closed_at,
+                predictions_closed_at,
+                closed_at,
             },
         )
         .collect())

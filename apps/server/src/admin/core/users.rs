@@ -71,6 +71,8 @@ pub async fn list_user_pools(
             String,
             String,
             Option<String>,
+            Option<String>,
+            Option<String>,
             String,
             String,
             String,
@@ -80,7 +82,7 @@ pub async fn list_user_pools(
     >(
         "SELECT p.id, p.event_id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id) AS member_count,
-                p.created_by, p.description, p.visible_rules, p.join_closed_at,
+                p.created_by, p.description, p.visible_rules, p.join_closed_at,p.predictions_closed_at,p.closed_at,
                 e.name, e.slug, e.kind, e.status, e.ends_at
          FROM pools p
          JOIN events e ON e.id=p.event_id
@@ -106,6 +108,8 @@ pub async fn list_user_pools(
                 description,
                 visible_rules,
                 join_closed_at,
+                predictions_closed_at,
+                closed_at,
                 event_name,
                 event_slug,
                 event_kind,
@@ -129,6 +133,8 @@ pub async fn list_user_pools(
                 description,
                 visible_rules,
                 join_closed_at,
+                predictions_closed_at,
+                closed_at,
             },
         )
         .collect())

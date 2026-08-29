@@ -6,6 +6,7 @@ import type {
   PoolDashboardSummary,
   PoolReport,
   PublicPoolInvitePreview,
+  PoolLifecycleState,
   EventRecord,
 } from "@/types";
 
@@ -163,6 +164,31 @@ export function useLeavePool() {
       qc.invalidateQueries({ queryKey: ["pools", "dashboard"] });
       qc.invalidateQueries({ queryKey: ["pool-member-predictions", poolId] });
     },
+  });
+}
+
+function invalidatePoolLifecycle(qc: ReturnType<typeof useQueryClient>, poolId: string) {
+  qc.invalidateQueries({ queryKey: ["pools"] });
+  qc.invalidateQueries({ queryKey: ["pools", "dashboard"] });
+  qc.invalidateQueries({ queryKey: ["pool-member-predictions", poolId] });
+  qc.invalidateQueries({ queryKey: ["leaderboard", poolId] });
+  qc.invalidateQueries({ queryKey: ["pool-breakdowns", poolId] });
+  qc.invalidateQueries({ queryKey: ["custom-questions", poolId] });
+}
+
+export function useClosePoolPredictions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string) => api.post<PoolLifecycleState>(`/pools/${poolId}/close-predictions`),
+    onSuccess: (_data, poolId) => invalidatePoolLifecycle(qc, poolId),
+  });
+}
+
+export function useClosePool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string) => api.post<PoolLifecycleState>(`/pools/${poolId}/close`),
+    onSuccess: (_data, poolId) => invalidatePoolLifecycle(qc, poolId),
   });
 }
 

@@ -1,5 +1,15 @@
 import { api, useMutation, useQuery, useQueryClient, type LeaderboardEntry, type MemberPredictions, type PointAdjustment, type PredictionScoreBreakdown } from "./shared";
 
+export type PoolTieBreakPriority = { itemId: string; title: string; kind: string; priority: number };
+export type PoolTieBreakConfig = { mode: "inherit" | "custom" | "disabled"; effectivePriorities: PoolTieBreakPriority[]; customPriorities: PoolTieBreakPriority[]; canEdit: boolean };
+export function usePoolTieBreak(poolId: string | null) {
+  return useQuery({ queryKey: ["pool-tie-break", poolId], queryFn: () => api.get<PoolTieBreakConfig>(`/pools/${encodeURIComponent(poolId ?? "")}/tie-break`), enabled: !!poolId });
+}
+export function useUpdatePoolTieBreak() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (vars: { poolId: string; mode: PoolTieBreakConfig["mode"]; itemIds?: string[] }) => api.post<PoolTieBreakConfig>(`/pools/${vars.poolId}/tie-break`, vars), onSuccess: (_data, vars) => { qc.invalidateQueries({ queryKey: ["pool-tie-break", vars.poolId] }); qc.invalidateQueries({ queryKey: ["leaderboard", vars.poolId] }); } });
+}
+
 export function useLeaderboard(poolId: string | null) {
   return useQuery({
     queryKey: ["leaderboard", poolId],
@@ -88,4 +98,3 @@ export function usePoolBreakdowns(poolId: string | null) {
 }
 
 // ---- Admin: gestão de membros de bolões -----------------------------------
-

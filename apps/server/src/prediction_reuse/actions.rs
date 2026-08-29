@@ -11,6 +11,11 @@ pub async fn start_empty(
     let session = crate::auth::require_user(&token).await?;
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     let db = crate::db::pool();
+    if !crate::pool_access::can_write_predictions(&pool_id).await? {
+        return Err(crate::security::public_error(
+            "Os palpites deste bolão estão encerrados.",
+        ));
+    }
     let update = sqlx::query(
         "UPDATE pool_members SET prediction_reuse_decision='started_empty',prediction_reuse_decided_at=datetime('now')
          WHERE pool_id=?1 AND user_id=?2 AND prediction_reuse_decision='undecided'

@@ -23,9 +23,9 @@ pub async fn list_custom_questions(
     }
     let rows: Vec<QuestionRow> = sqlx::query_as(
         "SELECT pi.id AS item_id,pi.kind,pi.title,pi.lock_at,pi.reveal_at,pi.sort_order,pi.status AS stored_status,cpv.option_id AS current_option_id,
-                CASE WHEN orx.state IN ('resolved','not_representable') OR datetime(pi.reveal_at)<=datetime('now') THEN COALESCE(orx.option_id,q.correct_option_id) ELSE NULL END AS correct_option_id,
+                CASE WHEN (orx.state IN ('resolved','not_representable') OR datetime(pi.reveal_at)<=datetime('now') OR p.predictions_closed_at IS NOT NULL) THEN COALESCE(orx.option_id,q.correct_option_id) ELSE NULL END AS correct_option_id,
                 n.decimal_places,n.unit_label,n.min_value_scaled AS min_scaled,n.max_value_scaled AS max_scaled,npv.value_scaled AS current_scaled,
-                CASE WHEN orx.state IN ('resolved','not_representable') OR datetime(pi.reveal_at)<=datetime('now') THEN COALESCE(orx.value_scaled,n.result_value_scaled) ELSE NULL END AS result_scaled,
+                CASE WHEN (orx.state IN ('resolved','not_representable') OR datetime(pi.reveal_at)<=datetime('now') OR p.predictions_closed_at IS NOT NULL) THEN COALESCE(orx.value_scaled,n.result_value_scaled) ELSE NULL END AS result_scaled,
                 orx.state AS result_status,
                 s.correct_points,s.incorrect_points,ns.exact_points,ns.tolerance_scaled,ns.within_tolerance_points,
                 mq.min_selections,mq.max_selections,ms.exact_points AS multiple_exact_points,ms.partial_points,ms.incorrect_points AS multiple_incorrect_points,

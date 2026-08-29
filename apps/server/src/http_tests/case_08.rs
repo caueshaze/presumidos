@@ -52,8 +52,8 @@ async fn custom_scoring_owner_can_edit_before_lock_and_is_frozen_after() {
         .unwrap();
     let points:(i64,)=sqlx::query_as("SELECT total_points FROM custom_prediction_score_breakdowns WHERE pool_id=?1 AND user_id=?2 AND item_id=?3").bind(&pool).bind(&owner).bind(&item).fetch_one(crate::db::pool()).await.unwrap();
     assert_eq!(points.0, 5);
-    sqlx::query("UPDATE prediction_items SET lock_at='2020-01-01T00:00:00Z' WHERE id=?1")
-        .bind(&item)
+    sqlx::query("UPDATE pools SET predictions_closed_at=datetime('now') WHERE id=?1")
+        .bind(&pool)
         .execute(crate::db::pool())
         .await
         .unwrap();

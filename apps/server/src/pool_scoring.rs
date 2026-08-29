@@ -46,7 +46,7 @@ pub async fn update_football_scoring_config(
         ));
     }
     let db = crate::db::pool();
-    let owner:Option<(String,)>=sqlx::query_as("SELECT created_by FROM pools p WHERE p.id=?1 AND (p.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND NOT EXISTS (SELECT 1 FROM prediction_items pi JOIN matches m ON m.prediction_item_id=pi.id WHERE pi.event_version_id=p.event_version_id AND datetime(pi.lock_at)<=datetime('now'))").bind(&pool_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("football_config_owner",e))?;
+    let owner:Option<(String,)>=sqlx::query_as("SELECT created_by FROM pools p WHERE p.id=?1 AND (p.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND p.predictions_closed_at IS NULL AND p.closed_at IS NULL").bind(&pool_id).bind(&session.user_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("football_config_owner",e))?;
     if owner.is_none() {
         return Err(crate::security::public_error(
             "Apenas o dono ou admin pode alterar antes do primeiro lock.",
@@ -98,7 +98,7 @@ pub async fn update_custom_item_scoring_config(
         ));
     }
     let db = crate::db::pool();
-    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id WHERE p.id=?1 AND (p.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND pi.id=?3 AND pi.kind='single_choice' AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("custom_config_owner",e))?;
+    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id WHERE p.id=?1 AND (p.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)) AND p.predictions_closed_at IS NULL AND p.closed_at IS NULL AND pi.id=?3 AND pi.kind='single_choice'").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("custom_config_owner",e))?;
     if owner.is_none() {
         return Err(crate::security::public_error(
             "Apenas o dono ou admin pode alterar antes do lock.",
@@ -155,7 +155,7 @@ pub async fn update_numeric_item_scoring_config(
         ));
     }
     let db = crate::db::pool();
-    let places:Option<(i64,)>=sqlx::query_as("SELECT n.decimal_places FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND (p.created_by=?2 OR u.is_admin=1) AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_config_owner",e))?;
+    let places:Option<(i64,)>=sqlx::query_as("SELECT n.decimal_places FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND (p.created_by=?2 OR u.is_admin=1) AND p.predictions_closed_at IS NULL AND p.closed_at IS NULL").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("numeric_config_owner",e))?;
     let Some((places,)) = places else {
         return Err(crate::security::public_error(
             "Somente o dono do bolão pode alterar regras antes do lock.",
@@ -203,7 +203,7 @@ pub async fn update_multiple_choice_item_scoring_config(
         ));
     }
     let db = crate::db::pool();
-    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND pi.kind='multiple_choice' AND (p.created_by=?2 OR u.is_admin=1) AND datetime(pi.lock_at)>datetime('now')").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("multiple_choice_config_owner",e))?;
+    let owner:Option<(String,)>=sqlx::query_as("SELECT p.created_by FROM pools p JOIN prediction_items pi ON pi.event_version_id=p.event_version_id LEFT JOIN users u ON u.id=?2 WHERE p.id=?1 AND pi.id=?3 AND pi.kind='multiple_choice' AND (p.created_by=?2 OR u.is_admin=1) AND p.predictions_closed_at IS NULL AND p.closed_at IS NULL").bind(&pool_id).bind(&session.user_id).bind(&item_id).fetch_optional(db).await.map_err(|e|crate::security::internal_error("multiple_choice_config_owner",e))?;
     if owner.is_none() {
         return Err(crate::security::public_error(
             "Somente o dono do bolão pode alterar regras antes do lock.",

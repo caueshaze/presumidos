@@ -8,6 +8,14 @@ struct LeaderboardTally {
     bonus_points: i64,
 }
 
+fn football_business_order(a: &LeaderboardEntry, b: &LeaderboardEntry) -> std::cmp::Ordering {
+    b.points
+        .cmp(&a.points)
+        .then_with(|| b.exact_scores.cmp(&a.exact_scores))
+        .then_with(|| b.correct_results.cmp(&a.correct_results))
+        .then_with(|| b.bonus_points.cmp(&a.bonus_points))
+}
+
 /// Calcula o ranking de um bolão somando a pontuação de cada palpite contra os
 /// resultados oficiais já lançados.
 ///
@@ -122,11 +130,18 @@ pub async fn get_leaderboard(
         }
     }
 
+    let is_football: (String,) =
+        sqlx::query_as("SELECT e.kind FROM pools p JOIN events e ON e.id=p.event_id WHERE p.id=?1")
+            .bind(&pool_id)
+            .fetch_one(db)
+            .await
+            .map_err(|e| crate::security::internal_error("get_leaderboard_kind", e))?;
     let mut entries: Vec<LeaderboardEntry> = members
         .into_iter()
         .map(|(id, username)| {
             let t = tallies.get(&id).copied().unwrap_or_default();
             LeaderboardEntry {
+                position: 0,
                 points: t.points,
                 exact_scores: t.exact_scores,
                 correct_results: t.correct_results,
@@ -137,7 +152,64 @@ pub async fn get_leaderboard(
         })
         .collect();
 
-    rank_leaderboard(&mut entries);
+    if is_football.0 == "football" {
+        rank_leaderboard(&mut entries);
+    } else {
+        let priorities = crate::pool_tiebreak::effective_priorities_for_pool(&pool_id).await?;
+        let item_ids: Vec<String> = priorities.iter().map(|p| p.item_id.clone()).collect();
+        let resolved: Vec<(String,)> = sqlx::query_as(
+            "SELECT pi.id FROM prediction_items pi LEFT JOIN custom_questions cq ON cq.item_id=pi.id LEFT JOIN numeric_questions nq ON nq.item_id=pi.id
+             WHERE pi.event_version_id=(SELECT event_version_id FROM pools WHERE id=?1) AND pi.id IN (SELECT value FROM json_each(?2))
+             AND ((pi.kind='single_choice' AND cq.correct_option_id IS NOT NULL) OR (pi.kind='numeric' AND nq.result_value_scaled IS NOT NULL) OR (pi.kind='multiple_choice' AND EXISTS(SELECT 1 FROM multiple_choice_results mr WHERE mr.item_id=pi.id)))",
+        ).bind(&pool_id).bind(serde_json::to_string(&item_ids).unwrap()).fetch_all(db).await.map_err(|e| crate::security::internal_error("leaderboard_tiebreak_resolved", e))?;
+        let resolved_ids: std::collections::HashSet<String> =
+            resolved.into_iter().map(|r| r.0).collect();
+        let exact: Vec<(String,String)> = sqlx::query_as(
+            "SELECT p.user_id,p.item_id FROM predictions p JOIN custom_prediction_values v ON v.prediction_id=p.id JOIN custom_questions q ON q.item_id=p.item_id JOIN prediction_items pi ON pi.id=p.item_id JOIN pool_members pm ON pm.pool_id=p.pool_id AND pm.user_id=p.user_id WHERE p.pool_id=?1 AND datetime(pi.lock_at)>=datetime(pm.joined_at) AND v.option_id=q.correct_option_id
+             UNION SELECT p.user_id,p.item_id FROM predictions p JOIN numeric_prediction_values v ON v.prediction_id=p.id JOIN numeric_questions q ON q.item_id=p.item_id JOIN prediction_items pi ON pi.id=p.item_id JOIN pool_members pm ON pm.pool_id=p.pool_id AND pm.user_id=p.user_id WHERE p.pool_id=?1 AND datetime(pi.lock_at)>=datetime(pm.joined_at) AND v.value_scaled=q.result_value_scaled
+             UNION SELECT user_id,item_id FROM multiple_choice_prediction_score_breakdowns WHERE pool_id=?1 AND eligible=1 AND outcome='exact'",
+        ).bind(&pool_id).fetch_all(db).await.map_err(|e| crate::security::internal_error("leaderboard_tiebreak_exact", e))?;
+        let exact: std::collections::HashSet<(String, String)> = exact.into_iter().collect();
+        let active: Vec<String> = item_ids
+            .into_iter()
+            .filter(|id| resolved_ids.contains(id))
+            .collect();
+        entries.sort_by(|a, b| {
+            b.points
+                .cmp(&a.points)
+                .then_with(|| {
+                    for item_id in &active {
+                        let left = exact.contains(&(a.user_id.clone(), item_id.clone()));
+                        let right = exact.contains(&(b.user_id.clone(), item_id.clone()));
+                        let order = right.cmp(&left);
+                        if order != std::cmp::Ordering::Equal {
+                            return order;
+                        }
+                    }
+                    std::cmp::Ordering::Equal
+                })
+                .then_with(|| a.username.cmp(&b.username))
+        });
+        let mut prior: Option<&LeaderboardEntry> = None;
+        for index in 0..entries.len() {
+            let same = prior
+                .map(|entry| {
+                    entry.points == entries[index].points
+                        && active.iter().all(|item_id| {
+                            exact.contains(&(entry.user_id.clone(), item_id.clone()))
+                                == exact
+                                    .contains(&(entries[index].user_id.clone(), item_id.clone()))
+                        })
+                })
+                .unwrap_or(false);
+            entries[index].position = if same {
+                entries[index - 1].position
+            } else {
+                index as i64 + 1
+            };
+            prior = Some(&entries[index]);
+        }
+    }
 
     Ok(entries)
 }
@@ -148,12 +220,19 @@ pub async fn get_leaderboard(
 #[cfg_attr(not(test), allow(dead_code))]
 #[cfg(any(feature = "server", test))]
 pub fn rank_leaderboard(entries: &mut [LeaderboardEntry]) {
-    entries.sort_by(|a, b| {
-        b.points
-            .cmp(&a.points)
-            .then_with(|| b.exact_scores.cmp(&a.exact_scores))
-            .then_with(|| b.correct_results.cmp(&a.correct_results))
-            .then_with(|| b.bonus_points.cmp(&a.bonus_points))
-            .then_with(|| a.username.cmp(&b.username))
-    });
+    entries.sort_by(|a, b| football_business_order(a, b).then_with(|| a.username.cmp(&b.username)));
+    let mut previous: Option<&LeaderboardEntry> = None;
+    for index in 0..entries.len() {
+        let tied = previous
+            .map(|entry| {
+                football_business_order(entry, &entries[index]) == std::cmp::Ordering::Equal
+            })
+            .unwrap_or(false);
+        entries[index].position = if tied {
+            entries[index - 1].position
+        } else {
+            index as i64 + 1
+        };
+        previous = Some(&entries[index]);
+    }
 }

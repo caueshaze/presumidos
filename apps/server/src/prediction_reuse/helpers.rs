@@ -19,8 +19,8 @@ pub(super) async fn target_is_eligible(
     pool_id: &str,
     user_id: &str,
 ) -> Result<Option<(String, String)>, ServerFnError> {
-    let target: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT p.event_version_id, e.status, pm.prediction_reuse_decision
+    let target: Option<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT p.event_version_id, e.status, pm.prediction_reuse_decision,p.predictions_closed_at,p.closed_at
          FROM pool_members pm JOIN pools p ON p.id=pm.pool_id
          JOIN events e ON e.id=p.event_id
          WHERE pm.pool_id=?1 AND pm.user_id=?2",
@@ -30,12 +30,17 @@ pub(super) async fn target_is_eligible(
     .fetch_optional(db)
     .await
     .map_err(|e| crate::security::internal_error("prediction_reuse_target", e))?;
-    let Some((version_id, event_status, decision)) = target else {
+    let Some((version_id, event_status, decision, predictions_closed_at, closed_at)) = target
+    else {
         return Err(crate::security::public_error(
             "Você não participa deste bolão.",
         ));
     };
-    if event_status != "active" || decision != "undecided" {
+    if event_status != "active"
+        || decision != "undecided"
+        || predictions_closed_at.is_some()
+        || closed_at.is_some()
+    {
         return Ok(None);
     }
     let existing: (i64,) =

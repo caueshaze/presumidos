@@ -14,6 +14,8 @@ pub(crate) type PoolSummaryRow = (
     String,
     String,
     Option<String>,
+    Option<String>,
+    Option<String>,
     String,
     String,
     String,
@@ -162,6 +164,8 @@ pub(crate) struct InviteRecord {
     pub(crate) description: String,
     pub(crate) visible_rules: String,
     pub(crate) join_closed_at: Option<String>,
+    pub(crate) predictions_closed_at: Option<String>,
+    pub(crate) closed_at: Option<String>,
     pub(crate) event_name: String,
     pub(crate) event_slug: String,
     pub(crate) event_kind: String,
@@ -181,7 +185,7 @@ pub(crate) async fn resolve_invite(
     invite_code: &str,
 ) -> Result<Option<InviteRecord>, ServerFnError> {
     sqlx::query_as::<_, InviteRecord>(
-        "SELECT p.id AS pool_id,p.event_id,p.name AS pool_name,p.created_by,p.description,p.visible_rules,p.join_closed_at,
+        "SELECT p.id AS pool_id,p.event_id,p.name AS pool_name,p.created_by,p.description,p.visible_rules,p.join_closed_at,p.predictions_closed_at,p.closed_at,
                 v.name AS event_name,e.slug AS event_slug,e.kind AS event_kind,e.status AS event_status,
                 e.ends_at AS event_ends_at,v.description AS event_description,v.cover_url,v.cover_asset_id,
                 u.username AS creator_display_name,

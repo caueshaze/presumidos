@@ -18,13 +18,14 @@ pub async fn draft(token: String, id: String) -> Result<BuilderDraft, ServerFnEr
         .fetch_one(crate::db::pool())
         .await
         .map_err(|e| crate::security::internal_error("event_draft_admin", e))?;
+    let is_owner = event.created_by.as_deref() == Some(&session.user_id);
     let version_id = if let Some((working_id,)) = working {
-        if is_admin.0 || event.status == crate::models::EventStatus::Draft {
+        if is_admin.0 || is_owner || event.status == crate::models::EventStatus::Draft {
             crate::custom_event_manifest::ensure_working_revision(&id, &session.user_id).await?
         } else {
             working_id
         }
-    } else if is_admin.0 && event.current_published_version_id.is_some() {
+    } else if (is_admin.0 || is_owner) && event.current_published_version_id.is_some() {
         crate::custom_event_manifest::ensure_working_revision(&id, &session.user_id).await?
     } else if let Some(id) = event.current_published_version_id.clone() {
         id
@@ -59,7 +60,7 @@ pub async fn draft(token: String, id: String) -> Result<BuilderDraft, ServerFnEr
         .cover_asset_id
         .clone()
         .map(|asset_id| format!("/media/assets/{asset_id}/cover"));
-    let rows:Vec<(String,String,String,String,String,i64,Option<String>,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)>=sqlx::query_as("SELECT pi.id,pi.kind,pi.title,pi.lock_at,pi.reveal_at,pi.sort_order,q.correct_option_id,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,n.result_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN custom_questions q ON q.item_id=pi.id LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=?1 ORDER BY pi.sort_order,pi.id").bind(&version_id).fetch_all(crate::db::pool()).await.map_err(|e|crate::security::internal_error("event_draft_items",e))?;
+    let rows:Vec<(String,String,String,String,String,i64,Option<i64>,Option<String>,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)>=sqlx::query_as("SELECT pi.id,pi.kind,pi.title,pi.lock_at,pi.reveal_at,pi.sort_order,pi.tie_break_priority,q.correct_option_id,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,n.result_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN custom_questions q ON q.item_id=pi.id LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=?1 ORDER BY pi.sort_order,pi.id").bind(&version_id).fetch_all(crate::db::pool()).await.map_err(|e|crate::security::internal_error("event_draft_items",e))?;
     let mut items = Vec::with_capacity(rows.len());
     for (
         id,
@@ -68,6 +69,7 @@ pub async fn draft(token: String, id: String) -> Result<BuilderDraft, ServerFnEr
         lock_at,
         reveal_at,
         sort_order,
+        tie_break_priority,
         correct_option_id,
         decimal_places,
         unit_label,
@@ -107,6 +109,7 @@ pub async fn draft(token: String, id: String) -> Result<BuilderDraft, ServerFnEr
             lock_at,
             reveal_at,
             sort_order,
+            tie_break_priority,
             correct_option_id,
             min_value: min_scaled
                 .zip(decimal_places)

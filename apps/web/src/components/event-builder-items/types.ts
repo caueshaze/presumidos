@@ -13,6 +13,7 @@ export type Item = {
   title: string;
   lockAt: string;
   revealAt: string;
+  tieBreakPriority?: number | null;
   correctOptionId: string | null;
   options: Option[];
   decimalPlaces?: number;

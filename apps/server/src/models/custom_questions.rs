@@ -129,6 +129,7 @@ pub struct CustomMemberPrediction {
     pub item_id: String,
     pub title: String,
     pub option_label: String,
+    pub points: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

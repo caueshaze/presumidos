@@ -31,6 +31,7 @@ pub async fn get_pool_member_predictions(
         "get_pool_member_predictions_membership",
     )
     .await?;
+    let early_reveal = crate::pool_access::can_reveal_early(&pool_id).await?;
 
     // Todos os membros, ordenados por nome (inclui quem ainda não tem palpite visível).
     let members: Vec<(String, String)> = sqlx::query_as(
@@ -74,7 +75,7 @@ pub async fn get_pool_member_predictions(
          JOIN matches m ON m.id = pr.match_id AND m.prediction_item_id = pr.item_id
          JOIN prediction_items pi ON pi.id = pr.item_id
          WHERE pm.pool_id = ?1
-           AND datetime(pi.reveal_at) <= datetime(?2)
+           AND (datetime(pi.reveal_at) <= datetime(?2) OR ?3 = 1)
            AND pi.event_version_id = pool.event_version_id
            -- Consistente com o ranking: só palpites de jogos que começaram
            -- depois de o usuário entrar no bolão.
@@ -83,6 +84,7 @@ pub async fn get_pool_member_predictions(
     )
     .bind(&pool_id)
     .bind(&now)
+    .bind(early_reveal)
     .fetch_all(db)
     .await
     .map_err(|e| crate::security::internal_error("get_pool_member_predictions_preds", e))?;
@@ -111,13 +113,14 @@ pub async fn get_pool_member_predictions(
          JOIN prediction_items pi ON pi.id = m.prediction_item_id
          JOIN pool_members pm ON pm.pool_id = pr.pool_id AND pm.user_id = pr.target_user_id
          WHERE pr.pool_id = ?1
-           AND datetime(pi.reveal_at) <= datetime(?2)
+           AND (datetime(pi.reveal_at) <= datetime(?2) OR ?3 = 1)
            AND pi.event_version_id = pool.event_version_id
            AND datetime(pi.lock_at) >= datetime(pm.joined_at)
          ORDER BY pr.updated_at ASC",
     )
     .bind(&pool_id)
     .bind(&now)
+    .bind(early_reveal)
     .fetch_all(db)
     .await
     .map_err(|e| crate::security::internal_error("get_pool_member_predictions_reactions", e))?;

@@ -135,4 +135,4 @@ export interface CustomQuestion {
   correctOptionIds?: string[];
   partialPoints?: number;
 }
-export interface CustomMemberPredictions { userId: string; username: string; predictions: { itemId: string; title: string; optionLabel: string }[]; }
+export interface CustomMemberPredictions { userId: string; username: string; predictions: { itemId: string; title: string; optionLabel: string; points: number | null }[]; }

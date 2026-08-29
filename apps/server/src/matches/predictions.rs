@@ -150,6 +150,11 @@ pub async fn submit_prediction(
     let Some((item_id, lock_at, phase)) = row else {
         return Err(crate::security::public_error("Partida nao encontrada."));
     };
+    if !crate::pool_access::can_write_predictions(&pool_id).await? {
+        return Err(crate::security::public_error(
+            "Os palpites deste bolão estão encerrados.",
+        ));
+    }
     let override_id = crate::prediction_access::can_edit_item("football_match", &lock_at, Some(&match_id), &session.user_id).await?
         .ok_or_else(|| crate::security::public_error("Essa partida esta travada para palpite; use uma reabertura administrativa se necessario."))?;
     let ko = sanitize_knockout_input(

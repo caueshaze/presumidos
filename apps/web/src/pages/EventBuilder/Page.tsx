@@ -13,6 +13,7 @@ import { EventPreview } from "./EventPreview";
 import { CreateEvent, EventLoading } from "./EntryStates";
 import { VersionHistory } from "./VersionHistory";
 import { EventPackageExport } from "@/components/EventPackageExport";
+import { EventTieBreakDefaults } from "./TieBreakDefaults";
 
 export function EventBuilderPage() {
   const { eventId, navigate, isAdmin, user, deleteEvent, draft, setDraft, name, setName, startsAt, setStartsAt, endsAt, setEndsAt, description, setDescription, coverUrl, setCoverUrl, externalUrl, setExternalUrl, title, setTitle, itemKind, setItemKind, decimalPlaces, setDecimalPlaces, unitLabel, setUnitLabel, minValue, setMinValue, maxValue, setMaxValue, minSelections, setMinSelections, maxSelections, setMaxSelections, lockAt, setLockAt, showAddItemForm, setShowAddItemForm, openAddOptionItemId, setOpenAddOptionItemId, labels, setLabels, mediaDrafts, setMediaDrafts, openMediaOptionId, setOpenMediaOptionId, editingOptionId, optionLabelDraft, setOptionLabelDraft, editingItemId, itemTitleDraft, setItemTitleDraft, itemLockDraft, setItemLockDraft, results, setResults, multipleResults, setMultipleResults, error, busy, create, addItem, addOption, action, saveMetadata, startItemEdit, cancelItemEdit, saveItemEdit, startOptionEdit, cancelOptionEdit, saveOptionLabel, saveOptionMedia, deleteOwnedEvent, restoreVersion, load } = useEventBuilder();
@@ -21,10 +22,10 @@ export function EventBuilderPage() {
   if (!draft) return <EventLoading {...{ navigate, error }} />;
   // Admins edit published events through the isolated working revision. The
   // public view remains read-only; publication is the explicit commit step.
-  const draftOnly = draft.event.status === "draft";
-  const editable = draftOnly || isAdmin;
-  const metadataEditable = editable || isAdmin;
   const isOwner = draft.event.createdBy === user?.id;
+  const draftOnly = draft.event.status === "draft";
+  const editable = draftOnly || isAdmin || isOwner;
+  const metadataEditable = editable || isAdmin;
   const hasPools = draft.versions.some((version) => version.poolCount > 0);
   const deletionLabel = draftOnly && !hasPools ? "Excluir rascunho" : "Arquivar evento";
   const mediaEditable = editable || isAdmin || draft.event.createdBy === user?.id;
@@ -256,6 +257,7 @@ export function EventBuilderPage() {
           )}
         </Card>
       )}
+      {editable && <EventTieBreakDefaults items={draft.items} busy={busy} save={(itemIds) => action(`/custom/events/${draft.event.id}/tie-break-priorities`, { itemIds })} />}
       <EventBuilderItems
         draft={draft}
         editable={editable}

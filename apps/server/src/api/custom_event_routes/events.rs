@@ -129,6 +129,20 @@ pub(crate) async fn custom_event_move_item(
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
+pub(crate) async fn custom_event_update_tiebreak_priorities(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<TieBreakPrioritiesBody>,
+) -> ApiResult<StatusCode> {
+    crate::pool_tiebreak::update_event_default(
+        String::new(),
+        id,
+        body.item_ids,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 pub(crate) async fn custom_event_update_option(
     Path((id, item_id, option_id)): Path<(String, String, String)>,
     headers: HeaderMap,

@@ -19,6 +19,7 @@ mod options;
 #[path = "custom_events/publication.rs"]
 mod publication;
 
+pub(crate) use core::owner;
 pub use core::{BuilderDraft, BuilderItem, BuilderOption, BuilderOptionLink, BuilderVersion};
 pub use deletion::{delete, delete_admin};
 pub use draft::{available, create, get, mine};

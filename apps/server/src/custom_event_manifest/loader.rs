@@ -26,7 +26,7 @@ pub(crate) async fn load_manifest_conn(
     else {
         return Err(crate::security::public_error("Evento não encontrado."));
     };
-    let rows: Vec<(String,String,String,Option<String>,String,String,i64,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)> = sqlx::query_as("SELECT pi.external_key,pi.kind,pi.title,pi.description,pi.lock_at,pi.reveal_at,pi.sort_order,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=COALESCE(?2,(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1)) ORDER BY pi.sort_order,pi.id").bind(event_id).bind(version_id).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_items", e))?;
+    let rows: Vec<(String,String,String,Option<String>,String,String,i64,Option<i64>,Option<i64>,Option<String>,Option<i64>,Option<i64>,Option<i64>,Option<i64>)> = sqlx::query_as("SELECT pi.external_key,pi.kind,pi.title,pi.description,pi.lock_at,pi.reveal_at,pi.sort_order,pi.tie_break_priority,n.decimal_places,n.unit_label,n.min_value_scaled,n.max_value_scaled,mq.min_selections,mq.max_selections FROM prediction_items pi LEFT JOIN numeric_questions n ON n.item_id=pi.id LEFT JOIN multiple_choice_questions mq ON mq.item_id=pi.id WHERE pi.event_version_id=COALESCE(?2,(SELECT COALESCE(current_published_version_id,(SELECT w.id FROM event_versions w WHERE w.event_id=events.id AND w.state='working' ORDER BY w.version_number DESC LIMIT 1)) FROM events WHERE id=?1)) ORDER BY pi.sort_order,pi.id").bind(event_id).bind(version_id).fetch_all(&mut *conn).await.map_err(|e| crate::security::internal_error("manifest_export_items", e))?;
     let mut items = Vec::new();
     for (
         external_key,
@@ -36,6 +36,7 @@ pub(crate) async fn load_manifest_conn(
         lock_at,
         reveal_at,
         _sort,
+        tie_break_priority,
         decimal_places,
         unit_label,
         min_scaled,
@@ -84,6 +85,7 @@ pub(crate) async fn load_manifest_conn(
             description: item_description,
             lock_at,
             reveal_at,
+            tie_break_priority,
             options,
             decimal_places,
             unit_label,

@@ -32,6 +32,7 @@ pub struct BuilderItem {
     pub lock_at: String,
     pub reveal_at: String,
     pub sort_order: i64,
+    pub tie_break_priority: Option<i64>,
     pub correct_option_id: Option<String>,
     pub decimal_places: Option<i64>,
     pub unit_label: Option<String>,
@@ -106,24 +107,18 @@ pub(crate) async fn owner(
     let db = crate::db::pool();
     let allowed: Option<(String, String)> = sqlx::query_as(
         "SELECT e.id,e.status FROM events e WHERE e.id=?1 AND e.kind='custom' AND e.archived_at IS NULL AND
-         ((e.status='draft' AND (e.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)))
-          OR (e.status IN ('active','finished') AND EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1)))",
+         (e.created_by=?2 OR EXISTS (SELECT 1 FROM users WHERE id=?2 AND is_admin=1))",
     )
     .bind(&event_id)
     .bind(&session.user_id)
     .fetch_optional(db)
     .await
     .map_err(|e| crate::security::internal_error("event_builder_owner", e))?;
-    let Some((_id, status)) = allowed else {
+    let Some((_id, _status)) = allowed else {
         return Err(crate::security::public_error(
             "Somente o dono pode editar este rascunho.",
         ));
     };
-    let is_admin: (bool,) = sqlx::query_as("SELECT is_admin FROM users WHERE id=?1")
-        .bind(&session.user_id)
-        .fetch_one(db)
-        .await
-        .map_err(|e| crate::security::internal_error("event_builder_admin", e))?;
     let version_id: Option<(String,)> = sqlx::query_as(
         "SELECT id FROM event_versions WHERE event_id=?1 AND state='working' ORDER BY version_number DESC LIMIT 1",
     )
@@ -133,14 +128,9 @@ pub(crate) async fn owner(
     .map_err(|e| crate::security::internal_error("event_builder_working", e))?;
     let version_id = match version_id {
         Some((id,)) => id,
-        None if status == "draft" || is_admin.0 => {
+        None => {
             crate::custom_event_manifest::ensure_working_revision(event_id, &session.user_id)
                 .await?
-        }
-        None => {
-            return Err(crate::security::public_error(
-                "Este evento publicado só pode ser editado por um administrador.",
-            ))
         }
     };
     Ok((session, db, version_id))

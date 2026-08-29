@@ -4,7 +4,6 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   useCustomQuestions,
   useFootballScoring,
-  useMatches,
   usePools,
   useSetCustomResult,
   useSetMultipleChoiceResult,
@@ -13,6 +12,8 @@ import {
   useUpdateMultipleChoiceScoring,
   useUpdateNumericScoring,
   useUpdateFootballScoring,
+  usePoolTieBreak,
+  useUpdatePoolTieBreak,
 } from "@/hooks/queries";
 import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
@@ -22,21 +23,18 @@ import { ErrorBanner, Label } from "@/components/ui/field";
 import { NumericResultRow, NumericScoringRow } from "./pool-scoring/NumericRows";
 import { MultipleResultRow, MultipleScoringRow } from "./pool-scoring/MultipleRows";
 import { CustomResultRow, CustomScoringRow } from "./pool-scoring/CustomRows";
-
+import { TieBreakEditor } from "./pool-scoring/TieBreakEditor";
 export function PoolScoringPage() {
   const { poolId = "" } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
   const pools = usePools();
-  const matches = useMatches();
   const pool = pools.data?.find((item) => item.id === poolId);
   const custom = useCustomQuestions(
     pool?.event.kind === "custom" ? poolId : null,
   );
-  const football = useFootballScoring(
-    pool?.event.kind === "football" ? poolId : null,
-  );
+  const football = useFootballScoring(pool?.event.kind === "football" ? poolId : null);
   const updateFootball = useUpdateFootballScoring();
   const updateCustom = useUpdateCustomScoring();
   const updateNumeric = useUpdateNumericScoring();
@@ -44,6 +42,8 @@ export function PoolScoringPage() {
   const updateMultiple = useUpdateMultipleChoiceScoring();
   const setMultipleResult = useSetMultipleChoiceResult();
   const setResult = useSetCustomResult();
+  const tieBreak = usePoolTieBreak(pool?.event.kind === "custom" ? poolId : null);
+  const updateTieBreak = useUpdatePoolTieBreak();
   const [values, setValues] = useState<Record<string, string>>({});
   const [customSection, setCustomSection] = useState<"scoring" | "results">(
     searchParams.get("section") === "results" ? "results" : "scoring",
@@ -74,11 +74,8 @@ export function PoolScoringPage() {
         <div className="mt-4"><ErrorBanner>Bolão não encontrado.</ErrorBanner></div>
       </PageShell>
     );
-  const footballFrozen =
-    pool.event.kind === "football" &&
-    (matches.data ?? []).some(
-      (match) => new Date(match.kickoff).getTime() <= Date.now(),
-    );
+  const scoringFrozen = pool.predictionsClosedAt !== null || pool.closedAt !== null;
+  const footballFrozen = pool.event.kind === "football" && scoringFrozen;
   const saveFootball = async () => {
     setError("");
     try {
@@ -164,6 +161,21 @@ export function PoolScoringPage() {
         </Card>
       ) : (
         <>
+          <Card className="mt-6">
+            <h2 className="text-xl">Desempate</h2>
+            <p className="mt-1 text-sm text-ink-muted">Em empate de pontos, as perguntas são avaliadas por acerto exato na ordem abaixo.</p>
+            {tieBreak.data?.effectivePriorities.length ? <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm">{tieBreak.data.effectivePriorities.map((item) => <li key={item.itemId}>{item.title}</li>)}</ol> : <p className="mt-3 text-sm text-ink-muted">Nenhum critério de perguntas está ativo.</p>}
+            {owner && tieBreak.data?.canEdit && (
+              <TieBreakEditor
+                mode={tieBreak.data.mode}
+                items={custom.data?.map((item) => ({ itemId: item.itemId, title: item.title })) ?? []}
+                selected={tieBreak.data.customPriorities.map((item) => item.itemId)}
+                busy={updateTieBreak.isPending}
+                save={(mode, itemIds) => updateTieBreak.mutateAsync({ poolId, mode, itemIds })}
+              />
+            )}
+            {owner && !tieBreak.data?.canEdit && <p className="mt-3 text-sm text-ink-muted">O desempate foi congelado quando os palpites foram encerrados.</p>}
+          </Card>
           {(!owner || customSection === "scoring") && <Card className="mt-6">
             <p className="text-sm text-ink-muted">
               {pool.event.isHistorical
@@ -176,7 +188,7 @@ export function PoolScoringPage() {
                   <NumericScoringRow
                     key={q.itemId}
                     question={q}
-                    owner={owner && q.status === "open"}
+                    owner={owner && q.status === "open" && !scoringFrozen}
                     save={(
                       exactPoints,
                       tolerance,
@@ -197,7 +209,7 @@ export function PoolScoringPage() {
                   <MultipleScoringRow
                     key={q.itemId}
                     question={q}
-                    owner={owner && q.status === "open"}
+                    owner={owner && q.status === "open" && !scoringFrozen}
                     save={(exactPoints, partialPoints, incorrectPoints) =>
                       updateMultiple.mutateAsync({
                         poolId,
@@ -212,7 +224,7 @@ export function PoolScoringPage() {
                   <CustomScoringRow
                     key={q.itemId}
                     question={q}
-                    owner={owner && q.status === "open"}
+                    owner={owner && q.status === "open" && !scoringFrozen}
                     save={(correctPoints, incorrectPoints) =>
                       updateCustom.mutateAsync({
                         poolId,

@@ -245,3 +245,48 @@ pub(crate) async fn update_pool_numeric_scoring(
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
+pub(crate) async fn pool_tiebreak(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pool_tiebreak::config(String::new(), pool_id).await?,
+    ))
+}
+pub(crate) async fn update_pool_tiebreak(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<PoolTieBreakBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pool_tiebreak::update_config(
+            String::new(),
+            pool_id,
+            body.mode,
+            body.item_ids,
+            csrf_header(&headers),
+        )
+        .await?,
+    ))
+}
+
+pub(crate) fn scoring_routes() -> Router {
+    Router::new()
+        .route(
+            "/pools/{pool_id}/scoring/football",
+            get(pool_football_scoring).post(update_pool_football_scoring),
+        )
+        .route(
+            "/pools/{pool_id}/scoring/items/{item_id}",
+            get(pool_custom_scoring).post(update_pool_custom_scoring),
+        )
+        .route(
+            "/pools/{pool_id}/scoring/numeric/{item_id}",
+            get(pool_numeric_scoring).post(update_pool_numeric_scoring),
+        )
+        .route(
+            "/pools/{pool_id}/scoring/multiple-choice/{item_id}",
+            get(pool_multiple_choice_scoring).post(update_pool_multiple_choice_scoring),
+        )
+        .route(
+            "/pools/{pool_id}/tie-break",
+            get(pool_tiebreak).post(update_pool_tiebreak),
+        )
+}

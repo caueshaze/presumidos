@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LeaderboardEntry {
+    pub position: i64,
     pub user_id: String,
     pub username: String,
     pub points: i64,

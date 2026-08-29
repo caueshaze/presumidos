@@ -79,6 +79,10 @@ pub fn router() -> Router {
             post(custom_event_move_item),
         )
         .route(
+            "/custom/events/{id}/tie-break-priorities",
+            post(custom_event_update_tiebreak_priorities),
+        )
+        .route(
             "/custom/events/{id}/items/{item_id}/options",
             post(custom_event_add_option),
         )
@@ -113,6 +117,11 @@ pub fn router() -> Router {
         )
         .route("/pools/join", post(join_pool))
         .route("/pools/{pool_id}/leave", post(leave_pool))
+        .route(
+            "/pools/{pool_id}/close-predictions",
+            post(close_predictions),
+        )
+        .route("/pools/{pool_id}/close", post(close_pool))
         .route(
             "/pools/{pool_id}/prediction-reuse",
             get(prediction_reuse_suggestion),
@@ -183,22 +192,7 @@ pub fn router() -> Router {
             "/admin/custom/multiple-choice/{item_id}/result",
             post(set_multiple_choice_result),
         )
-        .route(
-            "/pools/{pool_id}/scoring/football",
-            get(pool_football_scoring).post(update_pool_football_scoring),
-        )
-        .route(
-            "/pools/{pool_id}/scoring/items/{item_id}",
-            get(pool_custom_scoring).post(update_pool_custom_scoring),
-        )
-        .route(
-            "/pools/{pool_id}/scoring/numeric/{item_id}",
-            get(pool_numeric_scoring).post(update_pool_numeric_scoring),
-        )
-        .route(
-            "/pools/{pool_id}/scoring/multiple-choice/{item_id}",
-            get(pool_multiple_choice_scoring).post(update_pool_multiple_choice_scoring),
-        )
+        .merge(scoring_routes())
         .route("/predictions/reopened", get(my_prediction_overrides))
         .route("/scoring/my-points", get(my_match_points))
         .route("/admin/overview", get(admin_overview))

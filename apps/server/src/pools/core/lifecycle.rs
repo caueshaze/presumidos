@@ -85,6 +85,8 @@ pub async fn create_pool_for_event(
         description: String::new(),
         visible_rules: String::new(),
         join_closed_at: None,
+        predictions_closed_at: None,
+        closed_at: None,
     })
 }
 
@@ -125,7 +127,10 @@ pub async fn join_pool(
         return Err(crate::security::public_error("Codigo de convite invalido."));
     };
 
-    if invite.join_closed_at.is_some() {
+    if invite.join_closed_at.is_some()
+        || invite.predictions_closed_at.is_some()
+        || invite.closed_at.is_some()
+    {
         return Err(crate::security::public_error(
             "Este bolao esta fechado para novos participantes.",
         ));
@@ -203,6 +208,8 @@ pub async fn join_pool(
         description: invite.description,
         visible_rules: invite.visible_rules,
         join_closed_at: invite.join_closed_at,
+        predictions_closed_at: invite.predictions_closed_at,
+        closed_at: invite.closed_at,
     })
 }
 

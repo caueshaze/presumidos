@@ -39,6 +39,8 @@ pub async fn public_invite_preview(
                 lock_deadline: None,
                 join_status: "invalid".to_string(),
                 pool_id: None,
+                predictions_closed_at: None,
+                closed_at: None,
             });
         }
     };
@@ -56,6 +58,8 @@ pub async fn public_invite_preview(
             lock_deadline: None,
             join_status: "invalid".to_string(),
             pool_id: None,
+            predictions_closed_at: None,
+            closed_at: None,
         });
     };
 
@@ -64,7 +68,10 @@ pub async fn public_invite_preview(
             .event_ends_at
             .as_deref()
             .is_some_and(timestamp_elapsed);
-    let closed = invite.join_closed_at.is_some() || ended;
+    let closed = invite.join_closed_at.is_some()
+        || invite.predictions_closed_at.is_some()
+        || invite.closed_at.is_some()
+        || ended;
     let user_id = crate::auth::current_user(String::new())
         .await?
         .user
@@ -119,12 +126,18 @@ pub async fn public_invite_preview(
         lock_deadline: invite.lock_deadline,
         join_status: if already_member {
             "already_member"
-        } else if invite.join_closed_at.is_some() || (closed && !can_rejoin_ended) {
+        } else if invite.join_closed_at.is_some()
+            || invite.predictions_closed_at.is_some()
+            || invite.closed_at.is_some()
+            || (closed && !can_rejoin_ended)
+        {
             "closed"
         } else {
             "joinable"
         }
         .to_string(),
         pool_id: already_member.then_some(invite.pool_id),
+        predictions_closed_at: invite.predictions_closed_at,
+        closed_at: invite.closed_at,
     })
 }

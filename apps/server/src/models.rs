@@ -8,6 +8,7 @@ mod notifications;
 mod pool_members;
 mod pools;
 mod prediction_items;
+mod tiebreak;
 
 pub use admin::*;
 pub use auth::*;
@@ -19,3 +20,4 @@ pub use notifications::*;
 pub use pool_members::*;
 pub use pools::*;
 pub use prediction_items::*;
+pub use tiebreak::*;

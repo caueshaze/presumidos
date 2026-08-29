@@ -86,6 +86,11 @@ pub async fn submit_prediction(
             "Voce nao participa deste bolao.",
         ));
     }
+    if !crate::pool_access::can_write_predictions(&pool_id).await? {
+        return Err(crate::security::public_error(
+            "Os palpites deste bolão estão encerrados.",
+        ));
+    }
     if crate::prediction_access::can_edit_item("multiple_choice", &lock_at, None, &session.user_id)
         .await?
         .is_none()

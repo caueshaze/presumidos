@@ -15,7 +15,7 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 p.created_by,
                 p.description,
                 p.visible_rules,
-                p.join_closed_at, v.name, e.slug, e.kind, e.status, e.ends_at
+                p.join_closed_at,p.predictions_closed_at,p.closed_at, v.name, e.slug, e.kind, e.status, e.ends_at
          FROM pools p
          JOIN events e ON e.id = p.event_id
          JOIN event_versions v ON v.id = p.event_version_id
@@ -41,6 +41,8 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 description,
                 visible_rules,
                 join_closed_at,
+                predictions_closed_at,
+                closed_at,
                 event_name,
                 event_slug,
                 event_kind,
@@ -64,6 +66,8 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 description,
                 visible_rules,
                 join_closed_at,
+                predictions_closed_at,
+                closed_at,
             },
         )
         .collect())
@@ -75,10 +79,10 @@ pub async fn dashboard_pools(token: String) -> Result<Vec<PoolDashboardSummary>,
 
     crate::security::apply_security_headers();
     let session = require_user(&token).await?;
-    let rows: Vec<(String, String, String, String, i64, String, String, String, Option<String>, String, String, String, String, Option<String>, i64, i64)> = sqlx::query_as(
+    let rows: Vec<(String, String, String, String, i64, String, Option<String>, Option<String>, Option<String>, String, String, String, String, Option<String>, i64, i64)> = sqlx::query_as(
         "SELECT p.id, p.event_id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id),
-                p.created_by, p.description, p.visible_rules, p.join_closed_at,
+                p.created_by, p.join_closed_at,p.predictions_closed_at,p.closed_at,
                 COALESCE(v.name, e.name), e.slug, e.kind, e.status, e.ends_at,
                 (SELECT COUNT(*) FROM predictions pr WHERE pr.pool_id = p.id AND pr.user_id = ?1),
                 (SELECT COUNT(*) FROM prediction_items pi WHERE pi.event_version_id = COALESCE(p.event_version_id, e.current_published_version_id) OR (p.event_version_id IS NULL AND pi.event_id = p.event_id))
@@ -103,9 +107,9 @@ pub async fn dashboard_pools(token: String) -> Result<Vec<PoolDashboardSummary>,
                 invite_code,
                 member_count,
                 created_by,
-                description,
-                visible_rules,
                 join_closed_at,
+                predictions_closed_at,
+                closed_at,
                 event_name,
                 event_slug,
                 event_kind,
@@ -129,9 +133,11 @@ pub async fn dashboard_pools(token: String) -> Result<Vec<PoolDashboardSummary>,
                     invite_code,
                     member_count,
                     created_by,
-                    description,
-                    visible_rules,
+                    description: String::new(),
+                    visible_rules: String::new(),
                     join_closed_at,
+                    predictions_closed_at,
+                    closed_at,
                 },
                 answered_count,
                 item_count,

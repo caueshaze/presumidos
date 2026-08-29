@@ -111,7 +111,7 @@ function PodiumEntry({
       }}
       className={`flex flex-col items-center rounded-lg bg-card p-4 text-center shadow-card transition-shadow hover:shadow-card-hover ${index === 0 ? "ring-2 ring-yellow-dark/50" : ""}`}
     >
-      <span className="text-3xl">{medals[index]}</span>
+      <span className="text-3xl">{medals[Math.min(entry.position - 1, 2)]}</span>
       <div className="mt-1 font-heading font-semibold">{entry.username}</div>
       <div className="text-sm text-mint-dark">{entry.points} pts</div>
       <div className="text-xs text-ink-muted">
@@ -157,9 +157,9 @@ function RankingTable({
           </tr>
         </thead>
         <tbody>
-          {entries.map((entry, index) => (
+          {entries.map((entry) => (
             <tr key={entry.userId} className="border-t border-mint/20">
-              <td className="px-5 py-3">{index + 4}</td>
+              <td className="px-5 py-3">{entry.position}º</td>
               <td className="px-5 py-3">
                 <button
                   type="button"

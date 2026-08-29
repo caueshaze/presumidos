@@ -1,9 +1,9 @@
-import { CheckCircle2, Flag, LogOut, Trash2, X } from "lucide-react";
+import { CheckCircle2, Flag, Lock, LogOut, Trophy, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner, Label, Select } from "@/components/ui/field";
 import type { PoolReportCategory } from "@/types";
 
-export type PoolAction = "report" | "reportSubmitted" | "leave" | "delete";
+export type PoolAction = "report" | "reportSubmitted" | "leave" | "delete" | "closePredictions" | "close";
 
 const reportCategoryOptions: Array<{ value: PoolReportCategory; label: string }> = [
   { value: "inappropriate_content", label: "Conteúdo inadequado" },
@@ -25,6 +25,8 @@ export function PoolActionModal({
   onReport,
   onLeave,
   onDelete,
+  onClosePredictions,
+  onClosePool,
   onClose,
 }: {
   action: PoolAction;
@@ -39,18 +41,20 @@ export function PoolActionModal({
   onReport: () => void;
   onLeave: () => void;
   onDelete: () => void;
+  onClosePredictions: () => void;
+  onClosePool: () => void;
   onClose: () => void;
 }) {
   const submitted = action === "reportSubmitted";
   const report = action === "report" || submitted;
   const destructive = action === "leave" || action === "delete";
-  const title = action === "delete" ? "Excluir bolão" : action === "leave" ? "Sair do bolão" : "Denunciar bolão";
+  const title = action === "delete" ? "Excluir bolão" : action === "leave" ? "Sair do bolão" : action === "closePredictions" ? "Encerrar os palpites?" : action === "close" ? "Encerrar bolão?" : "Denunciar bolão";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !actionPending && !reportPending) onClose(); }}>
       <div className="w-full max-w-lg rounded-[28px] border border-mint/20 bg-card p-6 shadow-2xl shadow-black/25 sm:p-7" role="dialog" aria-modal="true" aria-labelledby="pool-action-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="flex items-start gap-4">
           <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${destructive ? "bg-danger/15 text-danger" : "bg-mint/20 text-mint-dark"}`}>
-            {action === "delete" ? <Trash2 className="h-6 w-6" /> : action === "leave" ? <LogOut className="h-6 w-6" /> : <Flag className="h-6 w-6" />}
+            {action === "delete" ? <Trash2 className="h-6 w-6" /> : action === "leave" ? <LogOut className="h-6 w-6" /> : action === "closePredictions" ? <Lock className="h-6 w-6" /> : action === "close" ? <Trophy className="h-6 w-6" /> : <Flag className="h-6 w-6" />}
           </div>
           <div className="min-w-0 flex-1">
             <h2 id="pool-action-title" className="text-2xl">{title}</h2>
@@ -83,12 +87,12 @@ export function PoolActionModal({
         ) : (
           <div className="mt-6 space-y-5">
             <div className={`rounded-2xl border px-4 py-4 text-sm ${destructive ? "border-danger/25 bg-danger-bg" : "border-mint/15 bg-bg/35"}`}>
-              {action === "leave" ? "Você perderá o acesso ao bolão. Seus palpites e dados serão preservados caso entre novamente pelo código." : <><strong>Esta ação não pode ser desfeita automaticamente.</strong> Todos os participantes perderão o acesso e o bolão será excluído.</>}
+              {action === "leave" ? "Você perderá o acesso ao bolão. Seus palpites e dados serão preservados caso entre novamente pelo código." : action === "closePredictions" ? <><strong>Depois disso, ninguém poderá criar ou alterar palpites neste bolão.</strong> Os resultados disponíveis e os palpites da galera serão revelados. Esta ação não pode ser desfeita.</> : action === "close" ? <><strong>O ranking será considerado final e o bolão irá para o seu histórico.</strong> Resultados e palpites continuarão disponíveis para consulta.</> : <><strong>Esta ação não pode ser desfeita automaticamente.</strong> Todos os participantes perderão o acesso e o bolão será excluído.</>}
             </div>
             {error && <ErrorBanner>{error}</ErrorBanner>}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button variant="outline" className="justify-center" onClick={onClose} disabled={actionPending}>Cancelar</Button>
-              <Button variant={action === "delete" ? "primary" : "outline"} className={action === "delete" ? "justify-center bg-danger text-white hover:bg-danger/90" : "justify-center"} onClick={action === "delete" ? onDelete : onLeave} disabled={actionPending}>{actionPending ? "Processando..." : action === "delete" ? "Excluir bolão" : "Sair do bolão"}</Button>
+              <Button variant={action === "delete" ? "primary" : "outline"} className={action === "delete" ? "justify-center bg-danger text-white hover:bg-danger/90" : "justify-center"} onClick={action === "delete" ? onDelete : action === "closePredictions" ? onClosePredictions : action === "close" ? onClosePool : onLeave} disabled={actionPending}>{actionPending ? "Processando..." : action === "delete" ? "Excluir bolão" : action === "closePredictions" ? "Encerrar palpites" : action === "close" ? "Encerrar bolão" : "Sair do bolão"}</Button>
             </div>
           </div>
         )}
@@ -96,4 +100,3 @@ export function PoolActionModal({
     </div>
   );
 }
-

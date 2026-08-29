@@ -88,6 +88,7 @@ mod tests {
         bonus_points: i64,
     ) -> LeaderboardEntry {
         LeaderboardEntry {
+            position: 0,
             user_id: username.to_string(),
             username: username.to_string(),
             points,
@@ -107,6 +108,24 @@ mod tests {
     fn ranks_by_points_first() {
         let mut entries = vec![entry("ana", 10, 0, 0, 0), entry("bia", 20, 0, 0, 0)];
         assert_eq!(order(&mut entries), vec!["bia", "ana"]);
+    }
+
+    #[test]
+    fn equal_business_criteria_share_competition_position() {
+        let mut entries = vec![
+            entry("Cauê", 10, 1, 2, 0),
+            entry("Ana", 10, 1, 2, 0),
+            entry("Bruno", 9, 0, 0, 0),
+        ];
+        rank_leaderboard(&mut entries);
+        assert_eq!(order(&mut entries), vec!["Ana", "Cauê", "Bruno"]);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.position)
+                .collect::<Vec<_>>(),
+            vec![1, 1, 3]
+        );
     }
 
     // Empate em pontos → quem tem mais placares exatos sobe.

@@ -64,6 +64,7 @@ export interface KnockoutEntry {
   penaltyAway: number | null;
 }
 export interface LeaderboardEntry {
+  position: number;
   userId: string;
   username: string;
   points: number;

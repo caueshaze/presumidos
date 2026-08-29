@@ -49,7 +49,7 @@ pub(crate) async fn insert_items(
 ) -> Result<(), ServerFnError> {
     for (sort, item) in m.items.iter().enumerate() {
         let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO prediction_items(id,event_id,event_version_id,external_key,kind,title,description,lock_at,reveal_at,sort_order,status) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'open')").bind(&id).bind(event_id).bind(version_id).bind(&item.external_key).bind(&item.kind).bind(&item.title).bind(&item.description).bind(&item.lock_at).bind(&item.reveal_at).bind(sort as i64).execute(&mut **tx).await.map_err(|e| crate::security::internal_error("manifest_item",e))?;
+        sqlx::query("INSERT INTO prediction_items(id,event_id,event_version_id,external_key,kind,title,description,lock_at,reveal_at,sort_order,tie_break_priority,status) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'open')").bind(&id).bind(event_id).bind(version_id).bind(&item.external_key).bind(&item.kind).bind(&item.title).bind(&item.description).bind(&item.lock_at).bind(&item.reveal_at).bind(sort as i64).bind(item.tie_break_priority).execute(&mut **tx).await.map_err(|e| crate::security::internal_error("manifest_item",e))?;
         match item.kind.as_str() {
             "single_choice" => {
                 sqlx::query("INSERT INTO custom_questions(item_id,points) VALUES(?1,1)")

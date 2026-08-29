@@ -29,6 +29,8 @@ export interface PoolSummary {
   description: string;
   visibleRules: string;
   joinClosedAt: string | null;
+  predictionsClosedAt: string | null;
+  closedAt: string | null;
 }
 export type PoolReportCategory =
   | "inappropriate_content"
@@ -63,7 +65,13 @@ export interface PublicPoolInvitePreview {
   memberCount: number | null;
   lockDeadline: string | null;
   joinStatus: InviteJoinStatus;
+  predictionsClosedAt: string | null;
+  closedAt: string | null;
   poolId: string | null;
+}
+export interface PoolLifecycleState {
+  predictionsClosedAt: string | null;
+  closedAt: string | null;
 }
 export interface PoolDashboardSummary {
   pool: PoolSummary;

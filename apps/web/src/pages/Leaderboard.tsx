@@ -9,6 +9,7 @@ import {
   useCustomQuestions,
   useFootballScoring,
   useRemoveAdjustment,
+  usePoolTieBreak,
 } from "@/hooks/queries";
 import { useAuth } from "@/hooks/useAuth";
 import { PageShell } from "@/components/PageShell";
@@ -55,6 +56,7 @@ export function LeaderboardPage() {
   const customQuestions = useCustomQuestions(
     !isFootball ? selectedPool || null : null,
   );
+  const tieBreak = usePoolTieBreak(!isFootball ? selectedPool || null : null);
   const isOrganizer =
     !!currentPool && (currentPool.createdBy === user?.id || isAdmin);
   const entries = leaderboard.data ?? [];
@@ -204,6 +206,7 @@ export function LeaderboardPage() {
         isFootball={isFootball}
         footballScoring={footballScoring.data}
         customQuestions={customQuestions.data}
+        tieBreakPriorities={tieBreak.data?.effectivePriorities}
       />
     </PageShell>
   );

@@ -45,6 +45,8 @@ pub struct CustomEventManifestItem {
     pub description: Option<String>,
     pub lock_at: String,
     pub reveal_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tie_break_priority: Option<i64>,
     #[serde(default)]
     pub options: Vec<CustomEventManifestOption>,
     pub decimal_places: Option<i64>,

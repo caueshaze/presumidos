@@ -22,6 +22,8 @@ const pool = {
   description: "",
   visibleRules: "",
   joinClosedAt: null,
+  predictionsClosedAt: null,
+  closedAt: null,
 };
 const reuseRefetch = vi.fn();
 const copyReuse = vi.fn();
@@ -39,6 +41,8 @@ vi.mock("@/hooks/queries", () => ({
   useLeavePool: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useDeletePool: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useCreatePoolReport: () => ({ mutateAsync: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useClosePoolPredictions: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+  useClosePool: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   usePredictionReuseSuggestion: () => ({ isFetching: false, data: null, refetch: reuseRefetch }),
   useCopyPredictionsReuse: () => ({ mutateAsync: copyReuse, isPending: false }),
   useStartPredictionsEmpty: () => ({ mutateAsync: startEmpty, isPending: false }),
@@ -61,6 +65,7 @@ it("opens one sharing modal with the invite link and code", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "Opções" }));
   expect(screen.getByRole("menuitem", { name: /Excluir bolão/ })).toBeTruthy();
+  expect(screen.getByRole("menuitem", { name: "Encerrar palpites" })).toBeTruthy();
   expect(screen.queryByRole("menuitem", { name: /Sair do bolão/ })).toBeNull();
   fireEvent.pointerDown(document.body);
   expect(screen.queryByRole("menu")).toBeNull();

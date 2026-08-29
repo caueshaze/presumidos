@@ -52,6 +52,24 @@ pub(super) async fn leave_pool(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub(super) async fn close_predictions(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::close_predictions(String::new(), pool_id, csrf_header(&headers)).await?,
+    ))
+}
+
+pub(super) async fn close_pool(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::close_pool(String::new(), pool_id, csrf_header(&headers)).await?,
+    ))
+}
+
 pub(super) async fn create_pool_report(
     Path(pool_id): Path<String>,
     headers: HeaderMap,

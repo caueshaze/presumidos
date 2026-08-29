@@ -13,6 +13,9 @@ mod adjustments;
 #[path = "core/admin.rs"]
 mod admin;
 #[cfg(feature = "server")]
+#[path = "core/closure.rs"]
+mod closure;
+#[cfg(feature = "server")]
 #[path = "core/deletion.rs"]
 mod deletion;
 #[cfg(feature = "server")]
@@ -38,6 +41,8 @@ mod shared;
 pub use adjustments::*;
 #[cfg(feature = "server")]
 pub use admin::*;
+#[cfg(feature = "server")]
+pub use closure::*;
 #[cfg(feature = "server")]
 pub use deletion::*;
 #[cfg(feature = "server")]

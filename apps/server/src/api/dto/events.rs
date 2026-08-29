@@ -75,6 +75,12 @@ pub(crate) struct MoveBody {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct TieBreakPrioritiesBody {
+    #[serde(default)]
+    pub(crate) item_ids: Vec<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ManifestPreviewBody {
     pub(crate) content: String,
     #[serde(default)]

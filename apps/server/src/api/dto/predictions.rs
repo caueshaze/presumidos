@@ -100,3 +100,10 @@ pub(crate) struct NumericResultBody {
     #[serde(default)]
     pub(crate) pool_id: Option<String>,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PoolTieBreakBody {
+    pub(crate) mode: crate::models::PoolTieBreakMode,
+    #[serde(default)]
+    pub(crate) item_ids: Vec<String>,
+}

@@ -7,6 +7,7 @@ interface Props {
   isFootball: boolean;
   footballScoring?: FootballScoringConfig;
   customQuestions?: CustomQuestion[];
+  tieBreakPriorities?: { itemId: string; title: string; priority: number }[];
 }
 export function ScoringInfoModal({
   open,
@@ -14,6 +15,7 @@ export function ScoringInfoModal({
   isFootball,
   footballScoring,
   customQuestions,
+  tieBreakPriorities,
 }: Props) {
   return (
     <AnimatePresence>
@@ -50,7 +52,7 @@ export function ScoringInfoModal({
             {isFootball ? (
               <FootballScoring scoring={footballScoring} />
             ) : (
-              <CustomScoring questions={customQuestions} />
+              <CustomScoring questions={customQuestions} tieBreakPriorities={tieBreakPriorities} />
             )}
           </motion.div>
         </motion.div>
@@ -91,7 +93,7 @@ function FootballScoring({ scoring }: { scoring?: FootballScoringConfig }) {
     </>
   );
 }
-function CustomScoring({ questions }: { questions?: CustomQuestion[] }) {
+function CustomScoring({ questions, tieBreakPriorities }: { questions?: CustomQuestion[]; tieBreakPriorities?: { itemId: string; title: string; priority: number }[] }) {
   return (
     <>
       <p className="mt-1 text-sm text-ink-muted">
@@ -109,6 +111,7 @@ function CustomScoring({ questions }: { questions?: CustomQuestion[] }) {
           ))}
         </tbody>
       </table>
+      {!!tieBreakPriorities?.length && <div className="mt-5 rounded-xl bg-secondary/50 px-4 py-3 text-sm text-ink-muted"><span className="font-semibold text-ink">Desempate</span><p className="mt-1">Em empate de pontos, vale o acerto exato nesta ordem:</p><ol className="mt-2 list-decimal space-y-1 pl-5">{tieBreakPriorities.map((item) => <li key={item.itemId}>{item.title}</li>)}</ol></div>}
     </>
   );
 }

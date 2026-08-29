@@ -16,6 +16,8 @@ pub struct PoolSummary {
     pub description: String,
     pub visible_rules: String,
     pub join_closed_at: Option<String>,
+    pub predictions_closed_at: Option<String>,
+    pub closed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -51,9 +53,18 @@ pub struct PublicPoolInvitePreview {
     pub member_count: Option<i64>,
     pub lock_deadline: Option<String>,
     pub join_status: String,
+    pub predictions_closed_at: Option<String>,
+    pub closed_at: Option<String>,
     /// Só é preenchido para um usuário autenticado que já é membro. Assim o
     /// preview anônimo não revela identificadores internos do Pool.
     pub pool_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolLifecycleState {
+    pub predictions_closed_at: Option<String>,
+    pub closed_at: Option<String>,
 }
 
 /// Leitura compacta da página inicial. Mantém o Pool como fonte de verdade e

@@ -102,6 +102,7 @@ export function PoolInvitePage() {
             <div className="flex items-center gap-2"><Users className="h-4 w-4 text-mint-dark" /> {data.memberCount} participante(s)</div>
             {deadline && <div>Palpites até {deadline}</div>}
           </div>
+          {data.predictionsClosedAt && <p className="mt-4 rounded-2xl bg-mint/20 p-3 text-sm font-semibold">🔒 Palpites encerrados</p>}
 
           {alreadyMember ? (
             <div className="mt-7">
