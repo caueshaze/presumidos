@@ -1,4 +1,5 @@
 import { Check, Copy, KeyRound, Link2, Share2, Sparkles, X } from "lucide-react";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 
 export type ShareCopyTarget = "link" | "code";
@@ -16,8 +17,8 @@ type PoolShareModalProps = {
 
 export function PoolShareModal({ inviteUrl, inviteCode, poolName, copied, canShare, onCopy, onShare, onClose }: PoolShareModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="relative w-full max-w-lg overflow-hidden rounded-[28px] border border-mint/20 bg-card shadow-2xl shadow-black/25" role="dialog" aria-modal="true" aria-labelledby="share-pool-title" onMouseDown={(event) => event.stopPropagation()}>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, ease: "easeOut" }} className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <motion.div initial={{ opacity: 0, y: 18, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }} className="relative w-full max-w-lg overflow-hidden rounded-[28px] border border-mint/20 bg-card shadow-2xl shadow-black/25" role="dialog" aria-modal="true" aria-labelledby="share-pool-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-br from-mint/25 via-mint/5 to-transparent" />
         <div className="relative p-5 sm:p-7">
           <div className="flex items-start gap-4">
@@ -32,7 +33,7 @@ export function PoolShareModal({ inviteUrl, inviteCode, poolName, copied, canSha
           <div className="mt-5 flex items-start gap-3 rounded-2xl bg-mint/10 px-4 py-3 text-sm text-ink-muted"><Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-mint-dark" /><p>Compartilhe o link para facilitar a entrada. O código também funciona na opção “Entrar com código”.</p></div>
           <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button variant="outline" className="justify-center" onClick={onClose}>Fechar</Button>{canShare && <Button className="justify-center" onClick={onShare}><Share2 className="h-4 w-4" />Compartilhar pelo dispositivo</Button>}</div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

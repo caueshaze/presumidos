@@ -1,5 +1,6 @@
 import { ArrowRight, BookOpenText, ClipboardCheck, Flag, LogOut, MoreHorizontal, Share2, Trash2, Trophy, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { useNavigate, useParams } from "react-router-dom";
 import { PageShell } from "@/components/PageShell";
 import { PoolShareModal } from "@/components/PoolShareModal";
@@ -209,7 +210,7 @@ export function PoolOverviewPage() {
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/members`)}><Users className="h-4 w-4 shrink-0 text-mint-dark" />Participantes</Button>
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/scoring`)}><BookOpenText className="h-4 w-4 shrink-0 text-mint-dark" />Regras</Button>
         {pool.event.kind === "custom" && canManageEventResults && <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/scoring?section=results`)}><ClipboardCheck className="h-4 w-4 shrink-0 text-mint-dark" />Resultados oficiais</Button>}
-        {!historical && <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => setShareModalOpen(true)}><Share2 className="h-4 w-4 shrink-0 text-mint-dark" />Compartilhar</Button>}
+        {!historical && <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, delay: 0.12, ease: "easeOut" }} className="col-span-2 sm:col-span-1 sm:w-fit"><Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => setShareModalOpen(true)}><Share2 className="h-4 w-4 shrink-0 text-mint-dark" />Compartilhar</Button></motion.div>}
         <div ref={optionsRef} className="relative col-span-2 w-full sm:col-span-1 sm:w-auto">
           <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" aria-haspopup="menu" aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}><MoreHorizontal className="h-4 w-4 shrink-0 text-mint-dark" />Opções</Button>
           {optionsOpen && <div role="menu" aria-label="Opções do bolão" className="absolute left-0 top-full z-30 mt-2 w-56 max-w-[calc(100vw-2rem)] rounded-2xl border border-mint/20 bg-card p-2 shadow-card sm:left-auto sm:right-0 sm:max-w-none">
