@@ -22,25 +22,24 @@ export function OptionMediaActions({ option, poolId }: { option: CustomQuestionO
         progress.mutate({ poolId, optionId: option.id, seen: !(option.mediaSeen ?? false) });
       }}
       animate={{
-        scale: option.mediaSeen ? 1.025 : 1,
         backgroundColor: option.mediaSeen ? "rgba(68, 201, 161, 0.15)" : "rgba(255, 255, 255, 0.04)",
       }}
-      whileHover={progress.isPending ? undefined : { scale: option.mediaSeen ? 1.035 : 1.02 }}
-      whileTap={progress.isPending ? undefined : { scale: 0.97 }}
-      transition={{ type: "spring", stiffness: 380, damping: 24, mass: 0.55 }}
-      className={`ml-auto inline-flex items-center gap-1.5 rounded-pill border px-2.5 py-1.5 font-semibold focus-visible:outline-none focus-visible:shadow-glow disabled:cursor-wait ${option.mediaSeen ? "border-mint-dark/50 text-mint-dark" : "border-mint/20 text-ink-muted hover:border-mint-dark/50 hover:text-mint-dark"}`}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      className={`ml-auto inline-flex items-center justify-center rounded-pill border px-2.5 py-1.5 font-semibold transition-colors focus-visible:outline-none focus-visible:shadow-glow disabled:cursor-wait ${option.mediaSeen ? "border-mint-dark/50 text-mint-dark" : "border-mint/20 text-ink-muted hover:border-mint-dark/50 hover:text-mint-dark"}`}
     >
-      <AnimatePresence initial={false}>
-        {option.mediaSeen ? (
-          <motion.span key="seen" initial={{ opacity: 0, scale: 0.5, rotate: -20 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} exit={{ opacity: 0, scale: 0.5, rotate: 20 }} transition={{ type: "spring", stiffness: 500, damping: 22 }} className="flex items-center gap-1.5">
-            <Check className="h-3.5 w-3.5" aria-hidden="true" />Visto
-          </motion.span>
-        ) : (
-          <motion.span key="unseen" initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.85 }} transition={{ duration: 0.14 }} className="flex items-center gap-1.5">
-            <Eye className="h-3.5 w-3.5" aria-hidden="true" />Marcar como visto
-          </motion.span>
-        )}
-      </AnimatePresence>
+      <span className="relative block h-4 w-[7.5rem]">
+        <AnimatePresence initial={false}>
+          {option.mediaSeen ? (
+            <motion.span key="seen" initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.16, ease: "easeOut" }} className="absolute inset-0 flex items-center justify-center gap-1.5">
+              <Check className="h-3.5 w-3.5" aria-hidden="true" />Visto
+            </motion.span>
+          ) : (
+            <motion.span key="unseen" initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} transition={{ duration: 0.16, ease: "easeOut" }} className="absolute inset-0 flex items-center justify-center gap-1.5">
+              <Eye className="h-3.5 w-3.5" aria-hidden="true" />Marcar como visto
+            </motion.span>
+          )}
+        </AnimatePresence>
+      </span>
     </motion.button>
   </div>;
 }
