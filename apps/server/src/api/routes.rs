@@ -122,6 +122,19 @@ pub fn router() -> Router {
             post(close_predictions),
         )
         .route("/pools/{pool_id}/close", post(close_pool))
+        .route("/pools/{pool_id}/editorial", get(pool_editorial))
+        .route(
+            "/pools/{pool_id}/editorial/name",
+            post(update_pool_editorial_name),
+        )
+        .route(
+            "/pools/{pool_id}/editorial/options/{option_id}/links",
+            post(replace_pool_option_links),
+        )
+        .route(
+            "/pools/{pool_id}/editorial/options/{option_id}/links/reset",
+            post(reset_pool_option_links),
+        )
         .route(
             "/pools/{pool_id}/prediction-reuse",
             get(prediction_reuse_suggestion),
@@ -168,6 +181,10 @@ pub fn router() -> Router {
             get(custom_member_predictions),
         )
         .route("/custom/predictions", post(submit_single_choice_prediction))
+        .route(
+            "/custom/predictions/remove",
+            post(remove_single_choice_prediction),
+        )
         .route(
             "/custom/numeric-predictions",
             post(submit_numeric_prediction),

@@ -19,6 +19,9 @@ mod closure;
 #[path = "core/deletion.rs"]
 mod deletion;
 #[cfg(feature = "server")]
+#[path = "core/editorial.rs"]
+mod editorial;
+#[cfg(feature = "server")]
 #[path = "core/invites.rs"]
 mod invites;
 #[cfg(feature = "server")]
@@ -45,6 +48,8 @@ pub use admin::*;
 pub use closure::*;
 #[cfg(feature = "server")]
 pub use deletion::*;
+#[cfg(feature = "server")]
+pub use editorial::*;
 #[cfg(feature = "server")]
 pub use invites::*;
 #[cfg(feature = "server")]

@@ -64,6 +64,7 @@ it("opens one sharing modal with the invite link and code", async () => {
   renderOverview();
 
   fireEvent.click(screen.getByRole("button", { name: "Opções" }));
+  expect(screen.getByRole("menuitem", { name: "Personalizar bolão" })).toBeTruthy();
   expect(screen.getByRole("menuitem", { name: /Excluir bolão/ })).toBeTruthy();
   expect(screen.getByRole("menuitem", { name: "Encerrar palpites" })).toBeTruthy();
   expect(screen.queryByRole("menuitem", { name: /Sair do bolão/ })).toBeNull();
@@ -92,6 +93,7 @@ it("shows leaving to participants instead of pool deletion", () => {
   pool.createdBy = "owner-2";
   renderOverview();
   fireEvent.click(screen.getByRole("button", { name: "Opções" }));
+  expect(screen.queryByRole("menuitem", { name: "Personalizar bolão" })).toBeNull();
   expect(screen.getByRole("menuitem", { name: /Sair do bolão/ })).toBeTruthy();
   expect(screen.queryByRole("menuitem", { name: /Excluir bolão/ })).toBeNull();
   pool.createdBy = "user-1";

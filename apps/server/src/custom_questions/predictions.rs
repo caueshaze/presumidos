@@ -86,6 +86,60 @@ pub async fn submit_single_choice_prediction(
         .map_err(|e| crate::security::internal_error("submit_single_choice_commit", e))?;
     Ok(())
 }
+
+pub async fn remove_single_choice_prediction(
+    token: String,
+    pool_id: String,
+    item_id: String,
+    csrf_token: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::require_user;
+    let session = require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf_token)?;
+    let db = crate::db::pool();
+    let item: Option<(String, String)> = sqlx::query_as(
+        "SELECT pi.kind,pi.lock_at FROM pools p JOIN events e ON e.id=p.event_id
+         JOIN prediction_items pi ON pi.event_version_id=p.event_version_id
+         JOIN pool_members pm ON pm.pool_id=p.id AND pm.user_id=?3
+         WHERE p.id=?1 AND pi.id=?2 AND e.status='active'",
+    )
+    .bind(&pool_id)
+    .bind(&item_id)
+    .bind(&session.user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| crate::security::internal_error("remove_single_choice_load", e))?;
+    let Some((kind, lock_at)) = item else {
+        return Err(crate::security::public_error("Bolão ou pergunta inválida."));
+    };
+    if kind != "single_choice" {
+        return Err(crate::security::public_error(
+            "Esta pergunta não é de escolha única.",
+        ));
+    }
+    if !crate::pool_access::can_write_predictions(&pool_id).await?
+        || crate::prediction_access::can_edit_item(
+            "single_choice",
+            &lock_at,
+            None,
+            &session.user_id,
+        )
+        .await?
+        .is_none()
+    {
+        return Err(crate::security::public_error(
+            "Esta pergunta está travada para palpite.",
+        ));
+    }
+    sqlx::query("DELETE FROM predictions WHERE pool_id=?1 AND user_id=?2 AND item_id=?3")
+        .bind(&pool_id)
+        .bind(&session.user_id)
+        .bind(&item_id)
+        .execute(db)
+        .await
+        .map_err(|e| crate::security::internal_error("remove_single_choice_prediction", e))?;
+    Ok(())
+}
 pub async fn list_custom_member_predictions(
     token: String,
     pool_id: String,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, CheckCircle2 } from "lucide-react";
-import { useSubmitCustomPrediction } from "@/hooks/queries";
+import { useRemoveCustomPrediction, useSubmitCustomPrediction } from "@/hooks/queries";
 import type { CustomQuestion } from "@/types";
 import { MotionCard } from "./ui/card";
 import { ErrorBanner } from "./ui/field";
@@ -9,6 +9,7 @@ import { OptionMediaActions } from "./OptionMediaActions";
 
 export function SingleChoicePredictionCard({ question, poolId, index, preview = false }: { question: CustomQuestion; poolId: string; index: number; preview?: boolean }) {
   const submit = useSubmitCustomPrediction();
+  const remove = useRemoveCustomPrediction();
   const [selected, setSelected] = useState(question.currentOptionId ?? "");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -35,6 +36,13 @@ export function SingleChoicePredictionCard({ question, poolId, index, preview = 
       setError(cause instanceof Error ? cause.message : "Não foi possível salvar o palpite.");
     }
   };
+  const clear = async () => {
+    if (locked || submit.isPending || remove.isPending || !selected) return;
+    setSelected(""); setError("");
+    if (preview) { setMessage("Prévia: opção desmarcada."); return; }
+    try { await remove.mutateAsync({ poolId, itemId: question.itemId }); setMessage("Opção desmarcada."); }
+    catch (cause) { setSelected(question.currentOptionId ?? ""); setError(cause instanceof Error ? cause.message : "Não foi possível desmarcar a opção."); }
+  };
 
   return (
     <MotionCard transition={{ delay: Math.min(index * 0.025, 0.25), duration: 0.25 }}>
@@ -56,7 +64,7 @@ export function SingleChoicePredictionCard({ question, poolId, index, preview = 
           return (
             <motion.div key={option.id} animate={{ scale: checked ? 1.012 : 1 }} transition={{ type: "spring", stiffness: 420, damping: 26 }} whileTap={locked ? undefined : { scale: 0.985 }} className={`rounded-xl border p-3 transition-colors ${checked ? "border-mint-dark bg-mint/15 shadow-sm" : "border-mint/20 bg-card/40 hover:border-mint/50 hover:bg-card/65"} ${locked ? "cursor-default opacity-80" : ""}`}>
               <label htmlFor={`${question.itemId}-${option.id}`} className="flex w-full cursor-pointer items-center gap-3 focus-within:outline-none focus-within:ring-2 focus-within:ring-mint-dark/50 focus-within:ring-offset-2 focus-within:ring-offset-surface">
-                <input id={`${question.itemId}-${option.id}`} className="sr-only" type="radio" name={question.itemId} checked={checked} disabled={locked || submit.isPending} onChange={() => choose(option.id)} />
+                <input id={`${question.itemId}-${option.id}`} className="sr-only" type="radio" name={question.itemId} checked={checked} disabled={locked || submit.isPending || remove.isPending} onClick={() => { if (checked) void clear(); }} onChange={() => choose(option.id)} />
                 <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-mint/15 text-xs font-bold text-mint-dark">
                   {optionIndex + 1}
                 </span>

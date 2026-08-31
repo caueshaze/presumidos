@@ -63,6 +63,13 @@ export function useSubmitCustomPrediction() {
     },
   });
 }
+export function useRemoveCustomPrediction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { poolId: string; itemId: string }) => api.post<void>("/custom/predictions/remove", vars),
+    onSuccess: (_data, vars) => updateCurrentCustomPrediction(qc, vars.poolId, vars.itemId, { currentOptionId: null }),
+  });
+}
 export function useSubmitNumericPrediction() {
   const qc = useQueryClient();
   return useMutation({
@@ -89,4 +96,3 @@ export function useSubmitMultipleChoicePrediction() {
       }),
   });
 }
-

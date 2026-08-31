@@ -16,7 +16,10 @@ pub use media::custom_prediction_value;
 #[cfg(feature = "server")]
 pub use media::{event_showcase, set_option_media_seen};
 #[cfg(feature = "server")]
-pub use predictions::{list_custom_member_predictions, submit_single_choice_prediction};
+pub use predictions::{
+    list_custom_member_predictions, remove_single_choice_prediction,
+    submit_single_choice_prediction,
+};
 #[cfg(test)]
 pub use results::set_correct_option;
 #[cfg(feature = "server")]

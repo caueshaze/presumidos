@@ -75,9 +75,7 @@ pub async fn list_custom_questions(
                 .bind(&item_id).fetch_all(db).await.map_err(|e| crate::security::internal_error("list_custom_options", e))?;
             let mut options = Vec::with_capacity(option_rows.len());
             for (id, label, sort_order, image_url, image_asset_id) in option_rows {
-                let links = sqlx::query_as::<_, (String,String,String,i64)>("SELECT kind,label,url,sort_order FROM option_links WHERE option_id=?1 ORDER BY sort_order,id")
-                    .bind(&id).fetch_all(db).await.map_err(|e| crate::security::internal_error("list_option_links", e))?
-                    .into_iter().map(|(kind,label,url,sort_order)| crate::models::OptionLink {kind,label,url,sort_order}).collect();
+                let links = crate::pools::effective_links(db, &pool_id, &id).await?;
                 let media_seen: (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM option_media_progress WHERE user_id=?1 AND option_id=?2)").bind(&session.user_id).bind(&id).fetch_one(db).await.map_err(|e| crate::security::internal_error("list_option_seen", e))?;
                 options.push(CustomQuestionOption {
                     id,

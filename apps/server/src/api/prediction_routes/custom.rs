@@ -14,6 +14,19 @@ pub(crate) async fn submit_single_choice_prediction(
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
+pub(crate) async fn remove_single_choice_prediction(
+    headers: HeaderMap,
+    Json(body): Json<PoolItemBody>,
+) -> ApiResult<StatusCode> {
+    crate::custom_questions::remove_single_choice_prediction(
+        String::new(),
+        body.pool_id,
+        body.item_id,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 pub(crate) async fn submit_numeric_prediction(
     headers: HeaderMap,
     Json(body): Json<NumericPredictionBody>,

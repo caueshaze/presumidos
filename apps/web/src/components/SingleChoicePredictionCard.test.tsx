@@ -61,6 +61,20 @@ describe("SingleChoicePredictionCard", () => {
     });
   });
 
+  it("removes a selected option while the question is open", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrfToken: "csrf" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderCard();
+    fireEvent.click(screen.getByRole("radio", { name: "Opção A" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/custom/predictions/remove");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ poolId: "pool-a", itemId: "category-1" });
+    await waitFor(() => expect((screen.getByRole("radio", { name: "Opção A" }) as HTMLInputElement).checked).toBe(false));
+  });
+
   it("is read-only after lock", () => {
     renderCard({ status: "locked" });
     expect(screen.getByRole("radio", { name: "Opção A" }).closest("fieldset")?.disabled).toBe(true);

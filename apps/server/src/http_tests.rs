@@ -91,6 +91,8 @@ mod case_39;
 mod case_40;
 #[path = "http_tests/case_41.rs"]
 mod case_41;
+#[path = "http_tests/case_42.rs"]
+mod case_42;
 
 #[path = "http_tests/packages.rs"]
 mod packages;

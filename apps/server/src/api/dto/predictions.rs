@@ -25,6 +25,12 @@ pub(crate) struct SingleChoicePredictionBody {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct PoolItemBody {
+    pub(crate) pool_id: String,
+    pub(crate) item_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct NumericPredictionBody {
     pub(crate) pool_id: String,
     pub(crate) item_id: String,

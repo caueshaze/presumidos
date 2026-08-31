@@ -7,6 +7,8 @@ import type {
   PoolReport,
   PublicPoolInvitePreview,
   PoolLifecycleState,
+  PoolEditorialConfig,
+  OptionLink,
   EventRecord,
 } from "@/types";
 
@@ -24,6 +26,32 @@ export function useDashboardPools() {
     queryKey: ["pools", "dashboard"],
     queryFn: () => api.get<PoolDashboardSummary[]>("/pools/dashboard"),
   });
+}
+
+function invalidatePoolEditorial(qc: ReturnType<typeof useQueryClient>, poolId: string) {
+  qc.invalidateQueries({ queryKey: ["pools"] });
+  qc.invalidateQueries({ queryKey: ["pools", "dashboard"] });
+  qc.invalidateQueries({ queryKey: ["pool-editorial", poolId] });
+  qc.invalidateQueries({ queryKey: ["custom-questions", poolId] });
+}
+
+export function usePoolEditorial(poolId: string | null) {
+  return useQuery({ queryKey: ["pool-editorial", poolId], queryFn: () => api.get<PoolEditorialConfig>(`/pools/${encodeURIComponent(poolId ?? "")}/editorial`), enabled: !!poolId });
+}
+
+export function useUpdatePoolEditorialName() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (vars: { poolId: string; name: string }) => api.post<void>(`/pools/${vars.poolId}/editorial/name`, { name: vars.name }), onSuccess: (_data, vars) => invalidatePoolEditorial(qc, vars.poolId) });
+}
+
+export function useReplacePoolOptionLinks() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (vars: { poolId: string; optionId: string; links: Omit<OptionLink, "sortOrder">[] }) => api.post<void>(`/pools/${vars.poolId}/editorial/options/${vars.optionId}/links`, { links: vars.links }), onSuccess: (_data, vars) => invalidatePoolEditorial(qc, vars.poolId) });
+}
+
+export function useResetPoolOptionLinks() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (vars: { poolId: string; optionId: string }) => api.post<void>(`/pools/${vars.poolId}/editorial/options/${vars.optionId}/links/reset`), onSuccess: (_data, vars) => invalidatePoolEditorial(qc, vars.poolId) });
 }
 
 export type MyEvent = {

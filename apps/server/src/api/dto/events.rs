@@ -9,6 +9,24 @@ pub(crate) struct CreatePoolBody {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct UpdatePoolNameBody {
+    pub(crate) name: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PoolEditorialLinkBody {
+    pub(crate) kind: String,
+    pub(crate) label: String,
+    pub(crate) url: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReplacePoolOptionLinksBody {
+    #[serde(default)]
+    pub(crate) links: Vec<PoolEditorialLinkBody>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CreateEventBody {
     pub(crate) name: String,
     pub(crate) starts_at: Option<String>,

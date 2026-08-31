@@ -67,6 +67,25 @@ pub struct PoolLifecycleState {
     pub closed_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolEditorialOption {
+    pub item_id: String,
+    pub item_title: String,
+    pub option_id: String,
+    pub option_label: String,
+    pub links: Vec<crate::models::OptionLink>,
+    pub is_customized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolEditorialConfig {
+    pub pool_id: String,
+    pub name: String,
+    pub options: Vec<PoolEditorialOption>,
+}
+
 /// Leitura compacta da página inicial. Mantém o Pool como fonte de verdade e
 /// agrega somente contadores pessoais que evitam uma requisição por card.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

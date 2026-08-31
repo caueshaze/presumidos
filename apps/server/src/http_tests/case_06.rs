@@ -92,6 +92,29 @@ async fn single_choice_is_a_real_prediction_without_match_and_respects_identity_
             .await
             .unwrap();
     assert_eq!(changed.0, options[1]);
+    let removed = client
+        .post(format!("{base}/api/custom/predictions/remove"))
+        .header("X-CSRF-Token", &csrf)
+        .json(&json!({"poolId":pool,"itemId":item}))
+        .send()
+        .await
+        .expect("desmarcar")
+        .status();
+    assert_eq!(removed.as_u16(), 204);
+    let after_remove: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM predictions WHERE pool_id=?1 AND user_id=?2 AND item_id=?3",
+    )
+    .bind(&pool)
+    .bind(&user)
+    .bind(&item)
+    .fetch_one(crate::db::pool())
+    .await
+    .unwrap();
+    assert_eq!(after_remove.0, 0);
+    assert_eq!(
+        submit(&options[1]).send().await.unwrap().status().as_u16(),
+        204
+    );
     assert!(!submit(&other_options[0])
         .send()
         .await

@@ -78,6 +78,8 @@ export interface CustomQuestionOption {
   mediaSeen?: boolean;
 }
 export interface OptionLink { kind: "video" | "audio" | "official" | "other"; label: string; url: string; sortOrder: number; }
+export interface PoolEditorialOption { itemId: string; itemTitle: string; optionId: string; optionLabel: string; links: OptionLink[]; isCustomized: boolean; }
+export interface PoolEditorialConfig { poolId: string; name: string; options: PoolEditorialOption[]; }
 export interface EventShowcase { name: string; description: string | null; coverUrl: string | null; coverAssetUrl?: string | null; externalUrl: string | null; startsAt: string | null; endsAt: string | null; itemCount: number; answeredCount: number; isHistorical: boolean; }
 export interface AssetResponse {
   assetId: string;

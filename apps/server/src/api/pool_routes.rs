@@ -70,6 +70,56 @@ pub(super) async fn close_pool(
     ))
 }
 
+pub(super) async fn pool_editorial(Path(pool_id): Path<String>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        crate::pools::editorial_config(String::new(), pool_id).await?,
+    ))
+}
+
+pub(super) async fn update_pool_editorial_name(
+    Path(pool_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<UpdatePoolNameBody>,
+) -> ApiResult<StatusCode> {
+    crate::pools::update_editorial_name(String::new(), pool_id, body.name, csrf_header(&headers))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(super) async fn replace_pool_option_links(
+    Path((pool_id, option_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<ReplacePoolOptionLinksBody>,
+) -> ApiResult<StatusCode> {
+    let links = body
+        .links
+        .into_iter()
+        .map(|link| crate::pools::PoolEditorialLinkInput {
+            kind: link.kind,
+            label: link.label,
+            url: link.url,
+        })
+        .collect();
+    crate::pools::replace_option_links(
+        String::new(),
+        pool_id,
+        option_id,
+        links,
+        csrf_header(&headers),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(super) async fn reset_pool_option_links(
+    Path((pool_id, option_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    crate::pools::reset_option_links(String::new(), pool_id, option_id, csrf_header(&headers))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub(super) async fn create_pool_report(
     Path(pool_id): Path<String>,
     headers: HeaderMap,
