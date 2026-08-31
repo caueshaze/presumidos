@@ -30,7 +30,7 @@ export function OptionMediaActions({ option, poolId }: { option: CustomQuestionO
       transition={{ type: "spring", stiffness: 380, damping: 24, mass: 0.55 }}
       className={`ml-auto inline-flex items-center gap-1.5 rounded-pill border px-2.5 py-1.5 font-semibold focus-visible:outline-none focus-visible:shadow-glow disabled:cursor-wait ${option.mediaSeen ? "border-mint-dark/50 text-mint-dark" : "border-mint/20 text-ink-muted hover:border-mint-dark/50 hover:text-mint-dark"}`}
     >
-      <AnimatePresence initial={false} mode="wait">
+      <AnimatePresence initial={false}>
         {option.mediaSeen ? (
           <motion.span key="seen" initial={{ opacity: 0, scale: 0.5, rotate: -20 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} exit={{ opacity: 0, scale: 0.5, rotate: 20 }} transition={{ type: "spring", stiffness: 500, damping: 22 }} className="flex items-center gap-1.5">
             <Check className="h-3.5 w-3.5" aria-hidden="true" />Visto
