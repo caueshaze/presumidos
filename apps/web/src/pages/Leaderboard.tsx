@@ -19,6 +19,7 @@ import { ErrorBanner } from "@/components/ui/field";
 import { AdjustmentPanels } from "./leaderboard/AdjustmentPanels";
 import { LeaderboardRanking } from "./leaderboard/LeaderboardRanking";
 import { ScoringInfoModal } from "./leaderboard/ScoringInfoModal";
+import { ReopenPoolAction } from "./pool-overview/ReopenPoolAction";
 
 export function LeaderboardPage() {
   const { user, isAdmin } = useAuth();
@@ -148,6 +149,7 @@ export function LeaderboardPage() {
         >
           <Info className="h-4 w-4" /> Como funciona a pontuação
         </Button>
+        {currentPool && currentPool.closedAt !== null && currentPool.createdBy === user?.id && <ReopenPoolAction poolId={currentPool.id} poolName={currentPool.name} />}
       </div>
       {pools.isLoading ? (
         <Card className="mt-6">
