@@ -73,9 +73,7 @@ export function CustomScoringRow({
         </div>
       ) : (
         <span className="text-sm text-ink-muted">
-          {question.status !== "open"
-            ? "Palpites encerrados; pontuação somente leitura."
-            : `${question.correctPoints} pts por acerto`}
+          Acerto {question.correctPoints} pts · Erro {question.incorrectPoints} pts
         </span>
       )}
     </div>

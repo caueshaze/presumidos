@@ -220,6 +220,14 @@ export function useClosePool() {
   });
 }
 
+export function useReopenPool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string) => api.post<PoolLifecycleState>(`/pools/${poolId}/reopen`),
+    onSuccess: (_data, poolId) => invalidatePoolLifecycle(qc, poolId),
+  });
+}
+
 export function useCreatePoolReport() {
   const qc = useQueryClient();
   return useMutation({

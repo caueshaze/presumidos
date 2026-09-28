@@ -71,6 +71,7 @@ export function App() {
             <Route path="/pools/:poolId" element={<AuthGuard><PoolOverviewPage /></AuthGuard>} />
             <Route path="/pools/:poolId/scoring" element={<AuthGuard><PoolScoringPage /></AuthGuard>} />
             <Route path="/pools/:poolId/leaderboard" element={<AuthGuard><LeaderboardPage /></AuthGuard>} />
+            <Route path="/pools/:poolId/members/:memberId" element={<AuthGuard><PoolPredictionsPage /></AuthGuard>} />
             <Route path="/pools/:poolId/members" element={<AuthGuard><PoolPredictionsPage /></AuthGuard>} />
             <Route
               path="/palpites-do-bolao"

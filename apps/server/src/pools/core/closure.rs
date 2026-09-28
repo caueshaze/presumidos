@@ -116,3 +116,49 @@ pub async fn close_pool(
         .map_err(|e| crate::security::internal_error("close_pool_commit", e))?;
     lifecycle_state(db, &pool_id).await
 }
+
+pub async fn reopen_pool(
+    token: String,
+    pool_id: String,
+    csrf: String,
+) -> Result<PoolLifecycleState, ServerFnError> {
+    let session = crate::auth::require_user(&token).await?;
+    crate::security::require_csrf(&session.csrf_token, &csrf)?;
+    crate::security::validate_uuid("Bolão", &pool_id)?;
+    let db = crate::db::pool();
+    let closed: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT closed_at FROM pools WHERE id=?1 AND created_by=?2")
+            .bind(&pool_id)
+            .bind(&session.user_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| crate::security::internal_error("reopen_pool_authorization", e))?;
+    let Some((closed_at,)) = closed else {
+        return Err(crate::security::public_error(
+            "Somente o dono do bolão pode reabri-lo.",
+        ));
+    };
+    if closed_at.is_none() {
+        return lifecycle_state(db, &pool_id).await;
+    }
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| crate::security::internal_error("reopen_pool_begin", e))?;
+    let changed =
+        sqlx::query("UPDATE pools SET closed_at=NULL WHERE id=?1 AND closed_at IS NOT NULL")
+            .bind(&pool_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::security::internal_error("reopen_pool_update", e))?;
+    if changed.rows_affected() == 1 {
+        sqlx::query("INSERT INTO audit_logs(id,actor_user_id,action,target_type,target_id,details_json) VALUES(?1,?2,'pool_reopened','pool',?3,?4)")
+            .bind(uuid::Uuid::new_v4().to_string()).bind(&session.user_id).bind(&pool_id)
+            .bind(serde_json::json!({"pool_id": pool_id}).to_string())
+            .execute(&mut *tx).await.map_err(|e| crate::security::internal_error("reopen_pool_audit", e))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| crate::security::internal_error("reopen_pool_commit", e))?;
+    lifecycle_state(db, &pool_id).await
+}

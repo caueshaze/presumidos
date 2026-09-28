@@ -11,6 +11,8 @@ mod auth_routes;
 mod custom_event_routes;
 mod dto;
 mod middleware;
+mod pool_admin_routes;
+mod pool_router;
 mod pool_routes;
 mod prediction_routes;
 mod routes;
@@ -24,6 +26,8 @@ use admin_routes::*;
 pub(crate) use auth_routes::*;
 pub(crate) use custom_event_routes::*;
 pub(crate) use dto::*;
+use pool_admin_routes::*;
+use pool_router::*;
 use pool_routes::*;
 use prediction_routes::*;
 

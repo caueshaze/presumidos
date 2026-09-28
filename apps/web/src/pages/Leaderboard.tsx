@@ -117,8 +117,8 @@ export function LeaderboardPage() {
     }
   };
   const openMemberPredictions = (userId: string) => {
-    const from = openedFromClosing ? "&from=closing" : "";
-    navigate(`/pools/${encodeURIComponent(selectedPool)}/members?memberId=${encodeURIComponent(userId)}${from}`);
+    const from = openedFromClosing ? "?from=closing" : "";
+    navigate(`/pools/${encodeURIComponent(selectedPool)}/members/${encodeURIComponent(userId)}${from}`);
   };
 
   return (

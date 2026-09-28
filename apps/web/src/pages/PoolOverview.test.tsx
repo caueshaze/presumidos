@@ -23,8 +23,8 @@ const pool = {
   description: "",
   visibleRules: "",
   joinClosedAt: null,
-  predictionsClosedAt: null,
-  closedAt: null,
+  predictionsClosedAt: null as string | null,
+  closedAt: null as string | null,
 };
 const reuseRefetch = vi.fn();
 const copyReuse = vi.fn();
@@ -44,6 +44,7 @@ vi.mock("@/hooks/queries", () => ({
   useCreatePoolReport: () => ({ mutateAsync: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
   useClosePoolPredictions: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useClosePool: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+  useReopenPool: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   usePredictionReuseSuggestion: () => ({ isFetching: false, data: null, refetch: reuseRefetch }),
   useCopyPredictionsReuse: () => ({ mutateAsync: copyReuse, isPending: false }),
   useStartPredictionsEmpty: () => ({ mutateAsync: startEmpty, isPending: false }),
@@ -111,6 +112,16 @@ it("allows the event creator to close predictions without pool-owner actions", (
   expect(screen.queryByRole("menuitem", { name: "Personalizar bolão" })).toBeNull();
   expect(screen.queryByRole("menuitem", { name: /Excluir bolão/ })).toBeNull();
   pool.createdBy = "user-1";
+});
+
+it("offers reopening only to the pool owner after final closure", () => {
+  pool.predictionsClosedAt = "2026-09-27T12:00:00Z";
+  pool.closedAt = "2026-09-27T12:00:00Z";
+  renderOverview();
+  fireEvent.click(screen.getByRole("button", { name: "Opções" }));
+  expect(screen.getByRole("menuitem", { name: "Reabrir bolão" })).toBeTruthy();
+  pool.predictionsClosedAt = null;
+  pool.closedAt = null;
 });
 
 it("offers a one-time copy only after Palpitar and explains independence", async () => {

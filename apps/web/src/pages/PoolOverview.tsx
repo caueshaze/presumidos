@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpenText, ClipboardCheck, Flag, LogOut, MoreHorizontal, Share2, Trash2, Trophy, Users } from "lucide-react";
+import { ArrowRight, BookOpenText, ClipboardCheck, Flag, LogOut, MoreHorizontal, RotateCcw, Share2, Trash2, Trophy, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate, useParams } from "react-router-dom";
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorBanner } from "@/components/ui/field";
 import { useAuth } from "@/hooks/useAuth";
-import { useClosePool, useClosePoolPredictions, useCopyPredictionsReuse, useCreatePoolReport, useDashboardPools, useDeletePool, useEventShowcase, useLeavePool, useLeaderboard, usePools, usePredictionReuseSuggestion, useStartPredictionsEmpty } from "@/hooks/queries";
+import { useClosePool, useClosePoolPredictions, useCopyPredictionsReuse, useCreatePoolReport, useDashboardPools, useDeletePool, useEventShowcase, useLeavePool, useLeaderboard, usePools, usePredictionReuseSuggestion, useReopenPool, useStartPredictionsEmpty } from "@/hooks/queries";
 import type { PoolReportCategory, PredictionReuseSuggestion } from "@/types";
 
 import { PoolActionModal, type PoolAction } from "./pool-overview/PoolActionModal";
@@ -36,6 +36,7 @@ export function PoolOverviewPage() {
   const createReport = useCreatePoolReport();
   const closePredictions = useClosePoolPredictions();
   const closePool = useClosePool();
+  const reopenPool = useReopenPool();
   const reuseSuggestion = usePredictionReuseSuggestion(poolId || null);
   const copyPredictions = useCopyPredictionsReuse();
   const startEmpty = useStartPredictionsEmpty();
@@ -78,7 +79,7 @@ export function PoolOverviewPage() {
   const canShare = typeof navigator !== "undefined" && "share" in navigator;
   const owner = user?.id === pool.createdBy;
   const canManageEventResults = owner || isAdmin;
-  const actionError = action === "report" ? (createReport.error instanceof Error ? createReport.error.message : "") : action === "leave" ? (leavePool.error instanceof Error ? leavePool.error.message : "") : action === "delete" ? (deletePool.error instanceof Error ? deletePool.error.message : "") : action === "closePredictions" ? (closePredictions.error instanceof Error ? closePredictions.error.message : "") : action === "close" ? (closePool.error instanceof Error ? closePool.error.message : "") : "";
+  const actionError = action === "report" ? (createReport.error instanceof Error ? createReport.error.message : "") : action === "leave" ? (leavePool.error instanceof Error ? leavePool.error.message : "") : action === "delete" ? (deletePool.error instanceof Error ? deletePool.error.message : "") : action === "closePredictions" ? (closePredictions.error instanceof Error ? closePredictions.error.message : "") : action === "close" ? (closePool.error instanceof Error ? closePool.error.message : "") : action === "reopen" ? (reopenPool.error instanceof Error ? reopenPool.error.message : "") : "";
 
   const copyShareValue = async (value: string, target: "link" | "code") => {
     try {
@@ -136,6 +137,7 @@ export function PoolOverviewPage() {
   };
   const handleClosePredictions = async () => { try { await closePredictions.mutateAsync(pool.id); setAction(null); } catch {} };
   const handleClosePool = async () => { try { await closePool.mutateAsync(pool.id); setAction(null); } catch {} };
+  const handleReopenPool = async () => { try { await reopenPool.mutateAsync(pool.id); setAction(null); } catch {} };
 
   const handleReport = async () => {
     try {
@@ -218,6 +220,7 @@ export function PoolOverviewPage() {
             {owner && !predictionsClosed && !historical && <button type="button" role="menuitem" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-ink transition-colors hover:bg-mint/10" onClick={() => navigate(`/pools/${pool.id}/editorial`)}><BookOpenText className="h-4 w-4 text-mint-dark" />Personalizar bolão</button>}
             {pool.canClosePredictions && !predictionsClosed && !historical && <button type="button" role="menuitem" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-ink transition-colors hover:bg-mint/10" onClick={() => openAction("closePredictions")}><ClipboardCheck className="h-4 w-4 text-yellow-dark" />Encerrar palpites</button>}
             {owner && predictionsClosed && !historical && <button type="button" role="menuitem" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-ink transition-colors hover:bg-mint/10" onClick={() => openAction("close")}><Trophy className="h-4 w-4 text-yellow-dark" />Encerrar bolão</button>}
+            {owner && pool.closedAt !== null && <button type="button" role="menuitem" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-ink transition-colors hover:bg-mint/10" onClick={() => openAction("reopen")}><RotateCcw className="h-4 w-4 text-mint-dark" />Reabrir bolão</button>}
             {owner ? <button type="button" role="menuitem" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-danger transition-colors hover:bg-danger-bg" onClick={() => openAction("delete")}><Trash2 className="h-4 w-4" />Excluir bolão</button> : <button type="button" role="menuitem" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-ink transition-colors hover:bg-mint/10" onClick={() => openAction("leave")}><LogOut className="h-4 w-4 text-mint-dark" />Sair do bolão</button>}
           </div>}
         </div>
@@ -225,6 +228,6 @@ export function PoolOverviewPage() {
     </Card>
     {shareModalOpen && !historical && <PoolShareModal inviteUrl={inviteUrl} inviteCode={pool.inviteCode} poolName={pool.name} copied={copied} canShare={canShare} onCopy={(value, target) => void copyShareValue(value, target)} onShare={() => void shareInvite()} onClose={() => setShareModalOpen(false)} />}
     {reuseModalOpen && reuseOffer?.available && <PredictionReuseModal suggestion={reuseOffer} pending={copyPredictions.isPending || startEmpty.isPending} error={reuseError} onCopy={() => void reusePredictions()} onStartEmpty={() => void beginEmpty()} onClose={() => setReuseModalOpen(false)} />}
-    {action && <PoolActionModal action={action} poolName={pool.name} reportCategory={reportCategory} reportDetails={reportDetails} reportPending={createReport.isPending} actionPending={leavePool.isPending || deletePool.isPending || closePredictions.isPending || closePool.isPending} error={actionError} onCategoryChange={setReportCategory} onDetailsChange={setReportDetails} onReport={() => void handleReport()} onLeave={() => void handleLeave()} onDelete={() => void handleDelete()} onClosePredictions={() => void handleClosePredictions()} onClosePool={() => void handleClosePool()} onClose={() => setAction(null)} />}
+    {action && <PoolActionModal action={action} poolName={pool.name} reportCategory={reportCategory} reportDetails={reportDetails} reportPending={createReport.isPending} actionPending={leavePool.isPending || deletePool.isPending || closePredictions.isPending || closePool.isPending || reopenPool.isPending} error={actionError} onCategoryChange={setReportCategory} onDetailsChange={setReportDetails} onReport={() => void handleReport()} onLeave={() => void handleLeave()} onDelete={() => void handleDelete()} onClosePredictions={() => void handleClosePredictions()} onClosePool={() => void handleClosePool()} onReopenPool={() => void handleReopenPool()} onClose={() => setAction(null)} />}
   </PageShell>;
 }

@@ -9,7 +9,7 @@ import { initials, PredictionDetail } from "./PredictionDetail";
 
 export function FootballPredictionsView({ context }: { context: Record<string, any> }) {
   const { pools, user, navigate, selectedPool, setSelectedPool, members, matches, entries,
-    selectedMember, selectedMemberScore, correctPercentage, setSelectedMemberId, openedFromClosing,
+    selectedMember, selectedMemberScore, correctPercentage,
     matchIdParam, matchById, breakdownByKey, reactToPrediction, openReactionMatchId,
     setOpenReactionMatchId, showPoolSelector, currentPool } = context;
   return (
@@ -68,7 +68,7 @@ export function FootballPredictionsView({ context }: { context: Record<string, a
               <div>
                 <button
                   type="button"
-                  onClick={() => navigate(`/pools/${encodeURIComponent(selectedPool)}/leaderboard${openedFromClosing ? "?from=closing" : ""}`)}
+                    onClick={() => navigate(`/pools/${encodeURIComponent(selectedPool)}/members`)}
                   className="mb-4 inline-flex items-center gap-1 text-sm font-semibold text-ink-muted transition-colors hover:text-ink"
                 >
                   <ChevronLeft className="h-4 w-4" /> Voltar
@@ -169,7 +169,7 @@ export function FootballPredictionsView({ context }: { context: Record<string, a
                   <motion.button
                     key={member.userId}
                     type="button"
-                    onClick={() => setSelectedMemberId(member.userId)}
+                    onClick={() => navigate(`/pools/${encodeURIComponent(selectedPool)}/members/${encodeURIComponent(member.userId)}`)}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.05, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}

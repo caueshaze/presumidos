@@ -13,11 +13,11 @@ import { FootballPredictionsView } from "./pool-predictions/FootballPredictionsV
 export function PoolPredictionsPage() {
   const pools = usePools();
   const { user } = useAuth();
-  const { poolId: routePoolId } = useParams();
+  const { poolId: routePoolId, memberId: routeMemberId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const poolIdParam = routePoolId ?? searchParams.get("poolId");
-  const memberIdParam = searchParams.get("memberId");
+  const memberIdParam = routeMemberId ?? searchParams.get("memberId");
   const matchIdParam = searchParams.get("matchId");
   const openedFromClosing = searchParams.get("from") === "closing";
   const [selectedPool, setSelectedPool] = useState("");
@@ -62,11 +62,12 @@ export function PoolPredictionsPage() {
   const entries: MemberPredictions[] = members.data ?? [];
 
   useEffect(() => {
-    if (selectedMemberId || !memberIdParam || entries.length === 0) return;
-    if (entries.some((entry) => entry.userId === memberIdParam)) {
-      setSelectedMemberId(memberIdParam);
-    }
-  }, [entries, memberIdParam, selectedMemberId]);
+    setSelectedMemberId(
+      memberIdParam && entries.some((entry) => entry.userId === memberIdParam)
+        ? memberIdParam
+        : null,
+    );
+  }, [entries, memberIdParam]);
 
   useEffect(() => {
     setOpenReactionMatchId(null);
