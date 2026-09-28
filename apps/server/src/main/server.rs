@@ -13,9 +13,18 @@ pub(crate) fn bind_address() -> std::net::SocketAddr {
         .expect("LISTEN_ADDRESS inválido para bind do servidor")
 }
 
+fn spa_response(index_html: String) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let mut response = axum::response::Html(index_html).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
 pub async fn serve_application() {
     use axum::extract::DefaultBodyLimit;
-    use axum::response::Html;
     use axum::routing::{get, get_service};
     use axum::Router;
     use std::net::SocketAddr;
@@ -75,7 +84,7 @@ pub async fn serve_application() {
     let spa_index_html = index_html.clone();
     let spa_fallback = move || {
         let index_html = spa_index_html.clone();
-        async move { Html(index_html.to_string()) }
+        async move { spa_response(index_html.to_string()) }
     };
     let invite_page = {
         let index_html = index_html.clone();
@@ -131,6 +140,10 @@ pub async fn serve_application() {
             "/sw.js",
             get_service(ServeFile::new(format!("{dir}/sw.js"))),
         )
+        .route_service(
+            "/bootstrap.js",
+            get_service(ServeFile::new(format!("{dir}/bootstrap.js"))),
+        )
         .fallback(spa_fallback)
         .layer(DefaultBodyLimit::max(
             crate::config::settings().max_body_bytes,
@@ -151,4 +164,16 @@ pub async fn serve_application() {
     .with_graceful_shutdown(shutdown::shutdown_signal())
     .await
     .expect("falha ao servir aplicacao");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn spa_html_is_never_cached_across_deploys() {
+        let response = super::spa_response("<html></html>".to_string());
+        assert_eq!(
+            response.headers().get(axum::http::header::CACHE_CONTROL),
+            Some(&axum::http::HeaderValue::from_static("no-store"))
+        );
+    }
 }
