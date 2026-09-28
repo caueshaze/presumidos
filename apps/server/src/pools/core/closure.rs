@@ -28,7 +28,7 @@ pub async fn close_predictions(
     let eligible: Option<(Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT p.predictions_closed_at,p.closed_at FROM pools p
          JOIN events e ON e.id=p.event_id
-         WHERE p.id=?1 AND p.created_by=?2 AND e.created_by=?2 AND e.kind='custom'",
+         WHERE p.id=?1 AND (p.created_by=?2 OR e.created_by=?2) AND e.kind='custom'",
     )
     .bind(&pool_id)
     .bind(&session.user_id)
@@ -37,7 +37,7 @@ pub async fn close_predictions(
     .map_err(|e| crate::security::internal_error("close_pool_predictions_authorization", e))?;
     let Some((already_closed, closed_at)) = eligible else {
         return Err(crate::security::public_error(
-            "Somente quem criou este evento e bolão pode encerrar os palpites.",
+            "Somente quem criou este evento ou bolão pode encerrar os palpites.",
         ));
     };
     if closed_at.is_some() || already_closed.is_some() {

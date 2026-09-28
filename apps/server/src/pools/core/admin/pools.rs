@@ -60,6 +60,7 @@ pub async fn list_all_pools_admin(token: String) -> Result<Vec<PoolSummary>, Ser
                 invite_code,
                 member_count,
                 created_by,
+                can_close_predictions: false,
                 description,
                 visible_rules,
                 join_closed_at,

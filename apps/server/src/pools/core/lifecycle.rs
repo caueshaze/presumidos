@@ -74,6 +74,7 @@ pub async fn create_pool_for_event(
             .fetch_one(db)
             .await
             .map_err(|e| crate::security::internal_error("create_pool_event", e))?;
+    let can_close_predictions = event.2 == "custom";
     Ok(PoolSummary {
         id: pool_id,
         event_id: event_id.clone(),
@@ -82,6 +83,7 @@ pub async fn create_pool_for_event(
         invite_code,
         member_count: 1,
         created_by: session.user_id,
+        can_close_predictions,
         description: String::new(),
         visible_rules: String::new(),
         join_closed_at: None,
@@ -189,6 +191,15 @@ pub async fn join_pool(
             .fetch_one(db)
             .await
             .map_err(|e| crate::security::internal_error("join_pool_count_members", e))?;
+    let event_owner: (i64,) = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM events WHERE id=?1 AND created_by=?2 AND kind='custom')",
+    )
+    .bind(&invite.event_id)
+    .bind(&session.user_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| crate::security::internal_error("join_pool_close_capability", e))?;
+    let can_close_predictions = invite.created_by == session.user_id || event_owner.0 != 0;
 
     Ok(PoolSummary {
         id: invite.pool_id,
@@ -205,6 +216,7 @@ pub async fn join_pool(
         invite_code,
         member_count: member_count.0,
         created_by: invite.created_by,
+        can_close_predictions,
         description: invite.description,
         visible_rules: invite.visible_rules,
         join_closed_at: invite.join_closed_at,

@@ -19,6 +19,7 @@ const pool = {
   inviteCode: "3A44F6",
   memberCount: 4,
   createdBy: "user-1",
+  canClosePredictions: true,
   description: "",
   visibleRules: "",
   joinClosedAt: null,
@@ -91,10 +92,23 @@ it("opens one sharing modal with the invite link and code", async () => {
 
 it("shows leaving to participants instead of pool deletion", () => {
   pool.createdBy = "owner-2";
+  pool.canClosePredictions = false;
   renderOverview();
   fireEvent.click(screen.getByRole("button", { name: "Opções" }));
   expect(screen.queryByRole("menuitem", { name: "Personalizar bolão" })).toBeNull();
   expect(screen.getByRole("menuitem", { name: /Sair do bolão/ })).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: /Excluir bolão/ })).toBeNull();
+  pool.createdBy = "user-1";
+  pool.canClosePredictions = true;
+});
+
+it("allows the event creator to close predictions without pool-owner actions", () => {
+  pool.createdBy = "owner-2";
+  pool.canClosePredictions = true;
+  renderOverview();
+  fireEvent.click(screen.getByRole("button", { name: "Opções" }));
+  expect(screen.getByRole("menuitem", { name: "Encerrar palpites" })).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: "Personalizar bolão" })).toBeNull();
   expect(screen.queryByRole("menuitem", { name: /Excluir bolão/ })).toBeNull();
   pool.createdBy = "user-1";
 });

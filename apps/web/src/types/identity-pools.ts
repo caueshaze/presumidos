@@ -26,6 +26,7 @@ export interface PoolSummary {
   inviteCode: string;
   memberCount: number;
   createdBy: string;
+  canClosePredictions: boolean;
   description: string;
   visibleRules: string;
   joinClosedAt: string | null;

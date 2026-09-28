@@ -13,6 +13,8 @@ pub struct PoolSummary {
     pub member_count: i64,
     /// Id do usuário que criou o bolão (organizador).
     pub created_by: String,
+    /// Capability calculada para a sessão atual; não expõe o dono do evento.
+    pub can_close_predictions: bool,
     pub description: String,
     pub visible_rules: String,
     pub join_closed_at: Option<String>,

@@ -130,6 +130,7 @@ pub async fn list_user_pools(
                 invite_code,
                 member_count,
                 created_by,
+                can_close_predictions: false,
                 description,
                 visible_rules,
                 join_closed_at,

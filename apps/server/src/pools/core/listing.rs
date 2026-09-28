@@ -27,6 +27,14 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
     .fetch_all(pool())
     .await
     .map_err(|e| crate::security::internal_error("list_my_pools", e))?;
+    let closable_event_ids: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT id FROM events WHERE created_by=?1 AND kind='custom'")
+            .bind(&session.user_id)
+            .fetch_all(pool())
+            .await
+            .map_err(|e| crate::security::internal_error("list_my_pools_capabilities", e))?
+            .into_iter()
+            .collect();
 
     Ok(rows
         .into_iter()
@@ -48,26 +56,31 @@ pub async fn list_my_pools(token: String) -> Result<Vec<PoolSummary>, ServerFnEr
                 event_kind,
                 event_status,
                 event_ends_at,
-            )| PoolSummary {
-                id,
-                event_id: event_id.clone(),
-                event: event_summary(
-                    event_id.clone(),
-                    event_name,
-                    event_slug,
-                    event_kind,
-                    event_status,
-                    event_ends_at,
-                ),
-                name,
-                invite_code,
-                member_count,
-                created_by,
-                description,
-                visible_rules,
-                join_closed_at,
-                predictions_closed_at,
-                closed_at,
+            )| {
+                let can_close_predictions = event_kind == "custom"
+                    && (created_by == session.user_id || closable_event_ids.contains(&event_id));
+                PoolSummary {
+                    id,
+                    event_id: event_id.clone(),
+                    event: event_summary(
+                        event_id.clone(),
+                        event_name,
+                        event_slug,
+                        event_kind,
+                        event_status,
+                        event_ends_at,
+                    ),
+                    name,
+                    invite_code,
+                    member_count,
+                    created_by,
+                    can_close_predictions,
+                    description,
+                    visible_rules,
+                    join_closed_at,
+                    predictions_closed_at,
+                    closed_at,
+                }
             },
         )
         .collect())
@@ -97,6 +110,14 @@ pub async fn dashboard_pools(token: String) -> Result<Vec<PoolDashboardSummary>,
     .fetch_all(crate::db::pool())
     .await
     .map_err(|e| crate::security::internal_error("dashboard_pools", e))?;
+    let closable_event_ids: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT id FROM events WHERE created_by=?1 AND kind='custom'")
+            .bind(&session.user_id)
+            .fetch_all(crate::db::pool())
+            .await
+            .map_err(|e| crate::security::internal_error("dashboard_pools_capabilities", e))?
+            .into_iter()
+            .collect();
     Ok(rows
         .into_iter()
         .map(
@@ -117,30 +138,35 @@ pub async fn dashboard_pools(token: String) -> Result<Vec<PoolDashboardSummary>,
                 event_ends_at,
                 answered_count,
                 item_count,
-            )| PoolDashboardSummary {
-                pool: PoolSummary {
-                    id,
-                    event_id: event_id.clone(),
-                    event: event_summary(
-                        event_id,
-                        event_name,
-                        event_slug,
-                        event_kind,
-                        event_status,
-                        event_ends_at,
-                    ),
-                    name,
-                    invite_code,
-                    member_count,
-                    created_by,
-                    description: String::new(),
-                    visible_rules: String::new(),
-                    join_closed_at,
-                    predictions_closed_at,
-                    closed_at,
-                },
-                answered_count,
-                item_count,
+            )| {
+                let can_close_predictions = event_kind == "custom"
+                    && (created_by == session.user_id || closable_event_ids.contains(&event_id));
+                PoolDashboardSummary {
+                    pool: PoolSummary {
+                        id,
+                        event_id: event_id.clone(),
+                        event: event_summary(
+                            event_id,
+                            event_name,
+                            event_slug,
+                            event_kind,
+                            event_status,
+                            event_ends_at,
+                        ),
+                        name,
+                        invite_code,
+                        member_count,
+                        created_by,
+                        can_close_predictions,
+                        description: String::new(),
+                        visible_rules: String::new(),
+                        join_closed_at,
+                        predictions_closed_at,
+                        closed_at,
+                    },
+                    answered_count,
+                    item_count,
+                }
             },
         )
         .collect())
