@@ -20,6 +20,7 @@ pub struct PoolSummary {
     pub join_closed_at: Option<String>,
     pub predictions_closed_at: Option<String>,
     pub closed_at: Option<String>,
+    pub reopened_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -67,6 +68,7 @@ pub struct PublicPoolInvitePreview {
 pub struct PoolLifecycleState {
     pub predictions_closed_at: Option<String>,
     pub closed_at: Option<String>,
+    pub reopened_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

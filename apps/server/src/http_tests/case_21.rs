@@ -40,3 +40,44 @@ async fn login_sets_session_cookie_and_current_user_works() {
     assert_eq!(user.email, email);
     assert_eq!(session.csrf_token, auth_result.csrf_token);
 }
+
+#[tokio::test]
+async fn logging_in_on_another_device_keeps_the_first_session_active() {
+    let base = test_server().await;
+    let suffix = uuid::Uuid::new_v4();
+    let email = format!("multi-session-{suffix}@teste.com");
+    seed_user(
+        &format!("multi-session-{suffix}"),
+        &email,
+        "senha-correta-123",
+        false,
+    )
+    .await;
+    let first_device = client();
+    let second_device = client();
+
+    assert!(login(&first_device, base, &email, "senha-correta-123")
+        .await
+        .status()
+        .is_success());
+    assert!(login(&second_device, base, &email, "senha-correta-123")
+        .await
+        .status()
+        .is_success());
+
+    let first_session: SessionState = first_device
+        .get(format!("{base}/api/auth/current-user"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        first_session
+            .user
+            .expect("primeiro dispositivo continua logado")
+            .email,
+        email
+    );
+}

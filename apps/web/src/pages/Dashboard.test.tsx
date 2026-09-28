@@ -14,12 +14,12 @@ vi.mock("@/hooks/queries", () => ({
     isError: false,
     data: [
       {
-        pool: { id: "active", name: "Bolão atual", inviteCode: "AB12CD", memberCount: 3, createdBy: "me", event: { id: "event-a", name: "Evento atual", slug: "atual", kind: "custom", status: "active", endsAt: "2099-01-01T00:00:00Z", isHistorical: false }, eventId: "event-a", description: "", visibleRules: "", joinClosedAt: null },
+        pool: { id: "active", name: "Bolão atual", inviteCode: "AB12CD", memberCount: 3, createdBy: "me", event: { id: "event-a", name: "Evento atual", slug: "atual", kind: "custom", status: "active", endsAt: "2099-01-01T00:00:00Z", isHistorical: false }, eventId: "event-a", description: "", visibleRules: "", joinClosedAt: null, closedAt: null, reopenedAt: null },
         answeredCount: 2,
         itemCount: 4,
       },
       {
-        pool: { id: "history", name: "Copa da família", inviteCode: "EF34GH", memberCount: 6, createdBy: "me", event: { id: "event-b", name: "Copa do Mundo FIFA 2026", slug: "copa", kind: "football", status: "finished", endsAt: "2026-07-19T19:00:00Z", isHistorical: true }, eventId: "event-b", description: "", visibleRules: "", joinClosedAt: null },
+        pool: { id: "history", name: "Copa da família", inviteCode: "EF34GH", memberCount: 6, createdBy: "me", event: { id: "event-b", name: "Copa do Mundo FIFA 2026", slug: "copa", kind: "football", status: "finished", endsAt: "2026-07-19T19:00:00Z", isHistorical: true }, eventId: "event-b", description: "", visibleRules: "", joinClosedAt: null, closedAt: null, reopenedAt: null },
         answeredCount: 4,
         itemCount: 4,
       },

@@ -25,6 +25,7 @@ const pool = {
   joinClosedAt: null,
   predictionsClosedAt: null as string | null,
   closedAt: null as string | null,
+  reopenedAt: null as string | null,
 };
 const reuseRefetch = vi.fn();
 const copyReuse = vi.fn();
@@ -121,6 +122,13 @@ it("offers reopening only to the pool owner after final closure", () => {
   expect(screen.getByRole("button", { name: "Reabrir bolão" })).toBeTruthy();
   pool.predictionsClosedAt = null;
   pool.closedAt = null;
+});
+
+it("offers reactivation to the owner when the event put the pool in history", () => {
+  pool.event.isHistorical = true;
+  renderOverview();
+  expect(screen.getByRole("button", { name: "Reabrir bolão" })).toBeTruthy();
+  pool.event.isHistorical = false;
 });
 
 it("offers a one-time copy only after Palpitar and explains independence", async () => {

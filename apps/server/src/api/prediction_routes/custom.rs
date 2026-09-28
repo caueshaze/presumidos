@@ -70,7 +70,6 @@ pub(crate) async fn set_multiple_choice_result(
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
-
 pub(crate) async fn mark_custom_result_not_representable(
     Path(item_id): Path<String>,
     headers: HeaderMap,
@@ -86,7 +85,6 @@ pub(crate) async fn mark_custom_result_not_representable(
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
-
 pub(crate) async fn custom_questions(
     Query(query): Query<CustomQuestionsQuery>,
 ) -> ApiResult<impl IntoResponse> {
@@ -94,7 +92,6 @@ pub(crate) async fn custom_questions(
         crate::custom_questions::list_custom_questions(String::new(), query.pool_id).await?,
     ))
 }
-
 pub(crate) async fn custom_event_showcase(
     Query(query): Query<PoolIdQuery>,
 ) -> ApiResult<impl IntoResponse> {
@@ -102,7 +99,6 @@ pub(crate) async fn custom_event_showcase(
         crate::custom_questions::event_showcase(String::new(), query.pool_id).await?,
     ))
 }
-
 pub(crate) async fn update_option_media_progress(
     headers: HeaderMap,
     Json(body): Json<OptionMediaProgressBody>,
@@ -117,7 +113,6 @@ pub(crate) async fn update_option_media_progress(
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
-
 pub(crate) async fn custom_member_predictions(
     Path(pool_id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {

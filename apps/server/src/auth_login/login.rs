@@ -123,7 +123,6 @@ pub async fn login(username: String, password: String) -> Result<AuthResult, Ser
         }
     }
 
-    invalidate_user_sessions(db, &id).await?;
     let session = create_session(db, &id).await?;
     crate::security::set_session_cookie(&session.token);
 

@@ -4,8 +4,8 @@ async fn lifecycle_state(
     db: &sqlx::SqlitePool,
     pool_id: &str,
 ) -> Result<PoolLifecycleState, ServerFnError> {
-    let row: (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT predictions_closed_at,closed_at FROM pools WHERE id=?1")
+    let row: (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT predictions_closed_at,closed_at,reopened_at FROM pools WHERE id=?1")
             .bind(pool_id)
             .fetch_one(db)
             .await
@@ -13,6 +13,7 @@ async fn lifecycle_state(
     Ok(PoolLifecycleState {
         predictions_closed_at: row.0,
         closed_at: row.1,
+        reopened_at: row.2,
     })
 }
 
@@ -103,7 +104,7 @@ pub async fn close_pool(
         .begin()
         .await
         .map_err(|e| crate::security::internal_error("close_pool_begin", e))?;
-    let changed = sqlx::query("UPDATE pools SET closed_at=datetime('now'),join_closed_at=COALESCE(join_closed_at,datetime('now')) WHERE id=?1 AND closed_at IS NULL")
+    let changed = sqlx::query("UPDATE pools SET closed_at=datetime('now'),reopened_at=NULL,join_closed_at=COALESCE(join_closed_at,datetime('now')) WHERE id=?1 AND closed_at IS NULL")
         .bind(&pool_id).execute(&mut *tx).await.map_err(|e| crate::security::internal_error("close_pool_update", e))?;
     if changed.rows_affected() == 1 {
         sqlx::query("INSERT INTO audit_logs(id,actor_user_id,action,target_type,target_id,details_json) VALUES(?1,?2,'pool_closed','pool',?3,?4)")
@@ -126,28 +127,35 @@ pub async fn reopen_pool(
     crate::security::require_csrf(&session.csrf_token, &csrf)?;
     crate::security::validate_uuid("Bolão", &pool_id)?;
     let db = crate::db::pool();
-    let closed: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT closed_at FROM pools WHERE id=?1 AND created_by=?2")
+    let state: Option<(Option<String>, Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT p.closed_at,p.reopened_at,e.status,e.ends_at FROM pools p JOIN events e ON e.id=p.event_id WHERE p.id=?1 AND p.created_by=?2",
+    )
             .bind(&pool_id)
             .bind(&session.user_id)
             .fetch_optional(db)
             .await
             .map_err(|e| crate::security::internal_error("reopen_pool_authorization", e))?;
-    let Some((closed_at,)) = closed else {
+    let Some((closed_at, reopened_at, event_status, event_ends_at)) = state else {
         return Err(crate::security::public_error(
             "Somente o dono do bolão pode reabri-lo.",
         ));
     };
-    if closed_at.is_none() {
+    let event_ended = event_status == "finished"
+        || event_ends_at
+            .as_deref()
+            .is_some_and(super::timestamp_elapsed);
+    if closed_at.is_none() && (!event_ended || reopened_at.is_some()) {
         return lifecycle_state(db, &pool_id).await;
     }
     let mut tx = db
         .begin()
         .await
         .map_err(|e| crate::security::internal_error("reopen_pool_begin", e))?;
-    let changed =
-        sqlx::query("UPDATE pools SET closed_at=NULL WHERE id=?1 AND closed_at IS NOT NULL")
+    let changed = sqlx::query(
+        "UPDATE pools SET closed_at=NULL,reopened_at=datetime('now'),predictions_closed_at=COALESCE(predictions_closed_at,datetime('now')),join_closed_at=COALESCE(join_closed_at,datetime('now')) WHERE id=?1 AND created_by=?2 AND (closed_at IS NOT NULL OR reopened_at IS NULL)",
+    )
             .bind(&pool_id)
+            .bind(&session.user_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| crate::security::internal_error("reopen_pool_update", e))?;

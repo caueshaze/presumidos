@@ -1,4 +1,4 @@
-import type { EventSummary } from "@/types";
+import type { EventSummary, PoolSummary } from "@/types";
 
 /** A única tradução de lifecycle de domínio para linguagem da interface. */
 export type PresentationStatus = "draft" | "published" | "active" | "locked" | "finished";
@@ -9,9 +9,13 @@ export function eventPresentationStatus(event: Pick<EventSummary, "status" | "is
   return "published";
 }
 
-export function poolPresentationStatus(event: Pick<EventSummary, "status" | "isHistorical">, allPredictionsLocked = false): PresentationStatus {
-  if (event.isHistorical || event.status === "finished") return "finished";
+export function poolPresentationStatus(pool: Pick<PoolSummary, "closedAt" | "reopenedAt" | "event">, allPredictionsLocked = false): PresentationStatus {
+  if (isPoolHistorical(pool)) return "finished";
   return allPredictionsLocked ? "locked" : "active";
+}
+
+export function isPoolHistorical(pool: Pick<PoolSummary, "closedAt" | "reopenedAt" | "event">): boolean {
+  return pool.closedAt !== null || (pool.event.isHistorical && pool.reopenedAt === null);
 }
 
 export const presentationStatusLabel: Record<PresentationStatus, string> = {

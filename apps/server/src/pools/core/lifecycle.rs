@@ -89,6 +89,7 @@ pub async fn create_pool_for_event(
         join_closed_at: None,
         predictions_closed_at: None,
         closed_at: None,
+        reopened_at: None,
     })
 }
 
@@ -222,6 +223,7 @@ pub async fn join_pool(
         join_closed_at: invite.join_closed_at,
         predictions_closed_at: invite.predictions_closed_at,
         closed_at: invite.closed_at,
+        reopened_at: None,
     })
 }
 

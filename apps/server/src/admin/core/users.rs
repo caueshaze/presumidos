@@ -59,31 +59,11 @@ pub async fn list_user_pools(
     crate::security::validate_uuid("Usuario", &user_id)?;
     require_admin(&token).await?;
     let db = crate::db::pool();
-    let rows = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            String,
-            String,
-            i64,
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-        ),
-    >(
+    let rows: Vec<crate::pools::PoolSummaryRow> = sqlx::query_as(
         "SELECT p.id, p.event_id, p.name, p.invite_code,
                 (SELECT COUNT(*) FROM pool_members pm2 WHERE pm2.pool_id = p.id) AS member_count,
-                p.created_by, p.description, p.visible_rules, p.join_closed_at,p.predictions_closed_at,p.closed_at,
-                e.name, e.slug, e.kind, e.status, e.ends_at
+                p.created_by, p.description, p.visible_rules, p.join_closed_at,p.predictions_closed_at,p.closed_at,p.reopened_at,
+                e.name AS event_name,e.slug AS event_slug,e.kind AS event_kind,e.status AS event_status,e.ends_at AS event_ends_at
          FROM pools p
          JOIN events e ON e.id=p.event_id
          JOIN pool_members pm ON pm.pool_id = p.id
@@ -97,47 +77,29 @@ pub async fn list_user_pools(
 
     Ok(rows
         .into_iter()
-        .map(
-            |(
-                id,
-                event_id,
-                name,
-                invite_code,
-                member_count,
-                created_by,
-                description,
-                visible_rules,
-                join_closed_at,
-                predictions_closed_at,
-                closed_at,
-                event_name,
-                event_slug,
-                event_kind,
-                event_status,
-                event_ends_at,
-            )| PoolSummary {
-                id,
-                event: crate::pools::event_summary(
-                    event_id.clone(),
-                    event_name,
-                    event_slug,
-                    event_kind,
-                    event_status,
-                    event_ends_at,
-                ),
-                event_id,
-                name,
-                invite_code,
-                member_count,
-                created_by,
-                can_close_predictions: false,
-                description,
-                visible_rules,
-                join_closed_at,
-                predictions_closed_at,
-                closed_at,
-            },
-        )
+        .map(|row| PoolSummary {
+            id: row.id,
+            event: crate::pools::event_summary(
+                row.event_id.clone(),
+                row.event_name,
+                row.event_slug,
+                row.event_kind,
+                row.event_status,
+                row.event_ends_at,
+            ),
+            event_id: row.event_id,
+            name: row.name,
+            invite_code: row.invite_code,
+            member_count: row.member_count,
+            created_by: row.created_by,
+            can_close_predictions: false,
+            description: row.description,
+            visible_rules: row.visible_rules,
+            join_closed_at: row.join_closed_at,
+            predictions_closed_at: row.predictions_closed_at,
+            closed_at: row.closed_at,
+            reopened_at: row.reopened_at,
+        })
         .collect())
 }
 

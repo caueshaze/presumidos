@@ -4,24 +4,26 @@ use crate::{error::ServerFnError, models::*};
 pub(crate) type PoolMemberUserRow = (String, String, String, bool, Option<String>, Option<String>);
 
 #[cfg(feature = "server")]
-pub(crate) type PoolSummaryRow = (
-    String,
-    String,
-    String,
-    String,
-    i64,
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    String,
-    String,
-    String,
-    String,
-    Option<String>,
-);
+#[derive(sqlx::FromRow)]
+pub(crate) struct PoolSummaryRow {
+    pub(crate) id: String,
+    pub(crate) event_id: String,
+    pub(crate) name: String,
+    pub(crate) invite_code: String,
+    pub(crate) member_count: i64,
+    pub(crate) created_by: String,
+    pub(crate) description: String,
+    pub(crate) visible_rules: String,
+    pub(crate) join_closed_at: Option<String>,
+    pub(crate) predictions_closed_at: Option<String>,
+    pub(crate) closed_at: Option<String>,
+    pub(crate) reopened_at: Option<String>,
+    pub(crate) event_name: String,
+    pub(crate) event_slug: String,
+    pub(crate) event_kind: String,
+    pub(crate) event_status: String,
+    pub(crate) event_ends_at: Option<String>,
+}
 
 #[cfg(feature = "server")]
 pub(crate) fn event_summary(

@@ -16,6 +16,7 @@ import { PageShell } from "@/components/PageShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/field";
+import { isPoolHistorical } from "@/lib/lifecycle";
 import { AdjustmentPanels } from "./leaderboard/AdjustmentPanels";
 import { LeaderboardRanking } from "./leaderboard/LeaderboardRanking";
 import { ScoringInfoModal } from "./leaderboard/ScoringInfoModal";
@@ -60,6 +61,7 @@ export function LeaderboardPage() {
   const tieBreak = usePoolTieBreak(!isFootball ? selectedPool || null : null);
   const isOrganizer =
     !!currentPool && (currentPool.createdBy === user?.id || isAdmin);
+  const historical = currentPool ? isPoolHistorical(currentPool) : false;
   const entries = leaderboard.data ?? [];
   const adjustmentList = adjustments.data ?? [];
 
@@ -134,7 +136,7 @@ export function LeaderboardPage() {
         <ArrowLeft className="h-4 w-4" /> Voltar ao bolão
       </Button>
       <h1 className="text-3xl">
-        {currentPool?.event.isHistorical ? "Ranking final" : "Ranking"}
+        {historical ? "Ranking final" : "Ranking"}
       </h1>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {openedFromClosing && (
@@ -149,7 +151,7 @@ export function LeaderboardPage() {
         >
           <Info className="h-4 w-4" /> Como funciona a pontuação
         </Button>
-        {currentPool && currentPool.closedAt !== null && currentPool.createdBy === user?.id && <ReopenPoolAction poolId={currentPool.id} poolName={currentPool.name} />}
+        {currentPool && historical && currentPool.createdBy === user?.id && <ReopenPoolAction poolId={currentPool.id} poolName={currentPool.name} />}
       </div>
       {pools.isLoading ? (
         <Card className="mt-6">
@@ -187,7 +189,7 @@ export function LeaderboardPage() {
             entries={entries}
             adjustments={adjustmentList}
             isOrganizer={isOrganizer}
-            isHistorical={!!currentPool?.event.isHistorical}
+            isHistorical={historical}
             form={{ adjUser, adjMode, adjPoints, adjReason, adjError }}
             onFormChange={{
               setAdjUser,

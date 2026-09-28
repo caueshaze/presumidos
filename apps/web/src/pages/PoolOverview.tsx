@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { ErrorBanner } from "@/components/ui/field";
 import { useAuth } from "@/hooks/useAuth";
 import { useClosePool, useClosePoolPredictions, useCopyPredictionsReuse, useCreatePoolReport, useDashboardPools, useDeletePool, useEventShowcase, useLeavePool, useLeaderboard, usePools, usePredictionReuseSuggestion, useReopenPool, useStartPredictionsEmpty } from "@/hooks/queries";
+import { isPoolHistorical } from "@/lib/lifecycle";
 import type { PoolReportCategory, PredictionReuseSuggestion } from "@/types";
 
 import { PoolActionModal, type PoolAction } from "./pool-overview/PoolActionModal";
@@ -70,7 +71,7 @@ export function PoolOverviewPage() {
   if (!pool) {
     return <PageShell><Button variant="link" size="sm" onClick={() => navigate("/pools")}>← Voltar aos bolões</Button><div className="mt-4"><ErrorBanner>Bolão não encontrado ou sem acesso.</ErrorBanner></div></PageShell>;
   }
-  const historical = pool.event.isHistorical || pool.closedAt !== null;
+  const historical = isPoolHistorical(pool);
   const predictionsClosed = pool.predictionsClosedAt !== null;
   const event = showcase.data;
   const myPosition = leaderboard.data?.find((entry) => entry.userId === user?.id)?.position;
@@ -212,7 +213,7 @@ export function PoolOverviewPage() {
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/members`)}><Users className="h-4 w-4 shrink-0 text-mint-dark" />Participantes</Button>
         <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/scoring`)}><BookOpenText className="h-4 w-4 shrink-0 text-mint-dark" />Regras</Button>
         {pool.event.kind === "custom" && canManageEventResults && <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => navigate(`/pools/${pool.id}/scoring?section=results`)}><ClipboardCheck className="h-4 w-4 shrink-0 text-mint-dark" />Resultados oficiais</Button>}
-        {owner && pool.closedAt !== null && <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => openAction("reopen")}><RotateCcw className="h-4 w-4 shrink-0 text-mint-dark" />Reabrir bolão</Button>}
+        {owner && historical && <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => openAction("reopen")}><RotateCcw className="h-4 w-4 shrink-0 text-mint-dark" />Reabrir bolão</Button>}
         {!historical && <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, delay: 0.12, ease: "easeOut" }} className="col-span-2 sm:col-span-1 sm:w-fit"><Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" onClick={() => setShareModalOpen(true)}><Share2 className="h-4 w-4 shrink-0 text-mint-dark" />Compartilhar</Button></motion.div>}
         <div ref={optionsRef} className="relative col-span-2 w-full sm:col-span-1 sm:w-auto">
           <Button variant="outline" className="h-[52px] w-full justify-start rounded-[14px] border border-mint/15 bg-card/55 px-4 text-left text-ink hover:border-mint/30 hover:bg-card hover:text-ink sm:w-auto" aria-haspopup="menu" aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}><MoreHorizontal className="h-4 w-4 shrink-0 text-mint-dark" />Opções</Button>

@@ -10,7 +10,7 @@ import { ErrorBanner, Select } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { EmptyState, ErrorState, LoadingState, ProgressBar } from "@/components/ui/states";
 import { useAuth } from "@/hooks/useAuth";
-import { poolPresentationStatus, presentationStatusLabel } from "@/lib/lifecycle";
+import { isPoolHistorical, poolPresentationStatus, presentationStatusLabel } from "@/lib/lifecycle";
 import { cn } from "@/lib/utils";
 
 type Mode = "create" | "join" | null;
@@ -82,7 +82,7 @@ export function DashboardPage() {
       setError(cause instanceof Error ? cause.message : "Não foi possível entrar no bolão.");
     }
   };
-  const activePools = (pools.data ?? []).filter(({ pool }) => !pool.event.isHistorical);
+  const activePools = (pools.data ?? []).filter(({ pool }) => !isPoolHistorical(pool));
   const publishedEvents = availableEvents.data ?? [];
   const draftEvents = (events.data ?? []).filter((item) => item.status === "draft");
 
@@ -120,5 +120,5 @@ function EventRequiredState({ title, description, primaryLabel, onPrimary, secon
 
 function ActivePoolCard({ summary, index, onOpen }: { summary: DashboardPool; index: number; onOpen: () => void }) {
   const { pool, answeredCount, itemCount } = summary;
-  return <MotionCard transition={{ delay: index * 0.05, duration: 0.25 }} className="flex flex-col"><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg">{pool.name}</h3><p className="mt-1 text-sm font-semibold text-mint-dark">{pool.event.name}</p></div><span className="shrink-0 rounded-pill bg-mint/20 px-2.5 py-1 text-xs font-semibold">{presentationStatusLabel[poolPresentationStatus(pool.event)]}</span></div><ProgressBar value={answeredCount} total={itemCount} /><p className="mt-3 text-sm text-ink-muted">{pool.memberCount} participante(s)</p><Button variant="outline" size="sm" className="mt-5 w-fit" onClick={onOpen}>Abrir bolão</Button></MotionCard>;
+  return <MotionCard transition={{ delay: index * 0.05, duration: 0.25 }} className="flex flex-col"><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg">{pool.name}</h3><p className="mt-1 text-sm font-semibold text-mint-dark">{pool.event.name}</p></div><span className="shrink-0 rounded-pill bg-mint/20 px-2.5 py-1 text-xs font-semibold">{presentationStatusLabel[poolPresentationStatus(pool)]}</span></div><ProgressBar value={answeredCount} total={itemCount} /><p className="mt-3 text-sm text-ink-muted">{pool.memberCount} participante(s)</p><Button variant="outline" size="sm" className="mt-5 w-fit" onClick={onOpen}>Abrir bolão</Button></MotionCard>;
 }

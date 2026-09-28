@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { ErrorBanner, Select } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { EmptyState, ErrorState, LoadingState, ProgressBar } from "@/components/ui/states";
+import { isPoolHistorical } from "@/lib/lifecycle";
 
 export function PoolsPage() {
   const navigate = useNavigate();
@@ -44,8 +45,8 @@ export function PoolsPage() {
     try { await joinPool.mutateAsync(joinCode); setJoinCode(""); closeMode(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível entrar no bolão."); }
   };
-  const active = (pools.data ?? []).filter(({ pool }) => !pool.event.isHistorical);
-  const historical = (pools.data ?? []).filter(({ pool }) => pool.event.isHistorical);
+  const active = (pools.data ?? []).filter(({ pool }) => !isPoolHistorical(pool));
+  const historical = (pools.data ?? []).filter(({ pool }) => isPoolHistorical(pool));
   return <PageShell>
     <header><div><h1 className="text-3xl">Meus bolões</h1><p className="mt-1 text-ink-muted">Acompanhe seus palpites, resultados e a disputa com a galera.</p></div><div className="mt-5 flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center"><Button className="w-full justify-center sm:w-auto" onClick={() => openMode("create")}><Plus className="h-4 w-4" /> Criar bolão</Button><Button className="w-full justify-center sm:w-auto" variant="outline" onClick={() => openMode("join")}><Ticket className="h-4 w-4" /> Entrar com código</Button><Button className="w-full justify-center sm:w-auto" variant="link" size="sm" onClick={() => navigate("/events/new")}>Criar evento</Button></div></header>
     <AnimatePresence initial={false} mode="wait">
@@ -89,5 +90,5 @@ function HistoricalPoolCard({ summary, position, points, onOpen }: { summary: Su
 type Summary = NonNullable<ReturnType<typeof useDashboardPools>["data"]>[number];
 function PoolList({ title, pools }: { title: string; pools: Summary[] }) {
   const navigate = useNavigate();
-  return <section>{title && <h2 className="text-2xl">{title}</h2>}{pools.length === 0 ? <Card className="mt-3"><p className="text-ink-muted">{title === "Em andamento" ? "Nenhum bolão em andamento agora." : "Quando uma edição terminar, ela aparecerá aqui."}</p></Card> : <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{pools.map(({ pool, answeredCount, itemCount }) => { const historical = pool.event.isHistorical; return <Card key={pool.id} className="flex flex-col"><div><h3 className="text-lg">{pool.name}</h3><p className="mt-1 text-sm font-semibold text-mint-dark">{pool.event.name}</p></div>{!historical && <ProgressBar value={answeredCount} total={itemCount} />}<p className="mt-3 text-sm text-ink-muted">{pool.memberCount} participante(s)</p><div className="mt-5 flex flex-wrap gap-2"><Button size="sm" onClick={() => navigate(`/pools/${pool.id}`)}>{historical ? "Ver resultados" : "Entrar"}</Button><Button size="sm" variant="outline" onClick={() => navigate(`/pools/${pool.id}/leaderboard`)}>{historical ? "Ranking final" : "Ranking"}</Button></div></Card>; })}</div>}</section>;
+  return <section>{title && <h2 className="text-2xl">{title}</h2>}{pools.length === 0 ? <Card className="mt-3"><p className="text-ink-muted">{title === "Em andamento" ? "Nenhum bolão em andamento agora." : "Quando uma edição terminar, ela aparecerá aqui."}</p></Card> : <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{pools.map(({ pool, answeredCount, itemCount }) => { const historical = isPoolHistorical(pool); return <Card key={pool.id} className="flex flex-col"><div><h3 className="text-lg">{pool.name}</h3><p className="mt-1 text-sm font-semibold text-mint-dark">{pool.event.name}</p></div>{!historical && <ProgressBar value={answeredCount} total={itemCount} />}<p className="mt-3 text-sm text-ink-muted">{pool.memberCount} participante(s)</p><div className="mt-5 flex flex-wrap gap-2"><Button size="sm" onClick={() => navigate(`/pools/${pool.id}`)}>{historical ? "Ver resultados" : "Entrar"}</Button><Button size="sm" variant="outline" onClick={() => navigate(`/pools/${pool.id}/leaderboard`)}>{historical ? "Ranking final" : "Ranking"}</Button></div></Card>; })}</div>}</section>;
 }
