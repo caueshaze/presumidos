@@ -118,8 +118,7 @@ it("offers reopening only to the pool owner after final closure", () => {
   pool.predictionsClosedAt = "2026-09-27T12:00:00Z";
   pool.closedAt = "2026-09-27T12:00:00Z";
   renderOverview();
-  fireEvent.click(screen.getByRole("button", { name: "Opções" }));
-  expect(screen.getByRole("menuitem", { name: "Reabrir bolão" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Reabrir bolão" })).toBeTruthy();
   pool.predictionsClosedAt = null;
   pool.closedAt = null;
 });
